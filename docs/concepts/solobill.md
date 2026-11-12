@@ -17,6 +17,8 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
 ## Goals
 
 - Every outgoing document is produced by the tool: offer, invoice, correction, dunning notice.
+- A discount can be given per line and on the whole document, as a percentage or an amount, and
+  it appears on the document rather than being folded into the unit price.
 - Invoice numbers are gapless per year and per document type, and never reused.
 - An issued invoice is never modified; a correction is its own document referencing the original.
 - Both VAT regimes work: Kleinunternehmer under section 19 UStG, and standard taxation.
