@@ -17,6 +17,8 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
 ## Goals
 
 - Every outgoing document is produced by the tool: offer, invoice, correction, dunning notice.
+- A discount can be given per line and on the whole document, as a percentage or an amount, and
+  it appears on the document rather than being folded into the unit price.
 - Invoice numbers are gapless per year and per document type, and never reused.
 - An issued invoice is never modified; a correction is its own document referencing the original.
 - Both VAT regimes work: Kleinunternehmer under section 19 UStG, and standard taxation.
@@ -26,6 +28,9 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
 - An uploaded incoming invoice in either format prefills an expense without retyping.
 - Every figure in a report can be traced back to the documents it came from.
 - An AI agent can create and query documents through an MCP server, under a scoped token.
+- Documents from 2023 onwards are imported, keeping the numbers they were issued under.
+- The first release is correct for tax year 2026.
+- Customers are owned here, and a connected system reads them rather than keeping its own.
 - A second tenant can be added without a data migration.
 
 ## Non goals
@@ -34,6 +39,8 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
 - Double-entry bookkeeping, balance sheets, and anything beyond what an EÜR filer needs.
 - Payroll, asset-heavy depreciation planning, and multi-currency.
 - Automatic bank import in the first version. The interface is designed for it, nothing more.
+- Default interest on a dunning notice. Fixed fees only, with the fields modelled for it.
+- Correctness for a tax year before 2026. Earlier years are imported as records, not recomputed.
 - Tax advice. The tool computes and cites; it does not decide treatment for the user.
 
 ## Approach
@@ -47,6 +54,10 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
   new row; the document body of an issued invoice is frozen and hashed.
 - Numbering is a per-tenant, per-type, per-year counter allocated inside the issuing transaction,
   so a gap cannot open under concurrency.
+- An imported historical document carries the number it was issued under and is marked imported,
+  outside that counter, so an import can never shift or reuse a number a customer already holds.
+- Customers live here and are exposed through the API, so a connected system references them by
+  id instead of holding a second copy that drifts.
 - Rendering is separated from the ledger: a document's stored, frozen payload plus a template
   version produces the same PDF forever, which is what makes reproduction after years possible.
 - The e-invoice layer is one port with two adapters, ZUGFeRD and XRechnung, in both directions.
@@ -73,12 +84,11 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
 
 ## Open questions
 
-- How are invoices produced today, and how many exist for the current year that need importing.
-- Which tax year the first release must be correct for, and whether 2025 figures are migrated.
 - Retention period to implement: the 2025 change to eight years for Buchungsbelege needs
   verification against the current law before it becomes a default.
 - Whether a Verfahrensdokumentation is written as part of this repository, and by whom.
-- Whether dunning needs the statutory interest calculation or only fixed fees in the first
-  version.
+- Whether the import of 2023 to 2025 is typed in by hand, at roughly ten documents a year, or
+  earns a CSV importer.
+- Whether imported years need their figures reproduced as reports, or only archived as documents.
 - Which bank interface a later import would use: FinTS directly, or an aggregator.
 - Whether offers created by Eventory's webshop arrive through the API or through a shared table.
