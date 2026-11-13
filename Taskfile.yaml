@@ -126,6 +126,11 @@ tasks:
     cmds:
       - go test -race -count=1 ./...
 
+  check:govue-version:
+    desc: Verify go.mod and web/package.json pin the same govue version
+    cmds:
+      - go test -race -count=1 ./internal/depsync/...
+
   # The web/ half. Every target below runs inside web/ and depends on web:deps,
   # so one of them on its own is enough in a fresh checkout and in CI.
   web:deps:
@@ -196,6 +201,7 @@ tasks:
       - task: web:build
       - task: build
       - task: test:go
+      - task: check:govue-version
       - task: lint:helm
       - task: validate:kubeconform
       - task: test:helm
