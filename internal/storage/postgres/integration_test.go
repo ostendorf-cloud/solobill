@@ -220,6 +220,40 @@ func TestRowLevelSecurity(t *testing.T) {
 		t.Fatalf("create catalogue item under tenant B: %v", err)
 	}
 
+	var documentA, documentB storage.Document
+
+	if err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+		var err error
+		documentA, err = store.Documents().Create(ctx, storage.Document{
+			TenantID:   tenantA.ID,
+			Type:       storage.DocumentTypeInvoice,
+			CustomerID: customerA.ID,
+			VATRegime:  storage.VATRegimeStandard,
+		}, []storage.DocumentLine{
+			{Description: "Line A", QuantityThousandths: 1000, UnitPriceCents: 1000, Unit: "piece", VATRatePermyriad: 1900},
+		})
+
+		return err
+	}); err != nil {
+		t.Fatalf("create document under tenant A: %v", err)
+	}
+
+	if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+		var err error
+		documentB, err = store.Documents().Create(ctx, storage.Document{
+			TenantID:   tenantB.ID,
+			Type:       storage.DocumentTypeInvoice,
+			CustomerID: customerB.ID,
+			VATRegime:  storage.VATRegimeStandard,
+		}, []storage.DocumentLine{
+			{Description: "Line B", QuantityThousandths: 1000, UnitPriceCents: 2000, Unit: "piece", VATRatePermyriad: 1900},
+		})
+
+		return err
+	}); err != nil {
+		t.Fatalf("create document under tenant B: %v", err)
+	}
+
 	t.Run("tenant A sees only its own account through the repository", func(t *testing.T) {
 		var accounts []storage.Account
 
@@ -823,6 +857,139 @@ func TestRowLevelSecurity(t *testing.T) {
 		}
 	})
 
+	t.Run("tenant A sees only its own document through the repository", func(t *testing.T) {
+		var documents []storage.Document
+
+		if err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			var err error
+			documents, err = store.Documents().List(ctx)
+
+			return err
+		}); err != nil {
+			t.Fatalf("list documents as tenant A: %v", err)
+		}
+
+		if len(documents) != 1 || documents[0].ID != documentA.ID {
+			t.Fatalf("list documents as tenant A = %v, want exactly [%v]", documents, documentA.ID)
+		}
+	})
+
+	t.Run("tenant B sees only its own document through the repository", func(t *testing.T) {
+		var documents []storage.Document
+
+		if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+			var err error
+			documents, err = store.Documents().List(ctx)
+
+			return err
+		}); err != nil {
+			t.Fatalf("list documents as tenant B: %v", err)
+		}
+
+		if len(documents) != 1 || documents[0].ID != documentB.ID {
+			t.Fatalf("list documents as tenant B = %v, want exactly [%v]", documents, documentB.ID)
+		}
+	})
+
+	t.Run("FindByID for another tenant's document id returns not found, not the real row", func(t *testing.T) {
+		err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			_, err := store.Documents().FindByID(ctx, documentB.ID)
+
+			return err
+		})
+		if err == nil {
+			t.Fatal("FindByID(documentB.ID) while scoped to tenant A succeeded, want storage.ErrNotFound")
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("FindByID(documentB.ID) while scoped to tenant A: err = %v, want errors.Is(err, storage.ErrNotFound)", err)
+		}
+	})
+
+	t.Run("a document's lines are invisible while scoped to the wrong tenant, bypassing DocumentRepository entirely", func(t *testing.T) {
+		// documentB's line was created under tenant B; a raw, unscoped
+		// "SELECT * FROM document_lines" while scoped to tenant A must
+		// still see none of it, the same proof
+		// TestEveryTenantScopedTableEnforcesRowLevelSecurity's existence
+		// check does generically for every tenant_id-bearing table, made
+		// concrete here for this one.
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantA.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		var count int
+
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM document_lines WHERE document_id = $1`, documentB.ID).Scan(&count); err != nil {
+			t.Fatalf("count document_lines for tenant B's document while scoped to tenant A: %v", err)
+		}
+
+		if count != 0 {
+			t.Fatalf("count = %d, want 0: tenant B's document line is visible while scoped to tenant A", count)
+		}
+	})
+
+	t.Run("an INSERT of a document scoped to tenant B with tenant_id set to tenant A is rejected", func(t *testing.T) {
+		// The WITH CHECK half of the policy, exercised on INSERT,
+		// bypassing DocumentRepository entirely.
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		_, err = tx.Exec(ctx,
+			`INSERT INTO documents (tenant_id, type, customer_id, vat_regime) VALUES ($1, 'invoice', $2, 'standard')`,
+			tenantA.ID, customerA.ID)
+		if err == nil {
+			t.Fatal("INSERT with tenant_id = tenant A while scoped to tenant B succeeded, want it rejected by WITH CHECK")
+		}
+	})
+
+	t.Run("tenant A's document_numbers counter is invisible and unaffected while scoped to tenant B", func(t *testing.T) {
+		// Allocating under tenant A, then reading the same (type, year)
+		// key while scoped to tenant B, proves document_numbers' own
+		// policy the same way every other table's does: a counter is
+		// not just a number, it is itself tenant-scoped data, and a
+		// connection scoped to the wrong tenant must not see tenant A's
+		// count, even indirectly through Current answering 0 (which, if
+		// RLS were broken, could instead mean "tenant B already shares
+		// tenant A's counter", exactly the bug this isolation exists to
+		// prevent).
+		const year = 2031 // far from any other test's own year, avoiding collision
+
+		if err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			_, err := store.DocumentNumbers().AllocateNext(ctx, storage.DocumentTypeInvoice, year)
+
+			return err
+		}); err != nil {
+			t.Fatalf("allocate under tenant A: %v", err)
+		}
+
+		var currentForB int64
+
+		if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+			var err error
+			currentForB, err = store.DocumentNumbers().Current(ctx, storage.DocumentTypeInvoice, year)
+
+			return err
+		}); err != nil {
+			t.Fatalf("read current counter under tenant B: %v", err)
+		}
+
+		if currentForB != 0 {
+			t.Fatalf("tenant B's view of the invoice/%d counter = %d, want 0 (tenant A's own allocation must be invisible)", year, currentForB)
+		}
+	})
+
 	t.Run("the table owner is still scoped by row level security because of FORCE", func(t *testing.T) {
 		// Every role exercised above is either DATABASE_URL's own role,
 		// a superuser that bypasses row level security unconditionally
@@ -1143,15 +1310,23 @@ $$;`
 	}
 
 	// Granted at the minimum each table actually needs, mirroring
-	// docker/postgres/init-app-role.sh's own grant to the compose role:
-	// nothing in this codebase deletes a row, so no table gets DELETE,
-	// and tenants is never updated (no UpdateTenant method exists), so
-	// it gets only SELECT and INSERT.
+	// docker-compose.yaml's own "grant-app-role" service grant to the
+	// compose role: nothing before documents deletes a row, so no
+	// table before it gets DELETE, and tenants is never updated (no
+	// UpdateTenant method exists), so it gets only SELECT and INSERT.
+	// documents and document_lines are the exception: see
+	// docker-compose.yaml's own comment on this grant for why DELETE is
+	// real there (DeleteDraftDocument, DeleteDocumentLines and the
+	// ON DELETE CASCADE it triggers) and why document_lines gets no
+	// UPDATE despite that (no query ever updates a line in place).
 	grant := `
 GRANT USAGE ON SCHEMA public TO ` + testAppRole + `;
 GRANT SELECT, INSERT ON tenants TO ` + testAppRole + `;
 GRANT SELECT, INSERT, UPDATE ON accounts, invites TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO ` + testAppRole + `;`
+GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO ` + testAppRole + `;
+GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO ` + testAppRole + `;
+GRANT SELECT, INSERT, DELETE ON document_lines TO ` + testAppRole + `;
+GRANT SELECT, INSERT, UPDATE ON document_numbers TO ` + testAppRole + `;`
 
 	if _, err := adminPool.Exec(ctx, grant); err != nil {
 		t.Fatalf("grant %s privileges: %v", testAppRole, err)
