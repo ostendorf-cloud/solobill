@@ -132,6 +132,23 @@ func TestAllocateLargestRemainder_SumsExactlyToTarget(t *testing.T) {
 			target: 500,
 			want:   []Cents{500},
 		},
+		{
+			// A zero-weight line (a fully discounted line, say) has an
+			// exact share of 0 and therefore a remainder of 0 as well:
+			// it must never receive a leftover cent ahead of a line
+			// with a genuinely larger, non-zero remainder. Exact shares
+			// 0, 5.7 and 5.3; floor sum 0+5+5=10; target 12 hands out
+			// two leftover cents, both to the non-zero lines
+			// (remainders 0.7 and 0.3), none to the zero line.
+			name: "a zero-weight share never receives a leftover cent ahead of a non-zero one",
+			shares: []*big.Rat{
+				new(big.Rat).SetFrac64(0, 1),
+				new(big.Rat).SetFrac64(57, 10),
+				new(big.Rat).SetFrac64(53, 10),
+			},
+			target: 12,
+			want:   []Cents{0, 6, 6},
+		},
 	}
 
 	for _, tt := range tests {

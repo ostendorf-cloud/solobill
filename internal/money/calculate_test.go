@@ -352,6 +352,15 @@ func TestCalculate_Errors(t *testing.T) {
 			},
 		},
 		{
+			name: "line amount discount exceeds the line's own net amount",
+			lines: []money.Line{
+				{
+					QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 1900,
+					Discount: money.Discount{AmountCents: amountPtr(500)},
+				},
+			},
+		},
+		{
 			name: "line discount both percent and amount set",
 			lines: []money.Line{
 				{
