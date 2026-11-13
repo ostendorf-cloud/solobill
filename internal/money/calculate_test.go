@@ -176,6 +176,28 @@ func TestCalculate(t *testing.T) {
 			},
 		},
 		{
+			// The boundary right next to TestCalculate_Errors' "document
+			// amount discount exceeds the net total": a discount exactly
+			// equal to netTotal is accepted, leaving every figure at 0,
+			// not refused.
+			name: "document amount discount exactly equal to the net total",
+			lines: []money.Line{
+				{QuantityThousandths: 1000, UnitPriceCents: 10000, VATRatePermyriad: 1900},
+			},
+			documentDiscount: money.Discount{AmountCents: amountPtr(10000)},
+			want: money.Result{
+				Lines: []money.LineResult{
+					{NetAfterLineDiscountCents: 10000, DocumentDiscountShareCents: 0, NetAfterAllDiscountsCents: 10000},
+				},
+				NetTotalCents:                 10000,
+				DocumentDiscountCents:         10000,
+				NetAfterDocumentDiscountCents: 0,
+				VAT:                           []money.VATBucket{{RatePermyriad: 1900, NetCents: 0, VATCents: 0}},
+				VATTotalCents:                 0,
+				GrandTotalCents:               0,
+			},
+		},
+		{
 			name: "document amount discount on a single VAT rate needs no allocation",
 			lines: []money.Line{
 				{QuantityThousandths: 1000, UnitPriceCents: 5000, VATRatePermyriad: 1900},
@@ -361,6 +383,15 @@ func TestCalculate_Errors(t *testing.T) {
 			},
 		},
 		{
+			name: "line discount percent above 100%",
+			lines: []money.Line{
+				{
+					QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 1900,
+					Discount: money.Discount{PercentPermyriad: percentPtr(10001)},
+				},
+			},
+		},
+		{
 			name: "line discount both percent and amount set",
 			lines: []money.Line{
 				{
@@ -389,6 +420,18 @@ func TestCalculate_Errors(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 1900},
 			},
 			documentDiscount: money.Discount{AmountCents: amountPtr(-1)},
+		},
+		{
+			// netTotal is 200 (100 at 19% plus 100 at 7%); a 500-cent
+			// document amount discount exceeds it, the document-level
+			// counterpart of "line amount discount exceeds the line's
+			// own net amount" above.
+			name: "document amount discount exceeds the net total",
+			lines: []money.Line{
+				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 1900},
+				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 700},
+			},
+			documentDiscount: money.Discount{AmountCents: amountPtr(500)},
 		},
 	}
 
