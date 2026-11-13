@@ -126,7 +126,7 @@ func run() error {
 		return fmt.Errorf("solobill: %w", err)
 	}
 
-	handler, err := httpapi.NewHandler(httpapi.Deps{
+	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:           logger,
 		Store:            store,
 		Sessions:         sessions,
@@ -148,14 +148,19 @@ func run() error {
 		return fmt.Errorf("solobill: build http handler: %w", err)
 	}
 
-	return httpserver.Run(ctx, httpserver.Config{
+	return httpserver.RunAdmin(ctx, httpserver.Config{
 		Addr:    cfg.ListenAddr,
-		Handler: handler,
+		Handler: handlers.Public,
 		Logger:  logger,
 		// Failing the readiness probe before the drain delay starts is
-		// what lets a load balancer stop sending new requests before the
-		// server stops accepting connections at all.
+		// what lets a load balancer stop sending new requests before
+		// either listener stops accepting connections. This runs once,
+		// for both listeners together; see httpserver.ServeAdmin's own
+		// doc comment.
 		BeforeShutdown: healthRegistry.Drain,
+	}, httpserver.AdminConfig{
+		Addr:    cfg.AdminListenAddr,
+		Handler: handlers.Admin,
 	})
 }
 
