@@ -149,6 +149,12 @@ type CatalogueItem struct {
 	// units. Never negative; see db/migrations' catalogue_items
 	// migration.
 	UnitPriceCents int64
+	// Unit is never empty once read back: the column is NOT NULL. The
+	// storage layer defaults it to "piece" on Create and Update when the
+	// caller leaves it as the Go zero value, mirroring the database's
+	// own DEFAULT so both paths agree; see db/migrations' catalogue_items
+	// migration for the full set and reasoning.
+	Unit string
 	// DeletedAt is nil for an active item, set once soft deleted. A
 	// catalogue item is never hard deleted: see db/migrations'
 	// catalogue_items migration for why.

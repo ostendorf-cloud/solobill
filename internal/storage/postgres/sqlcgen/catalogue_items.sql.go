@@ -14,9 +14,9 @@ import (
 
 const createCatalogueItem = `-- name: CreateCatalogueItem :one
 
-INSERT INTO catalogue_items (tenant_id, name, description, sku, unit_price_cents)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, tenant_id, name, description, sku, unit_price_cents, deleted_at, created_at, updated_at
+INSERT INTO catalogue_items (tenant_id, name, description, sku, unit_price_cents, unit)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at
 `
 
 type CreateCatalogueItemParams struct {
@@ -25,6 +25,7 @@ type CreateCatalogueItemParams struct {
 	Description    pgtype.Text
 	Sku            pgtype.Text
 	UnitPriceCents int64
+	Unit           string
 }
 
 // Same reasoning as customers.sql: tenant isolation here is two
@@ -41,6 +42,7 @@ func (q *Queries) CreateCatalogueItem(ctx context.Context, arg CreateCatalogueIt
 		arg.Description,
 		arg.Sku,
 		arg.UnitPriceCents,
+		arg.Unit,
 	)
 	var i CatalogueItem
 	err := row.Scan(
@@ -50,6 +52,7 @@ func (q *Queries) CreateCatalogueItem(ctx context.Context, arg CreateCatalogueIt
 		&i.Description,
 		&i.Sku,
 		&i.UnitPriceCents,
+		&i.Unit,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -78,7 +81,7 @@ func (q *Queries) DeleteCatalogueItem(ctx context.Context, id uuid.UUID) (int64,
 }
 
 const getCatalogueItemByID = `-- name: GetCatalogueItemByID :one
-SELECT id, tenant_id, name, description, sku, unit_price_cents, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at
 FROM catalogue_items
 WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 `
@@ -97,6 +100,7 @@ func (q *Queries) GetCatalogueItemByID(ctx context.Context, id uuid.UUID) (Catal
 		&i.Description,
 		&i.Sku,
 		&i.UnitPriceCents,
+		&i.Unit,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -105,7 +109,7 @@ func (q *Queries) GetCatalogueItemByID(ctx context.Context, id uuid.UUID) (Catal
 }
 
 const listCatalogueItems = `-- name: ListCatalogueItems :many
-SELECT id, tenant_id, name, description, sku, unit_price_cents, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at
 FROM catalogue_items
 WHERE deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 ORDER BY name
@@ -133,6 +137,7 @@ func (q *Queries) ListCatalogueItems(ctx context.Context) ([]CatalogueItem, erro
 			&i.Description,
 			&i.Sku,
 			&i.UnitPriceCents,
+			&i.Unit,
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -153,9 +158,10 @@ SET name = $2,
     description = $3,
     sku = $4,
     unit_price_cents = $5,
+    unit = $6,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-RETURNING id, tenant_id, name, description, sku, unit_price_cents, deleted_at, created_at, updated_at
+RETURNING id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at
 `
 
 type UpdateCatalogueItemParams struct {
@@ -164,6 +170,7 @@ type UpdateCatalogueItemParams struct {
 	Description    pgtype.Text
 	Sku            pgtype.Text
 	UnitPriceCents int64
+	Unit           string
 }
 
 // UpdateCatalogueItem is guarded by "AND deleted_at IS NULL": a
@@ -178,6 +185,7 @@ func (q *Queries) UpdateCatalogueItem(ctx context.Context, arg UpdateCatalogueIt
 		arg.Description,
 		arg.Sku,
 		arg.UnitPriceCents,
+		arg.Unit,
 	)
 	var i CatalogueItem
 	err := row.Scan(
@@ -187,6 +195,7 @@ func (q *Queries) UpdateCatalogueItem(ctx context.Context, arg UpdateCatalogueIt
 		&i.Description,
 		&i.Sku,
 		&i.UnitPriceCents,
+		&i.Unit,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
