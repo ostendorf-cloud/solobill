@@ -30,26 +30,40 @@ helm install solobill charts/solobill \
 ```
 
 The chart has no usable default for `existingSecret.name`, `config.databaseUrl` or
-`config.databaseUser`: `values.schema.json` rejects an install or upgrade that leaves any of
-them empty.
+`config.databaseUser`: `templates/deployment.yaml` fails an install or upgrade that leaves any
+of them empty, with a message naming the missing key.
 
 This chart is also published as an OCI artifact, versioned in lock-step with every release, once
 a publish workflow for it exists; none does yet, so for now install or `helm pull` it by path
 from a checkout of this repository, as above.
 
-## One role is enough
+## One role, or two
 
 Unlike `docker-compose.yaml`'s own local development setup, which brings its own throwaway
 Postgres and therefore has to script a second, restricted role itself (a bootstrap superuser
 used only to apply `db/migrations`, and a separate `NOSUPERUSER NOBYPASSRLS` role the
 application actually connects as, see that file's own comment for the full reasoning), this
-chart's Postgres already runs in the cluster it installs into. A single, correctly-provisioned
-`NOSUPERUSER NOBYPASSRLS` role that owns its own tables is still fully bound by
-`FORCE ROW LEVEL SECURITY`: ownership is irrelevant once `FORCE` is set, only a superuser or a
-`BYPASSRLS` role bypasses it. So this chart's own migration Job (below) and its Deployment
-authenticate as the exact same role, configured once by `config.databaseUser` and
-`existingSecret.databasePasswordKey`. This chart does not need, and does not implement,
-`docker-compose.yaml`'s two-role split.
+chart's Postgres already runs in the cluster it installs into.
+
+By default, this chart's own migration Job (below) and its Deployment authenticate as the
+exact same role, configured once by `config.databaseUser` and
+`existingSecret.databasePasswordKey`. A correctly-provisioned `NOSUPERUSER NOBYPASSRLS` role
+is still fully bound by `FORCE ROW LEVEL SECURITY` for every ordinary application query:
+ownership is irrelevant to `FORCE`, only a superuser or a `BYPASSRLS` role bypasses it. But
+that same role, because it is the one that ran `db/migrations` and therefore OWNS `tenants`,
+`accounts` and `invites`, can also run `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY` or drop
+the policy outright: PostgreSQL's own `ALTER TABLE` reference documents ownership, not
+`FORCE`, as what that command checks. A single role that both migrates and serves the
+application therefore accepts a weaker boundary than `docker-compose.yaml`'s own two-role
+split: a compromised or buggy application process could not just read another tenant's rows
+through a live connection, but could also switch the protection off for every tenant at once,
+by virtue of owning the tables.
+
+Set `migrationJob.databaseUser` (and, if its password lives under a different key in the same
+Secret, `existingSecret.migrationDatabasePasswordKey`) to a separate role the application
+itself never authenticates as, to get the stronger, two-role boundary instead, mirroring
+`docker-compose.yaml`'s own bootstrap-superuser-for-migrations-only split. Left empty, the
+default, this chart keeps the single-role behaviour above.
 
 ## Migrations
 
@@ -67,7 +81,8 @@ Disable it with `migrationJob.enabled: false` for a deployment that applies `db/
 some other way; see "Values" below.
 
 The migration Job assembles its own connection URL from `config.databaseUrl`,
-`config.databaseUser` and the existing Secret's password with plain POSIX shell parameter
+`migrationJob.databaseUser` (falling back to `config.databaseUser` when unset; see
+"One role, or two" above) and the existing Secret's password with plain POSIX shell parameter
 expansion, not a URL encoder: the password must therefore contain no character that needs
 percent-encoding in a URL (no `@`, `/`, `:`, `%`, whitespace, ...). This organisation's own
 secret-generation convention (`openssl rand -hex ...`, see this repository's own
@@ -116,14 +131,14 @@ field as secret-only instead; this is solobill's own contract, verified by readi
 
 | Key | Description | Default |
 | --- | --- | --- |
-| `replicaCount` | Number of pods. | `1` |
+| `replicaCount` | Number of pods. Fixed at `1`: `cmd/solobill`'s session store is in-memory, correct for exactly one replica. A second pod would keep its own, separate sessions, so a request load-balanced to it would see its caller as logged out. | `1` |
 | `image.repository` | Container image repository. | `ghcr.io/ostendorf-cloud/solobill` |
 | `image.tag` | Image tag. Defaults to the chart's `appVersion` when left empty. | `""` |
 | `image.pullPolicy` | Image pull policy. | `IfNotPresent` |
 | `imagePullSecrets` | Pull secrets for a private registry. | `[]` |
 | `nameOverride` | Overrides the chart name used in generated resource names. | `""` |
 | `fullnameOverride` | Overrides the full generated resource name. | `""` |
-| `serviceAccount.create` | Create a dedicated `ServiceAccount`. No RBAC is attached: this application makes no Kubernetes API calls. | `true` |
+| `serviceAccount.create` | Create a dedicated `ServiceAccount`, as a pre-install,pre-upgrade hook so it exists before the migration Job that names it. No RBAC is attached and no pod ever mounts its token (`automountServiceAccountToken: false`): this application makes no Kubernetes API calls. | `true` |
 | `serviceAccount.annotations` | Annotations for the `ServiceAccount`. | `{}` |
 | `serviceAccount.name` | Name of the `ServiceAccount` to use or create. Defaults to the full release name. | `""` |
 | `podAnnotations` | Extra annotations on the pod template. | `{}` |
@@ -132,7 +147,7 @@ field as secret-only instead; this is solobill's own contract, verified by readi
 | `securityContext` | Container-level security context: read-only root filesystem, no privilege escalation, all capabilities dropped. Safe: `cmd/solobill` keeps its session store in memory and writes nothing else to disk. | see `values.yaml` |
 | `service.type` | `Service` type. | `ClusterIP` |
 | `service.port` | `Service`, container and probe port. Keep in sync with `config.listenAddr`. | `8080` |
-| `ingress.enabled` | Create an `Ingress`. | `false` |
+| `ingress.enabled` | Create an `Ingress`. Requires `config.trustedProxies` to be set; see that row. | `false` |
 | `ingress.className` | `ingressClassName` to set. | `""` |
 | `ingress.annotations` | Annotations for the `Ingress`. | `{}` |
 | `ingress.hosts` | Host/path rules. | see `values.yaml` |
@@ -151,7 +166,7 @@ field as secret-only instead; this is solobill's own contract, verified by readi
 | `config.databaseUser` | `DATABASE_USER`. Required. Must be `NOSUPERUSER NOBYPASSRLS`; see "Prerequisites" above. | `""` |
 | `config.sessionAllowPlainHttp` | `SESSION_ALLOW_PLAIN_HTTP`. Keep `false` behind a TLS-terminating ingress; `true` is `docker-compose.yaml`'s own local-dev-only setting. | `false` |
 | `config.allowedOrigins` | `ALLOWED_ORIGINS`, joined with a comma. Empty means no CORS middleware (same-origin SPA). | `[]` |
-| `config.trustedProxies` | `TRUSTED_PROXIES`, joined with a comma. Empty trusts only the direct TCP peer. | `[]` |
+| `config.trustedProxies` | `TRUSTED_PROXIES`, joined with a comma. Empty trusts only the direct TCP peer. Required (and enforced with a template `fail`) when `ingress.enabled` is true: otherwise every client's `X-Forwarded-For` is ignored and the rate limiter keys every request to the ingress controller's own address, one shared bucket for every caller. Set it to the ingress controller's pod or service CIDR. | `[]` |
 | `config.rateLimitBurst` | `RATE_LIMIT_BURST`. | `10` |
 | `config.rateLimitPer` | `RATE_LIMIT_PER`. | `1m` |
 | `config.inviteDefaultTtl` | `INVITE_DEFAULT_TTL`. | `168h` |
@@ -165,14 +180,18 @@ field as secret-only instead; this is solobill's own contract, verified by readi
 | `existingSecret.sessionCodecKeyKey` | Key for `SESSION_CODEC_KEY`. Required. | `SESSION_CODEC_KEY` |
 | `existingSecret.csrfKeyKey` | Key for `CSRF_KEY`. Required. | `CSRF_KEY` |
 | `existingSecret.oidcClientSecretKey` | Key for `OIDC_CLIENT_SECRET`. Empty omits the variable. | `""` |
+| `existingSecret.migrationDatabasePasswordKey` | Password key for `migrationJob.databaseUser`, in this same Secret. Empty falls back to `databasePasswordKey`. | `""` |
 | `migrationJob.enabled` | Run the `db/migrations` hook Job on install and upgrade. | `true` |
+| `migrationJob.databaseUser` | Separate role that owns and migrates `accounts`/`invites`, distinct from `config.databaseUser`. Empty falls back to `config.databaseUser`; see "One role, or two" above. | `""` |
 | `migrationJob.image.repository` | The official dbmate image. | `ghcr.io/amacneil/dbmate` |
 | `migrationJob.image.tag` | dbmate image tag, matching `docker-compose.yaml`'s own pin. | `2.38.1` |
 | `migrationJob.annotations` | Extra annotations on the migration Job. | `{}` |
 | `migrationJob.resources` | Resource requests/limits for the migration Job. | see `values.yaml` |
 
-`values.schema.json` enforces the required fields above; an install or upgrade with any of them
-missing or empty fails validation before it reaches the cluster.
+`existingSecret.name`, `config.databaseUrl` and `config.databaseUser` have no usable default and
+are enforced by a `fail` guard in `templates/deployment.yaml` instead of `values.schema.json`'s
+`minLength`: an install or upgrade with any of them missing or empty fails the render with a
+readable message. Every other required field above is still enforced by the schema.
 
 ## Upgrading
 
@@ -187,12 +206,18 @@ PostgreSQL instance, outside this release.
 helm uninstall solobill
 ```
 
-Removes every object this chart created: the `Deployment`, `Service`, `ServiceAccount`, and the
-`Ingress` if it was enabled. The migration Job and its `ConfigMap` are Helm hooks with a
-`before-hook-creation,hook-succeeded` delete policy, so a completed one is already gone by the
-time an install or upgrade finishes. Nothing stateful lives in the cluster from this chart: the
-`existingSecret` referenced by name, and your PostgreSQL instance and its data, are never
-touched, since this chart never owned them.
+Removes every ordinary object this chart created: the `Deployment`, `Service`, and the `Ingress`
+if it was enabled. The `ServiceAccount`, the migration Job and its `ConfigMap` are all Helm
+hooks, which Helm does not track as part of the release for `helm uninstall` to remove; each is
+governed only by its own `helm.sh/hook-delete-policy` instead. The Job and its `ConfigMap` carry
+`before-hook-creation,hook-succeeded`, so a completed one is already gone by the time the install
+or upgrade that created it finishes, well before any uninstall. The `ServiceAccount` carries
+`before-hook-creation` alone, deliberately without `hook-succeeded`, since the Deployment needs
+it to still exist after the install succeeds: an old copy is only deleted, and replaced, right
+before the next install or upgrade's hooks recreate it, which means a release that is uninstalled
+and never reinstalled leaves this `ServiceAccount` behind. Nothing stateful lives in the cluster
+from this chart either way: the `existingSecret` referenced by name, and your PostgreSQL
+instance and its data, are never touched, since this chart never owned them.
 
 ## Verification
 
@@ -210,6 +235,7 @@ This chart is verified with:
 
   and run with `helm unittest charts/solobill`.
 
-Every check above runs on every push and pull request, through `task lint:helm` and
-`task test:helm`. A live end-to-end install into a real cluster is a separate, tracked
-follow-up, not part of this chart's static verification.
+Every check above runs on every push and pull request, through `task lint:helm`,
+`task validate:kubeconform` and `task test:helm`, each its own CI job (`helm-lint`,
+`kubeconform` and `helm-unittest`), one job per check. A live end-to-end install into a real
+cluster is a separate, tracked follow-up, not part of this chart's static verification.

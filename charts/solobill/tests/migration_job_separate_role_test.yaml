@@ -1,0 +1,96 @@
+suite: migration job with a separate migration role
+templates:
+  - templates/migration-job.yaml
+  - templates/deployment.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+tests:
+  - it: authenticates as config.databaseUser when migrationJob.databaseUser is left unset
+    template: templates/migration-job.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            value: solobill_app
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: DATABASE_PASSWORD
+
+  - it: authenticates as migrationJob.databaseUser and its own secret key once both are set
+    template: templates/migration-job.yaml
+    set:
+      migrationJob:
+        databaseUser: solobill_migrator
+      existingSecret:
+        migrationDatabasePasswordKey: MIGRATION_DATABASE_PASSWORD
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            value: solobill_migrator
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: MIGRATION_DATABASE_PASSWORD
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            value: solobill_app
+
+  - it: leaves the Deployment's own database env untouched when migrationJob.databaseUser is set
+    template: templates/deployment.yaml
+    set:
+      migrationJob:
+        databaseUser: solobill_migrator
+      existingSecret:
+        migrationDatabasePasswordKey: MIGRATION_DATABASE_PASSWORD
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            value: solobill_app
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: DATABASE_PASSWORD
+
+  - it: falls back to databasePasswordKey when migrationJob.databaseUser is set but migrationDatabasePasswordKey is not
+    template: templates/migration-job.yaml
+    set:
+      migrationJob:
+        databaseUser: solobill_migrator
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            value: solobill_migrator
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: DATABASE_PASSWORD

@@ -1,3 +1,32 @@
+{{/*
+These three fields have no usable default (there is no database or
+Secret this chart can provision itself), so values.schema.json no longer
+enforces them with "minLength": 1 - that produced a cryptic schema error
+even on the chart's own committed defaults when run with no --set at all.
+These fail guards give the exact same guarantee with a readable message
+instead.
+*/}}
+{{- if not .Values.config.databaseUrl -}}
+{{ fail "config.databaseUrl is required" }}
+{{- end -}}
+{{- if not .Values.config.databaseUser -}}
+{{ fail "config.databaseUser is required" }}
+{{- end -}}
+{{- if not .Values.existingSecret.name -}}
+{{ fail "existingSecret.name is required" }}
+{{- end -}}
+{{/*
+With an Ingress in front of the Service, the TCP peer govue's
+clientip.Resolver.Resolve would otherwise key the rate limiter on is the
+ingress controller's own pod address, the same for every client: one
+shared bucket, no per-client brute-force limit, and any single caller can
+lock out every other client. config.trustedProxies tells it to trust
+X-Forwarded-For from that controller instead and resolve the real client
+address, so this combination must not render silently.
+*/}}
+{{- if and .Values.ingress.enabled (not .Values.config.trustedProxies) -}}
+{{ fail "ingress.enabled is true but config.trustedProxies is empty: every client would share one rate-limit bucket keyed to the ingress controller's own address, collapsing per-client brute-force protection. Set config.trustedProxies to the ingress controller's pod/service CIDR." }}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,6 +55,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "solobill.serviceAccountName" . }}
+      # This application makes no Kubernetes API calls of its own; see
+      # values.yaml's serviceAccount.create comment.
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:

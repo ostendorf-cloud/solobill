@@ -150,14 +150,18 @@ config:
   # runs in the cluster" instead: the cluster operator who provisions the
   # database and this role is responsible for making it NOSUPERUSER
   # NOBYPASSRLS, not this chart, which has no way to enforce that from
-  # here. Also unlike docker-compose's two-role split: a single
-  # correctly-provisioned NOSUPERUSER NOBYPASSRLS role that OWNS its own
-  # tables is still fully bound by FORCE ROW LEVEL SECURITY (ownership is
-  # irrelevant once FORCE is set; only superuser/BYPASSRLS bypasses it),
-  # so this one role can safely run both db/migrations (via
-  # migrationJob below) and the application's own queries. This chart
-  # does not need, and does not implement, docker-compose's
-  # bootstrap-superuser-for-migrations-only split.
+  # here.
+  #
+  # By default this one role also runs db/migrations (via migrationJob
+  # below), and that role then OWNS the tables it creates. FORCE ROW
+  # LEVEL SECURITY still binds every ordinary application query the same
+  # role runs (ownership is irrelevant to FORCE), but PostgreSQL's own
+  # ALTER TABLE reference makes ownership, not FORCE, what ALTER TABLE
+  # itself checks - so this role, because it owns those tables, can also
+  # run ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or drop the policy
+  # outright. Set migrationJob.databaseUser to accept docker-compose's
+  # own two-role split instead and close that gap; see README.md's
+  # "One role, or two" section.
   databaseUser: ""
   # sessionAllowPlainHttp drops the Secure cookie attribute, matching
   # internal/config.Config's own SessionAllowPlainHTTP doc comment: "a
@@ -240,6 +244,12 @@ existingSecret:
   # config.oidc.issuerUrl/clientId/redirectUrl/defaultTenantSlug once
   # OIDC is actually configured.
   oidcClientSecretKey: ""
+  # Password key for migrationJob.databaseUser, in this same Secret. Left
+  # empty, the default, falls back to databasePasswordKey above (the
+  # single-role case). Set this together with migrationJob.databaseUser
+  # to use a separate password for the separate migration role; see
+  # README.md's "One role, or two" section.
+  migrationDatabasePasswordKey: ""
 
 # A pre-install,pre-upgrade Helm hook Job that runs "dbmate up" against the
 # same connection config.databaseUrl/databaseUser/existingSecret.name above
@@ -253,6 +263,20 @@ existingSecret:
 # upgrade is safe, not merely tolerated.
 migrationJob:
   enabled: true
+  # Optional: a separate, higher-privileged role that OWNS accounts/invites
+  # and applies db/migrations, distinct from config.databaseUser (which the
+  # Deployment's pods connect as for ordinary queries). Mirrors
+  # docker-compose.yaml's own bootstrap-superuser-for-migrations-only
+  # split. Left empty, the default, this Job authenticates as
+  # config.databaseUser instead: a single role that owns its own tables,
+  # which IS still bound by FORCE ROW LEVEL SECURITY for every ordinary
+  # application query, but which can, precisely because it owns the
+  # tables, run ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or drop the
+  # policy outright (PostgreSQL's ALTER TABLE reference: ownership is
+  # what that command checks, FORCE notwithstanding). Set this to a role
+  # the application itself never authenticates as to close that gap; see
+  # README.md.
+  databaseUser: ""
   image:
     # The same official dbmate image docker-compose.yaml already uses for
     # its own "migrate" service, pinned to the same tag

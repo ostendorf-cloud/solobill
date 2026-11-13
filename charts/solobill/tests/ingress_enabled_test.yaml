@@ -1,12 +1,15 @@
 suite: ingress enabled
 templates:
   - templates/ingress.yaml
+  - templates/deployment.yaml
 set:
   existingSecret:
     name: solobill-secrets
   config:
     databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
     databaseUser: solobill_app
+    trustedProxies:
+      - 10.0.0.0/8
   ingress:
     enabled: true
     className: nginx
@@ -16,7 +19,34 @@ set:
           - path: /
             pathType: Prefix
 tests:
+  - it: fails the render when ingress is enabled and config.trustedProxies is left empty
+    template: templates/deployment.yaml
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+        databaseUser: solobill_app
+        trustedProxies: []
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            ingress.enabled is true but config.trustedProxies is empty: every client would
+            share one rate-limit bucket keyed to the ingress controller's own address,
+            collapsing per-client brute-force protection. Set config.trustedProxies to the
+            ingress controller's pod/service CIDR.
+
+  - it: renders fine and wires TRUSTED_PROXIES when ingress is enabled and it is set
+    template: templates/deployment.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: "10.0.0.0/8"
+
   - it: renders exactly one Ingress
+    template: templates/ingress.yaml
     asserts:
       - hasDocuments:
           count: 1
@@ -24,6 +54,7 @@ tests:
           of: Ingress
 
   - it: uses the configured ingress class and host
+    template: templates/ingress.yaml
     asserts:
       - equal:
           path: spec.ingressClassName
@@ -33,6 +64,7 @@ tests:
           value: solobill.example.org
 
   - it: points the backend at the chart's own Service and port
+    template: templates/ingress.yaml
     asserts:
       - equal:
           path: spec.rules[0].http.paths[0].backend.service.port.number
