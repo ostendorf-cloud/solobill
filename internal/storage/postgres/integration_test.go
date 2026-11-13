@@ -79,6 +79,25 @@ type customerRawRow struct {
 	UpdatedAt   time.Time  `db:"updated_at"`
 }
 
+// catalogueItemRawRow mirrors the catalogue_items table's own column
+// order and names, used only to decode the literal, deliberately
+// unscoped "SELECT * FROM catalogue_items" below, the same reason
+// accountRawRow and customerRawRow exist for their own tables: that
+// query has to stay exactly that, with no column list and no WHERE
+// clause, to prove what it is meant to prove.
+type catalogueItemRawRow struct {
+	ID             uuid.UUID  `db:"id"`
+	TenantID       uuid.UUID  `db:"tenant_id"`
+	Name           string     `db:"name"`
+	Description    *string    `db:"description"`
+	SKU            *string    `db:"sku"`
+	UnitPriceCents int64      `db:"unit_price_cents"`
+	Unit           string     `db:"unit"`
+	DeletedAt      *time.Time `db:"deleted_at"`
+	CreatedAt      time.Time  `db:"created_at"`
+	UpdatedAt      time.Time  `db:"updated_at"`
+}
+
 // TestRowLevelSecurity is the single most important test in this
 // milestone: it proves that Postgres row level security, not application
 // code, is what actually keeps one tenant's rows out of another tenant's
@@ -570,6 +589,63 @@ func TestRowLevelSecurity(t *testing.T) {
 		}
 	})
 
+	t.Run("an INSERT of a customer scoped to tenant B with tenant_id set to tenant A is rejected", func(t *testing.T) {
+		// The WITH CHECK half of the policy, exercised on INSERT,
+		// bypassing CustomerRepository entirely: a new row whose
+		// tenant_id does not match the scope the transaction was
+		// set_config'd to must be refused by the policy itself, not
+		// merely by the repository's own query filter.
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		_, err = tx.Exec(ctx,
+			`INSERT INTO customers (tenant_id, name) VALUES ($1, $2)`,
+			tenantA.ID, "Cross-Tenant Customer")
+		if err == nil {
+			t.Fatal("INSERT with tenant_id = tenant A while scoped to tenant B succeeded, want it rejected by WITH CHECK")
+		}
+	})
+
+	t.Run("an UPDATE of a customer scoped to tenant A moving its tenant_id to tenant B either keeps the original tenant or is rejected", func(t *testing.T) {
+		// The WITH CHECK half of the policy, exercised on UPDATE this
+		// time, bypassing CustomerRepository entirely: the new row
+		// version (tenant_id = tenant B) is checked against the scope
+		// the transaction is set_config'd to (tenant A), so the row can
+		// never actually move to another tenant.
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantA.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		var gotTenantID uuid.UUID
+
+		err = tx.QueryRow(ctx,
+			`UPDATE customers SET tenant_id = $1 WHERE id = $2 RETURNING tenant_id`,
+			tenantB.ID, customerA.ID,
+		).Scan(&gotTenantID)
+		if err != nil {
+			// Rejected outright: WITH CHECK doing its job, the
+			// preferred and expected outcome.
+			return
+		}
+
+		if gotTenantID != tenantA.ID {
+			t.Fatalf("UPDATE moved customer A's tenant_id to %v, want it to stay %v or be rejected entirely", gotTenantID, tenantA.ID)
+		}
+	})
+
 	t.Run("tenant A sees only its own catalogue item through the repository", func(t *testing.T) {
 		var items []storage.CatalogueItem
 
@@ -660,6 +736,91 @@ func TestRowLevelSecurity(t *testing.T) {
 		}
 
 		assertOnlyCatalogueItem(t, items, catalogueItemB.ID)
+	})
+
+	t.Run("an unscoped SELECT star on a transaction scoped to tenant B still sees only tenant B's catalogue item", func(t *testing.T) {
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		rows, err := tx.Query(ctx, `SELECT * FROM catalogue_items`)
+		if err != nil {
+			t.Fatalf("SELECT * FROM catalogue_items: %v", err)
+		}
+
+		ids := catalogueItemIDs(t, rows)
+
+		if len(ids) != 1 || ids[0] != catalogueItemB.ID {
+			t.Fatalf("SELECT * FROM catalogue_items while scoped to tenant B = %v, want exactly [%v]", ids, catalogueItemB.ID)
+		}
+	})
+
+	t.Run("an INSERT of a catalogue item scoped to tenant B with tenant_id set to tenant A is rejected", func(t *testing.T) {
+		// The WITH CHECK half of the policy, exercised on INSERT,
+		// bypassing CatalogueItemRepository entirely: a new row whose
+		// tenant_id does not match the scope the transaction was
+		// set_config'd to must be refused by the policy itself, not
+		// merely by the repository's own query filter. unit is
+		// deliberately omitted from the column list: it defaults to
+		// 'piece' at the database level (see db/migrations), so this
+		// INSERT isolates exactly one failure cause, the tenant
+		// mismatch, not an unrelated NOT NULL or CHECK violation on a
+		// column this subtest does not care about.
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		_, err = tx.Exec(ctx,
+			`INSERT INTO catalogue_items (tenant_id, name, unit_price_cents) VALUES ($1, $2, $3)`,
+			tenantA.ID, "Cross-Tenant Catalogue Item", int64(500))
+		if err == nil {
+			t.Fatal("INSERT with tenant_id = tenant A while scoped to tenant B succeeded, want it rejected by WITH CHECK")
+		}
+	})
+
+	t.Run("an UPDATE of a catalogue item scoped to tenant A moving its tenant_id to tenant B either keeps the original tenant or is rejected", func(t *testing.T) {
+		// The WITH CHECK half of the policy, exercised on UPDATE this
+		// time, bypassing CatalogueItemRepository entirely: the new row
+		// version (tenant_id = tenant B) is checked against the scope
+		// the transaction is set_config'd to (tenant A), so the row can
+		// never actually move to another tenant.
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantA.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		var gotTenantID uuid.UUID
+
+		err = tx.QueryRow(ctx,
+			`UPDATE catalogue_items SET tenant_id = $1 WHERE id = $2 RETURNING tenant_id`,
+			tenantB.ID, catalogueItemA.ID,
+		).Scan(&gotTenantID)
+		if err != nil {
+			// Rejected outright: WITH CHECK doing its job, the
+			// preferred and expected outcome.
+			return
+		}
+
+		if gotTenantID != tenantA.ID {
+			t.Fatalf("UPDATE moved catalogue item A's tenant_id to %v, want it to stay %v or be rejected entirely", gotTenantID, tenantA.ID)
+		}
 	})
 
 	t.Run("the table owner is still scoped by row level security because of FORCE", func(t *testing.T) {
@@ -968,6 +1129,27 @@ func assertOnlyCustomer(t *testing.T, customers []storage.Customer, wantID uuid.
 	if customers[0].ID != wantID {
 		t.Fatalf("got customer %v, want %v", customers[0].ID, wantID)
 	}
+}
+
+// catalogueItemIDs decodes a literal "SELECT * FROM catalogue_items"
+// result into the ids it carries, the same pattern accountIDs and
+// customerIDs use for their own tables: catalogueItemRawRow's "db"
+// tags, not column position, do the matching, so the test stays
+// correct even if a later migration adds a column to catalogue_items.
+func catalogueItemIDs(t *testing.T, rows pgx.Rows) []uuid.UUID {
+	t.Helper()
+
+	records, err := pgx.CollectRows(rows, pgx.RowToStructByName[catalogueItemRawRow])
+	if err != nil {
+		t.Fatalf("scan catalogue items: %v", err)
+	}
+
+	ids := make([]uuid.UUID, len(records))
+	for i, record := range records {
+		ids[i] = record.ID
+	}
+
+	return ids
 }
 
 func assertOnlyCatalogueItem(t *testing.T, items []storage.CatalogueItem, wantID uuid.UUID) {
