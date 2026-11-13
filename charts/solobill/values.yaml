@@ -55,19 +55,17 @@ service:
 
 # The second, administrative container port cmd/solobill listens on
 # through govue's httpserver.RunAdmin: /metrics, /healthz and /readyz live
-# here now, nowhere on service.port, so anything reaching this application
-# only through the Ingress (which routes to service.port alone, see
-# templates/ingress.yaml) can no longer reach them. Must match the port
-# encoded in config.adminListenAddr (default ":8081" for both).
+# here, nowhere on service.port. Must match the port encoded in
+# config.adminListenAddr (default ":8081" for both).
 #
-# Deliberately NOT exposed on the Service above: a kubelet reaches
-# livenessProbe/readinessProbe directly on the pod's own IP, never through
-# the Service, and no ServiceMonitor or scrape config exists in this chart
-# yet (see the issue this port was introduced for). Add it to
-# templates/service.yaml's own ports list, as its own named port, only once
-# something in-cluster actually needs to reach it through the Service
-# rather than the pod directly; exposing it earlier would only widen who
-# can reach it for no present use.
+# Exposed on the Service as its own named port; see templates/service.yaml's
+# own comment and README.md's "Metrics and probes live on their own port"
+# section for why. templates/ingress.yaml still only ever
+# references service.port, never this one, so an external caller still
+# cannot reach it through the Ingress. A pod IP is routable from anywhere in
+# the cluster regardless of whether this port sits on the Service, so
+# leaving it off the Service narrowed one convenient path, not the actual
+# one; closing that off for real is a NetworkPolicy, tracked separately.
 adminPort: 8081
 
 ingress:

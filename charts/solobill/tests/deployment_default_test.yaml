@@ -231,18 +231,29 @@ tests:
           path: metadata.labels["app.kubernetes.io/managed-by"]
           value: Helm
 
-  - it: renders a ClusterIP Service exposing only the public port, never the admin one
+  - it: renders a ClusterIP Service exposing both the public and the admin port, named
     template: templates/service.yaml
     asserts:
       - equal:
           path: spec.type
           value: ClusterIP
-      - equal:
-          path: spec.ports[0].port
-          value: 8080
       - lengthEqual:
           path: spec.ports
-          count: 1
+          count: 2
+      - contains:
+          path: spec.ports
+          content:
+            name: http
+            port: 8080
+            targetPort: http
+            protocol: TCP
+      - contains:
+          path: spec.ports
+          content:
+            name: admin
+            port: 8081
+            targetPort: admin
+            protocol: TCP
 
   - it: creates a ServiceAccount with no RBAC by default
     template: templates/serviceaccount.yaml

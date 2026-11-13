@@ -184,23 +184,30 @@ field as secret-only instead; this is solobill's own contract, verified by readi
 ## Metrics and probes live on their own port
 
 `cmd/solobill` runs two listeners, through govue's `httpserver.RunAdmin`: the public one,
-`config.listenAddr`/`service.port`, which this chart's `Ingress` routes to, and a second,
-administrative one, `config.adminListenAddr`/`adminPort`, which it does not. `/metrics`,
-`/healthz` and `/readyz` are served only on the second: anything that can reach this
-application through its `Ingress` can no longer scrape its metrics or poll its probes, which
-it previously could, since all three used to share the public listener. `templates/ingress.yaml`
-only ever references `service.port`, never `adminPort`, so the admin listener is reachable only
-by a caller already inside the cluster, pod to pod.
+`config.listenAddr`/`service.port`, and a second, administrative one,
+`config.adminListenAddr`/`adminPort`, serving `/metrics`, `/healthz` and `/readyz`. The
+`Service` exposes both, each as its own named port (`http` and `admin`); `templates/ingress.yaml`
+routes only to `service.port`, never to `adminPort`, so a caller reaching this application
+through the `Ingress` still cannot scrape its metrics or poll its probes that way.
 
-`adminPort` is deliberately not added to `templates/service.yaml`'s own ports list.
-`livenessProbe` and `readinessProbe` reach it by naming the container port directly
-(`port: admin`), which a kubelet resolves against the pod's own IP, never through the
-`Service`. No scrape config exists in this chart yet; a `PodMonitor` is the first option once
-one is needed, since it scrapes the pod IP and its named container port directly, the same way
-the probes already do, and needs no `Service` port at all. Reach for a `ServiceMonitor` only if
-a `PodMonitor` is not available in the target cluster: it needs `adminPort` added to the
-`Service` as its own named port, which exposes the admin listener there ahead of the actual
-need and reverses the decision above.
+Earlier, `adminPort` was deliberately left off the `Service`, on the reasoning that this
+narrowed who could reach it. That reasoning does not hold: a pod IP is routable from anywhere
+inside the cluster regardless of whether a `Service` also exposes that port, so leaving it off
+removed a convenient path to the admin listener, not the only path. Reaching it from inside the
+cluster is a `NetworkPolicy`'s job, not the Service's absence of a port; adding one for this
+chart is tracked separately (#20). Until it lands, the admin listener is reachable by any pod
+in the cluster that can resolve the `Service` or the pod IP directly, the same as it already
+was.
+
+`livenessProbe` and `readinessProbe` still reach `adminPort` by naming the container port
+directly (`port: admin`), which a kubelet resolves against the pod's own IP, never through the
+`Service`; that choice is unrelated to whether the `Service` also exposes the port. No scrape
+config exists in this chart yet. A `PodMonitor` remains the better default once one is added: it
+scrapes the pod IP and its named container port directly, the same way the probes already do,
+needs no `Service` port of its own, and keeps working for a pod that is not yet `Ready` (not
+yet behind the `Service`'s endpoints), which matters for catching a startup failure. A
+`ServiceMonitor` is only the fallback for a cluster whose Prometheus Operator is not configured
+to discover `PodMonitor` resources; it now has the `Service` port it would need either way.
 
 ## Values
 
@@ -222,7 +229,7 @@ need and reverses the decision above.
 | `securityContext` | Container-level security context: read-only root filesystem, no privilege escalation, all capabilities dropped. Safe: `cmd/solobill` keeps its session store in memory and writes nothing else to disk. | see `values.yaml` |
 | `service.type` | `Service` type. | `ClusterIP` |
 | `service.port` | `Service` and public container port. Keep in sync with `config.listenAddr`. | `8080` |
-| `adminPort` | Administrative container port (`/metrics`, `/healthz`, `/readyz`). Keep in sync with `config.adminListenAddr`. Not exposed on the `Service`; see "Metrics and probes live on their own port" above. | `8081` |
+| `adminPort` | Administrative container port (`/metrics`, `/healthz`, `/readyz`). Keep in sync with `config.adminListenAddr`. Exposed on the `Service` as its own named port; the `Ingress` still never routes to it. See "Metrics and probes live on their own port" above. | `8081` |
 | `ingress.enabled` | Create an `Ingress`. Requires `config.trustedProxies` to be set; see that row. Mutually exclusive with `httpRoute.enabled`; see "External routing" above. | `false` |
 | `ingress.className` | `ingressClassName` to set. | `""` |
 | `ingress.annotations` | Annotations for the `Ingress`. | `{}` |
