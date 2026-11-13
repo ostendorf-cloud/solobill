@@ -195,9 +195,12 @@ by a caller already inside the cluster, pod to pod.
 `adminPort` is deliberately not added to `templates/service.yaml`'s own ports list.
 `livenessProbe` and `readinessProbe` reach it by naming the container port directly
 (`port: admin`), which a kubelet resolves against the pod's own IP, never through the
-`Service`. No `ServiceMonitor` or scrape config exists in this chart yet; add `adminPort` to
-the `Service` as its own named port only once something in-cluster needs to reach it that way,
-rather than exposing it on the `Service` ahead of an actual need.
+`Service`. No scrape config exists in this chart yet; a `PodMonitor` is the first option once
+one is needed, since it scrapes the pod IP and its named container port directly, the same way
+the probes already do, and needs no `Service` port at all. Reach for a `ServiceMonitor` only if
+a `PodMonitor` is not available in the target cluster: it needs `adminPort` added to the
+`Service` as its own named port, which exposes the admin listener there ahead of the actual
+need and reverses the decision above.
 
 ## Values
 

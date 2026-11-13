@@ -69,9 +69,14 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 
 COPY --from=build /out/solobill /usr/local/bin/solobill
 
-# Matches LISTEN_ADDR's default (":8080", internal/config.Load). Override
-# LISTEN_ADDR and this EXPOSE together if a deployment needs another port.
+# Matches LISTEN_ADDR's default (":8080", internal/config.Load) and
+# ADMIN_LISTEN_ADDR's default (":8081", the same file): the public
+# listener Ingress routes to, and the administrative one it does not, see
+# internal/httpapi's package doc for why the two are split. Override
+# LISTEN_ADDR, ADMIN_LISTEN_ADDR and both EXPOSE lines together if a
+# deployment needs other ports.
 EXPOSE 8080
+EXPOSE 8081
 
 # Numeric, not "nonroot:nonroot": the same uid/gid the base image's own
 # nonroot user already resolves to, and so redundant with the image's own
