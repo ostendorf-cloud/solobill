@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
 # Frontend build stage: produces the dist/ bundle cmd/solobill's
 # go:embed directive needs populated before the Go stage below can even
@@ -11,7 +11,7 @@
 # web/vite.config.ts's own outDir is "../cmd/solobill/dist", relative to
 # web/, so this stage keeps the same sibling layout the repository itself
 # has (cmd/ next to web/) instead of building web/ in isolation.
-FROM node:26.13.0-bookworm-slim AS web
+FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS web
 
 WORKDIR /src
 
@@ -33,7 +33,7 @@ RUN mkdir -p cmd/solobill && cd web && pnpm run build
 # 1.27.x): see mise.toml's own comment for why golangci-lint 2.15.0
 # specifically needs that exact patch, a constraint this image is kept
 # aligned with even though golangci-lint itself never runs here.
-FROM golang:1.27.0-bookworm AS build
+FROM golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS build
 
 WORKDIR /src
 
@@ -65,7 +65,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/solobill ./cmd/sol
 # itself the distroless project's own maintained, documented tag, not a
 # floating "latest" - acceptable as the alternative to a digest, and the
 # same choice cve-notifier already made.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 COPY --from=build /out/solobill /usr/local/bin/solobill
 
