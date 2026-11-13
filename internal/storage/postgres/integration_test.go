@@ -59,6 +59,26 @@ type accountRawRow struct {
 	UpdatedAt       time.Time `db:"updated_at"`
 }
 
+// customerRawRow mirrors the customers table's own column order and
+// names, used only to decode the literal, deliberately unscoped "SELECT
+// * FROM customers" below, the same reason accountRawRow exists for
+// accounts: that query has to stay exactly that, with no column list
+// and no WHERE clause, to prove what it is meant to prove.
+type customerRawRow struct {
+	ID          uuid.UUID  `db:"id"`
+	TenantID    uuid.UUID  `db:"tenant_id"`
+	Name        string     `db:"name"`
+	Email       *string    `db:"email"`
+	VATID       *string    `db:"vat_id"`
+	Street      *string    `db:"street"`
+	PostalCode  *string    `db:"postal_code"`
+	City        *string    `db:"city"`
+	CountryCode *string    `db:"country_code"`
+	DeletedAt   *time.Time `db:"deleted_at"`
+	CreatedAt   time.Time  `db:"created_at"`
+	UpdatedAt   time.Time  `db:"updated_at"`
+}
+
 // TestRowLevelSecurity is the single most important test in this
 // milestone: it proves that Postgres row level security, not application
 // code, is what actually keeps one tenant's rows out of another tenant's
@@ -125,6 +145,60 @@ func TestRowLevelSecurity(t *testing.T) {
 		return err
 	}); err != nil {
 		t.Fatalf("create account under tenant B: %v", err)
+	}
+
+	var customerA, customerB storage.Customer
+
+	if err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+		var err error
+		customerA, err = store.Customers().Create(ctx, storage.Customer{
+			TenantID: tenantA.ID,
+			Name:     "Customer A",
+		})
+
+		return err
+	}); err != nil {
+		t.Fatalf("create customer under tenant A: %v", err)
+	}
+
+	if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+		var err error
+		customerB, err = store.Customers().Create(ctx, storage.Customer{
+			TenantID: tenantB.ID,
+			Name:     "Customer B",
+		})
+
+		return err
+	}); err != nil {
+		t.Fatalf("create customer under tenant B: %v", err)
+	}
+
+	var catalogueItemA, catalogueItemB storage.CatalogueItem
+
+	if err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+		var err error
+		catalogueItemA, err = store.CatalogueItems().Create(ctx, storage.CatalogueItem{
+			TenantID:       tenantA.ID,
+			Name:           "Catalogue Item A",
+			UnitPriceCents: 1000,
+		})
+
+		return err
+	}); err != nil {
+		t.Fatalf("create catalogue item under tenant A: %v", err)
+	}
+
+	if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+		var err error
+		catalogueItemB, err = store.CatalogueItems().Create(ctx, storage.CatalogueItem{
+			TenantID:       tenantB.ID,
+			Name:           "Catalogue Item B",
+			UnitPriceCents: 2000,
+		})
+
+		return err
+	}); err != nil {
+		t.Fatalf("create catalogue item under tenant B: %v", err)
 	}
 
 	t.Run("tenant A sees only its own account through the repository", func(t *testing.T) {
@@ -382,6 +456,212 @@ func TestRowLevelSecurity(t *testing.T) {
 		}
 	})
 
+	t.Run("tenant A sees only its own customer through the repository", func(t *testing.T) {
+		var customers []storage.Customer
+
+		if err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			var err error
+			customers, err = store.Customers().List(ctx)
+
+			return err
+		}); err != nil {
+			t.Fatalf("list customers as tenant A: %v", err)
+		}
+
+		assertOnlyCustomer(t, customers, customerA.ID)
+	})
+
+	t.Run("tenant B sees only its own customer through the repository", func(t *testing.T) {
+		var customers []storage.Customer
+
+		if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+			var err error
+			customers, err = store.Customers().List(ctx)
+
+			return err
+		}); err != nil {
+			t.Fatalf("list customers as tenant B: %v", err)
+		}
+
+		assertOnlyCustomer(t, customers, customerB.ID)
+	})
+
+	t.Run("FindByID for another tenant's customer id returns not found, not the real row", func(t *testing.T) {
+		err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			_, err := store.Customers().FindByID(ctx, customerB.ID)
+
+			return err
+		})
+		if err == nil {
+			t.Fatal("FindByID(customerB.ID) while scoped to tenant A succeeded, want storage.ErrNotFound")
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("FindByID(customerB.ID) while scoped to tenant A: err = %v, want errors.Is(err, storage.ErrNotFound)", err)
+		}
+	})
+
+	t.Run("Update on another tenant's customer id while scoped to the wrong tenant returns not found", func(t *testing.T) {
+		err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			_, err := store.Customers().Update(ctx, storage.Customer{
+				ID:       customerB.ID,
+				TenantID: tenantB.ID,
+				Name:     "Renamed by tenant A",
+			})
+
+			return err
+		})
+		if err == nil {
+			t.Fatal("Update(customerB.ID) while scoped to tenant A succeeded, want storage.ErrNotFound")
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("Update(customerB.ID) while scoped to tenant A: err = %v, want errors.Is(err, storage.ErrNotFound)", err)
+		}
+	})
+
+	t.Run("Delete on another tenant's customer id while scoped to the wrong tenant returns not found and leaves it active", func(t *testing.T) {
+		err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			return store.Customers().Delete(ctx, customerB.ID)
+		})
+		if err == nil {
+			t.Fatal("Delete(customerB.ID) while scoped to tenant A succeeded, want storage.ErrNotFound")
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("Delete(customerB.ID) while scoped to tenant A: err = %v, want errors.Is(err, storage.ErrNotFound)", err)
+		}
+
+		// The error alone only proves the call was rejected; this proves
+		// the delete did not take effect either, by confirming tenant B
+		// still sees its own customer as active (deleted_at still unset)
+		// through its own, correctly scoped List.
+		var customers []storage.Customer
+
+		if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+			var err error
+			customers, err = store.Customers().List(ctx)
+
+			return err
+		}); err != nil {
+			t.Fatalf("list customers as tenant B after blocked cross-tenant delete: %v", err)
+		}
+
+		assertOnlyCustomer(t, customers, customerB.ID)
+	})
+
+	t.Run("an unscoped SELECT star on a transaction scoped to tenant B still sees only tenant B's customer", func(t *testing.T) {
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		rows, err := tx.Query(ctx, `SELECT * FROM customers`)
+		if err != nil {
+			t.Fatalf("SELECT * FROM customers: %v", err)
+		}
+
+		ids := customerIDs(t, rows)
+
+		if len(ids) != 1 || ids[0] != customerB.ID {
+			t.Fatalf("SELECT * FROM customers while scoped to tenant B = %v, want exactly [%v]", ids, customerB.ID)
+		}
+	})
+
+	t.Run("tenant A sees only its own catalogue item through the repository", func(t *testing.T) {
+		var items []storage.CatalogueItem
+
+		if err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			var err error
+			items, err = store.CatalogueItems().List(ctx)
+
+			return err
+		}); err != nil {
+			t.Fatalf("list catalogue items as tenant A: %v", err)
+		}
+
+		assertOnlyCatalogueItem(t, items, catalogueItemA.ID)
+	})
+
+	t.Run("tenant B sees only its own catalogue item through the repository", func(t *testing.T) {
+		var items []storage.CatalogueItem
+
+		if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+			var err error
+			items, err = store.CatalogueItems().List(ctx)
+
+			return err
+		}); err != nil {
+			t.Fatalf("list catalogue items as tenant B: %v", err)
+		}
+
+		assertOnlyCatalogueItem(t, items, catalogueItemB.ID)
+	})
+
+	t.Run("FindByID for another tenant's catalogue item id returns not found, not the real row", func(t *testing.T) {
+		err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			_, err := store.CatalogueItems().FindByID(ctx, catalogueItemB.ID)
+
+			return err
+		})
+		if err == nil {
+			t.Fatal("FindByID(catalogueItemB.ID) while scoped to tenant A succeeded, want storage.ErrNotFound")
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("FindByID(catalogueItemB.ID) while scoped to tenant A: err = %v, want errors.Is(err, storage.ErrNotFound)", err)
+		}
+	})
+
+	t.Run("Update on another tenant's catalogue item id while scoped to the wrong tenant returns not found", func(t *testing.T) {
+		err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			_, err := store.CatalogueItems().Update(ctx, storage.CatalogueItem{
+				ID:             catalogueItemB.ID,
+				TenantID:       tenantB.ID,
+				Name:           "Renamed by tenant A",
+				UnitPriceCents: 9999,
+			})
+
+			return err
+		})
+		if err == nil {
+			t.Fatal("Update(catalogueItemB.ID) while scoped to tenant A succeeded, want storage.ErrNotFound")
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("Update(catalogueItemB.ID) while scoped to tenant A: err = %v, want errors.Is(err, storage.ErrNotFound)", err)
+		}
+	})
+
+	t.Run("Delete on another tenant's catalogue item id while scoped to the wrong tenant returns not found and leaves it active", func(t *testing.T) {
+		err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
+			return store.CatalogueItems().Delete(ctx, catalogueItemB.ID)
+		})
+		if err == nil {
+			t.Fatal("Delete(catalogueItemB.ID) while scoped to tenant A succeeded, want storage.ErrNotFound")
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("Delete(catalogueItemB.ID) while scoped to tenant A: err = %v, want errors.Is(err, storage.ErrNotFound)", err)
+		}
+
+		// Same proof as the customer delete subtest above: confirm
+		// tenant B still sees its own catalogue item as active through
+		// its own, correctly scoped List, not merely that the blocked
+		// call returned an error.
+		var items []storage.CatalogueItem
+
+		if err := store.WithTenant(ctx, tenantB.ID, func(ctx context.Context) error {
+			var err error
+			items, err = store.CatalogueItems().List(ctx)
+
+			return err
+		}); err != nil {
+			t.Fatalf("list catalogue items as tenant B after blocked cross-tenant delete: %v", err)
+		}
+
+		assertOnlyCatalogueItem(t, items, catalogueItemB.ID)
+	})
+
 	t.Run("the table owner is still scoped by row level security because of FORCE", func(t *testing.T) {
 		// Every role exercised above is either DATABASE_URL's own role,
 		// a superuser that bypasses row level security unconditionally
@@ -608,7 +888,8 @@ $$;`
 	grant := `
 GRANT USAGE ON SCHEMA public TO ` + testAppRole + `;
 GRANT SELECT, INSERT ON tenants TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE ON accounts, invites TO ` + testAppRole + `;`
+GRANT SELECT, INSERT, UPDATE ON accounts, invites TO ` + testAppRole + `;
+GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO ` + testAppRole + `;`
 
 	if _, err := adminPool.Exec(ctx, grant); err != nil {
 		t.Fatalf("grant %s privileges: %v", testAppRole, err)
@@ -653,5 +934,50 @@ func assertOnlyAccount(t *testing.T, accounts []storage.Account, wantID uuid.UUI
 
 	if accounts[0].ID != wantID {
 		t.Fatalf("got account %v, want %v", accounts[0].ID, wantID)
+	}
+}
+
+// customerIDs decodes a literal "SELECT * FROM customers" result into
+// the ids it carries, the same pattern accountIDs uses for accounts:
+// customerRawRow's "db" tags, not column position, do the matching, so
+// the test stays correct even if a later migration adds a column to
+// customers.
+func customerIDs(t *testing.T, rows pgx.Rows) []uuid.UUID {
+	t.Helper()
+
+	records, err := pgx.CollectRows(rows, pgx.RowToStructByName[customerRawRow])
+	if err != nil {
+		t.Fatalf("scan customers: %v", err)
+	}
+
+	ids := make([]uuid.UUID, len(records))
+	for i, record := range records {
+		ids[i] = record.ID
+	}
+
+	return ids
+}
+
+func assertOnlyCustomer(t *testing.T, customers []storage.Customer, wantID uuid.UUID) {
+	t.Helper()
+
+	if len(customers) != 1 {
+		t.Fatalf("got %d customers, want exactly 1", len(customers))
+	}
+
+	if customers[0].ID != wantID {
+		t.Fatalf("got customer %v, want %v", customers[0].ID, wantID)
+	}
+}
+
+func assertOnlyCatalogueItem(t *testing.T, items []storage.CatalogueItem, wantID uuid.UUID) {
+	t.Helper()
+
+	if len(items) != 1 {
+		t.Fatalf("got %d catalogue items, want exactly 1", len(items))
+	}
+
+	if items[0].ID != wantID {
+		t.Fatalf("got catalogue item %v, want %v", items[0].ID, wantID)
 	}
 }
