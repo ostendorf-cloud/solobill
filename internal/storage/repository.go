@@ -84,3 +84,49 @@ type InviteRepository interface {
 	// can never be attached to, or swapped under, an already-used invite.
 	SetTOTPSecret(ctx context.Context, id uuid.UUID, secret string) (Invite, error)
 }
+
+// CustomerRepository persists and queries customers. Every method must
+// run inside a context TenantScope.WithTenant produced; see
+// ErrNoTenantScope.
+type CustomerRepository interface {
+	Create(ctx context.Context, customer Customer) (Customer, error)
+
+	// FindByID does not filter on a soft-deleted row: a later document
+	// still has to resolve a customer it references by id, even one that
+	// has since been deleted, so a point lookup by id must keep
+	// answering for it. This is the opposite of List, deliberately; see
+	// List.
+	FindByID(ctx context.Context, id uuid.UUID) (Customer, error)
+
+	// List returns only active (not soft-deleted) customers: it backs a
+	// human-facing picker (for example a document's "choose a customer"
+	// step), which must never offer an already-deleted customer. This is
+	// the opposite of FindByID, deliberately; see FindByID.
+	List(ctx context.Context) ([]Customer, error)
+
+	// Update is guarded against a soft-deleted row: it fails with
+	// ErrNotFound, not ErrConflict, when the row does not exist or is
+	// already deleted. Unlike InviteRepository.MarkUsed, there is no
+	// concurrent-redeem race to report as a conflict here, only "no such
+	// active row to update", which ErrNotFound already means everywhere
+	// else in this package.
+	Update(ctx context.Context, customer Customer) (Customer, error)
+
+	// Delete soft deletes: it sets deleted_at rather than removing the
+	// row, and fails with ErrNotFound when the row does not exist or is
+	// already deleted, for the same reason Update does.
+	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+// CatalogueItemRepository persists and queries catalogue items. Every
+// method must run inside a context TenantScope.WithTenant produced; see
+// ErrNoTenantScope. The FindByID-versus-List asymmetry, and the
+// ErrNotFound choice on Update and Delete, are the same as
+// CustomerRepository's; see its doc comments for the reasoning.
+type CatalogueItemRepository interface {
+	Create(ctx context.Context, item CatalogueItem) (CatalogueItem, error)
+	FindByID(ctx context.Context, id uuid.UUID) (CatalogueItem, error)
+	List(ctx context.Context) ([]CatalogueItem, error)
+	Update(ctx context.Context, item CatalogueItem) (CatalogueItem, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+}
