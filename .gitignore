@@ -32,3 +32,7 @@ coverage/
 
 # Local secrets. .env.example stays tracked; nothing else named *.env does.
 *.env
+
+# Task's scratch directory. `task test:helm` builds a helm plugin directory here
+# rather than relying on helm's own, which a cached tool install never populates.
+.task/
