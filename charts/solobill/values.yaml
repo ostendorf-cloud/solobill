@@ -1,0 +1,269 @@
+# Default values for solobill.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ostendorf-cloud/solobill
+  # Defaults to .Chart.AppVersion when left empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # No RBAC is created: this application makes no Kubernetes API calls of its own.
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# Matches the Dockerfile's distroless "nonroot" base image, uid/gid 65532.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# readOnlyRootFilesystem is safe here: cmd/solobill keeps its session store in
+# memory (session.NewMemoryStore) and writes nothing to disk at runtime, the
+# database connection and any OIDC/TLS calls are all over the network, and the
+# distroless base image needs no writable path of its own either. Verified by
+# reading cmd/solobill/main.go; there is no local file write in the request
+# path this chart's Deployment exercises.
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  # Also used as the container port and for the probes: must match the port
+  # encoded in config.listenAddr (default ":8080" for both).
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: solobill.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    # A govue HTTP server with one Postgres pool and no background polling:
+    # light at idle, matching cve-notifier's own baseline request for a
+    # comparably small Go service.
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    # No CPU limit: request handling is bursty (one HTTP request at a time
+    # per goroutine), and a CPU limit would only throttle the pod mid-request
+    # for being briefly busy, not for being broken. A memory limit stays in
+    # place as a safety net against a genuine leak.
+    memory: 256Mi
+
+# Disabled by default: db/migrations is applied by this chart's own
+# migrationJob (a pre-install/pre-upgrade hook, see below) before this
+# Deployment's pods are ever created or updated, so cmd/solobill's own
+# startup never waits on a migration. Enable this only for a deployment that
+# adds its own slow startup work in front of config.Load.
+startupProbe:
+  enabled: false
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  failureThreshold: 30
+
+livenessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Plain, non-secret configuration, mapped 1:1 from internal/config.Config
+# (see that package's own doc comment for the authoritative list). See
+# README.md's values table for what each one does.
+config:
+  listenAddr: ":8080"
+  logLevel: "info"
+
+  # --------------------------------------------------------------------
+  # Database
+  # --------------------------------------------------------------------
+  # databaseUrl is deliberately plain, not secret: internal/config.Config's
+  # own doc comment defines DatabaseURL as "the connection URL without
+  # credentials: scheme, host, port, database name and query parameters
+  # only", with databaseUser and the secret-only database password below
+  # assembled into it by Config.DatabaseDSN. This is NOT the same contract
+  # cve-notifier's own DATABASE_URL has: that field carries full
+  # credentials (user:pass@host/db) and is therefore read only from
+  # existingSecret there. solobill's own config package draws this
+  # distinction on purpose (see internal/config.Config's DatabaseURL
+  # field comment), so this chart follows solobill's contract, not
+  # cve-notifier's.
+  #
+  # Required (internal/config.Load calls l.Required("DATABASE_URL")); no
+  # usable default exists for a database this chart does not provision.
+  # Example: "postgres://postgres.example.svc:5432/solobill?sslmode=require".
+  databaseUrl: ""
+  # databaseUser is plain too: a role name is not a credential by itself.
+  # Required (l.Required("DATABASE_USER")).
+  #
+  # ------------------------------------------------------------------
+  # The database role MUST be NOSUPERUSER and NOBYPASSRLS
+  # ------------------------------------------------------------------
+  # db/migrations enables FORCE ROW LEVEL SECURITY on accounts and
+  # invites. FORCE makes the policy bind even the table's own owning
+  # role, but a Postgres superuser (or any role with BYPASSRLS) is
+  # exempt from row level security regardless of FORCE. If the role
+  # named here has either property, every row-level-security policy
+  # this application depends on for tenant isolation provides no actual
+  # protection, silently.
+  #
+  # Unlike docker-compose.yaml's own local Postgres, which this chart's
+  # cluster-operated Postgres is not: that compose file brings its own
+  # throwaway database and therefore has to script a second, restricted
+  # role itself (docker/postgres/init-app-role.sh), on top of a bootstrap
+  # superuser used only to run migrations. This chart's Postgres "already
+  # runs in the cluster" instead: the cluster operator who provisions the
+  # database and this role is responsible for making it NOSUPERUSER
+  # NOBYPASSRLS, not this chart, which has no way to enforce that from
+  # here. Also unlike docker-compose's two-role split: a single
+  # correctly-provisioned NOSUPERUSER NOBYPASSRLS role that OWNS its own
+  # tables is still fully bound by FORCE ROW LEVEL SECURITY (ownership is
+  # irrelevant once FORCE is set; only superuser/BYPASSRLS bypasses it),
+  # so this one role can safely run both db/migrations (via
+  # migrationJob below) and the application's own queries. This chart
+  # does not need, and does not implement, docker-compose's
+  # bootstrap-superuser-for-migrations-only split.
+  databaseUser: ""
+  # sessionAllowPlainHttp drops the Secure cookie attribute, matching
+  # internal/config.Config's own SessionAllowPlainHTTP doc comment: "a
+  # real deployment sits behind a TLS-terminating ingress and must leave
+  # this false". Deliberately false here, NOT true: true is
+  # docker-compose.yaml's own local-dev-only setting, for a plain-HTTP
+  # localhost Compose network with no TLS-terminating ingress in front of
+  # it. Never set this true behind a real ingress.
+  sessionAllowPlainHttp: false
+
+  # CORS allow-list. Empty, the default, is the common case where
+  # cmd/solobill serves the built SPA itself (same-origin): no CORS
+  # middleware is built at all. Set this only for a frontend served from
+  # a different origin than this API.
+  allowedOrigins: []
+  # CIDRs whose X-Forwarded-For entry is trusted as the real client
+  # address, for example the cluster's own ingress controller pod CIDR.
+  # Empty, the default, trusts only the direct TCP peer (this Service),
+  # which is correct with no ingress or proxy in front of the pod.
+  trustedProxies: []
+
+  # Token bucket applied to local login and invite accept.
+  rateLimitBurst: 10
+  rateLimitPer: "1m"
+
+  # How long a freshly created invite stays redeemable when a
+  # create-invite request does not specify one.
+  inviteDefaultTtl: "168h"
+
+  # --------------------------------------------------------------------
+  # OIDC
+  # --------------------------------------------------------------------
+  # Optional as a whole, matching internal/config.Config's own
+  # OIDCEnabled doc comment: OIDC is off exactly when issuerUrl is empty,
+  # the same rule cmd/solobill applies to OIDC_ISSUER_URL itself. A
+  # single sole trader's own tenant does not need an identity provider at
+  # all. Once issuerUrl is set, clientId, redirectUrl and
+  # defaultTenantSlug below, and existingSecret.oidcClientSecretKey, are
+  # all required together: internal/config.Load fails the deployment
+  # fast at startup if any one of the four is set without the others.
+  oidc:
+    issuerUrl: ""
+    clientId: ""
+    redirectUrl: ""
+    # Defaults to govue oidc.DefaultScopes when empty. Add the scope a
+    # Keycloak client mapper maps realm roles under (commonly "roles")
+    # here if the identity provider needs it.
+    scopes: []
+    # The single tenant every OIDC login resolves to; see
+    # internal/config.Load's own package doc section "Resolving a
+    # tenant for OIDC" for why one configured tenant, not a
+    # per-request one, is this milestone's only working answer.
+    defaultTenantSlug: ""
+
+# This chart never creates a Secret from plaintext values (see README.md).
+# Every secret-shaped setting is read from a Secret the installer already
+# has, named here and referenced key by key, so a secret-manager operator
+# that produces different key names is never forced into one shape.
+existingSecret:
+  # Required: name of the existing Secret carrying every key below.
+  name: ""
+  # Required keys: DATABASE_PASSWORD, SESSION_CODEC_KEY and CSRF_KEY have
+  # no fallback, so a missing key in the referenced Secret surfaces as a
+  # real Kubernetes error (CreateContainerConfigError) instead of a
+  # silently empty value.
+  #
+  # The role named by config.databaseUser MUST be NOSUPERUSER and
+  # NOBYPASSRLS; see config.databaseUser's own comment above for the
+  # full reasoning.
+  databasePasswordKey: "DATABASE_PASSWORD"
+  # Hex encoded, at least 32 bytes decoded (session.MinKeyBytes), for
+  # example generated with "openssl rand -hex 32". Two different keys
+  # for two different HMAC purposes; see internal/config.Config's own
+  # SessionCodecKey/CSRFKey doc comment for why reusing one would be a
+  # cryptographic smell this chart does not repeat.
+  sessionCodecKeyKey: "SESSION_CODEC_KEY"
+  csrfKeyKey: "CSRF_KEY"
+  # Optional: left empty, OIDC_CLIENT_SECRET is omitted entirely rather
+  # than wired to a key that may not exist. Required together with
+  # config.oidc.issuerUrl/clientId/redirectUrl/defaultTenantSlug once
+  # OIDC is actually configured.
+  oidcClientSecretKey: ""
+
+# A pre-install,pre-upgrade Helm hook Job that runs "dbmate up" against the
+# same connection config.databaseUrl/databaseUser/existingSecret.name above
+# configure, applying db/migrations (embedded into this chart as a
+# ConfigMap, see templates/migration-configmap.yaml) before this chart's own
+# Deployment is created or updated. pre-install,pre-upgrade, not just
+# pre-install: an upgrade that adds a migration must not let the new image's
+# pods start against the old schema. dbmate's own "up" command is
+# idempotent (it tracks applied migrations in its own schema_migrations
+# table), so re-running it against an already-migrated database on every
+# upgrade is safe, not merely tolerated.
+migrationJob:
+  enabled: true
+  image:
+    # The same official dbmate image docker-compose.yaml already uses for
+    # its own "migrate" service, pinned to the same tag
+    # (docker-compose.yaml's own comment: "Pinned to 2.38.1, the latest
+    # patch in the 2.38 line mise.toml already pins dbmate to").
+    repository: ghcr.io/amacneil/dbmate
+    tag: "2.38.1"
+  annotations: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi

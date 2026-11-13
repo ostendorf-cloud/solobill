@@ -1,0 +1,31 @@
+suite: allowedOrigins and trustedProxies joined as comma-separated lists
+templates:
+  - templates/deployment.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+    allowedOrigins:
+      - https://app.example.com
+      - https://admin.example.com
+    trustedProxies:
+      - 10.0.0.0/8
+      - 192.168.1.1
+tests:
+  - it: joins ALLOWED_ORIGINS with a comma, matching envconf.Loader.List's own split
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALLOWED_ORIGINS
+            value: "https://app.example.com,https://admin.example.com"
+
+  - it: joins TRUSTED_PROXIES with a comma, matching clientip.ParseCIDRs's own split
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: "10.0.0.0/8,192.168.1.1"

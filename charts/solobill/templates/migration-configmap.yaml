@@ -1,0 +1,30 @@
+{{/*
+Embeds db/migrations verbatim, through the charts/solobill/migrations
+symlink (-> ../../db/migrations) committed next to this template: Helm's
+.Files.Glob only ever reads inside a chart's own directory, so the symlink,
+not a hand-copied duplicate, is what keeps this ConfigMap always matching
+what internal/storage actually needs. Guarded so helm template/lint never
+fails if db/migrations is ever empty.
+*/}}
+{{- if .Values.migrationJob.enabled -}}
+{{- $migrations := .Files.Glob "migrations/*.sql" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "solobill.migration.fullname" . }}
+  labels:
+    {{- include "solobill.migration.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+{{- if $migrations }}
+data:
+  {{- range $path, $_ := $migrations }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
+{{- else }}
+data: {}
+{{- end }}
+{{- end -}}

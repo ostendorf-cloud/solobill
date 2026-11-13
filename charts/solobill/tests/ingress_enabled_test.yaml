@@ -1,0 +1,42 @@
+suite: ingress enabled
+templates:
+  - templates/ingress.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: solobill.example.org
+        paths:
+          - path: /
+            pathType: Prefix
+tests:
+  - it: renders exactly one Ingress
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Ingress
+
+  - it: uses the configured ingress class and host
+    asserts:
+      - equal:
+          path: spec.ingressClassName
+          value: nginx
+      - equal:
+          path: spec.rules[0].host
+          value: solobill.example.org
+
+  - it: points the backend at the chart's own Service and port
+    asserts:
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.number
+          value: 8080
+      - equal:
+          path: spec.rules[0].http.paths[0].pathType
+          value: Prefix
