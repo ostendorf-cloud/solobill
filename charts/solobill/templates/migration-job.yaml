@@ -1,28 +1,33 @@
 {{/*
-Runs db/migrations against the exact same connection the Deployment itself
-uses (config.databaseUrl/databaseUser/existingSecret.name), as a
-pre-install,pre-upgrade hook: the new or changed schema must exist before
-this chart's Deployment is created or updated with it, an upgrade included,
-not only a fresh install. dbmate's own "up" command is idempotent (it
-tracks applied migrations in its own schema_migrations table), so
-re-running it on every upgrade against an already-migrated database is
-safe.
+Runs db/migrations as a pre-install,pre-upgrade hook: the new or changed
+schema must exist before this chart's Deployment is created or updated
+with it, an upgrade included, not only a fresh install. dbmate's own "up"
+command is idempotent (it tracks applied migrations in its own
+schema_migrations table), so re-running it on every upgrade against an
+already-migrated database is safe.
 
-One role, not docker-compose.yaml's bootstrap-superuser-plus-restricted-role
-split: a single NOSUPERUSER NOBYPASSRLS role that owns its own tables is
-still fully bound by FORCE ROW LEVEL SECURITY (ownership is irrelevant once
-FORCE is set; only superuser/BYPASSRLS bypasses it), so this Job authenticates
-as the exact same role config.databaseUser/existingSecret.databasePasswordKey
-name for the Deployment itself. See values.yaml's own comment on
-config.databaseUser for the full reasoning and the operator-facing
-requirement (NOSUPERUSER NOBYPASSRLS) this chart cannot enforce from here.
+One role, or two: left empty, the default, migrationJob.databaseUser
+falls back to config.databaseUser, so this Job authenticates as the exact
+same role the Deployment itself uses. That role is still fully bound by
+FORCE ROW LEVEL SECURITY for every ordinary application query (ownership
+is irrelevant to FORCE), but PostgreSQL's own ALTER TABLE reference makes
+ownership, not FORCE, what ALTER TABLE itself checks - so that same role,
+because it owns the tables db/migrations creates, can also run
+ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or drop the policy outright.
+Setting migrationJob.databaseUser to a separate role the application
+itself never authenticates as closes that gap, mirroring
+docker-compose.yaml's own bootstrap-superuser-for-migrations-only split.
+See README.md's "One role, or two" section for the full reasoning, and
+values.yaml's own comment on config.databaseUser for the operator-facing
+requirement (NOSUPERUSER NOBYPASSRLS) this chart cannot enforce from here
+either way.
 
 The official dbmate image has a shell (unlike solobill's own distroless
 runtime image), used here only to assemble the full connection URL dbmate
 needs (DATABASE_URL, with credentials embedded) from config.databaseUrl's
-own credential-free URL plus the user and password: the inverse of
-internal/config.Config.DatabaseDSN, which cmd/solobill itself runs in Go.
-Assembled with plain shell parameter expansion, never sed/echo, so the
+own credential-free URL plus the migration user and password: the inverse
+of internal/config.Config.DatabaseDSN, which cmd/solobill itself runs in
+Go. Assembled with plain shell parameter expansion, never sed/echo, so the
 password is never written to a pattern buffer or stdout. This only works
 correctly when the password contains no character that needs percent
 encoding in a URL; this organisation's own secret-generation convention
@@ -32,6 +37,8 @@ requirement (see values.yaml's existingSecret.databasePasswordKey comment
 and README.md), not a limitation this Job works around silently.
 */}}
 {{- if .Values.migrationJob.enabled -}}
+{{- $migrationUser := .Values.migrationJob.databaseUser | default .Values.config.databaseUser -}}
+{{- $migrationSecretKey := .Values.existingSecret.migrationDatabasePasswordKey | default .Values.existingSecret.databasePasswordKey -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -54,6 +61,10 @@ spec:
     spec:
       restartPolicy: Never
       serviceAccountName: {{ include "solobill.serviceAccountName" . }}
+      # This Job needs the ServiceAccount named above to EXIST (Kubernetes
+      # rejects a pod naming one that does not), but needs no token
+      # mounted from it: it never calls the Kubernetes API.
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -76,12 +87,12 @@ spec:
             - name: DATABASE_URL_BASE
               value: {{ .Values.config.databaseUrl | quote }}
             - name: DATABASE_USER
-              value: {{ .Values.config.databaseUser | quote }}
+              value: {{ $migrationUser | quote }}
             - name: DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.existingSecret.name }}
-                  key: {{ .Values.existingSecret.databasePasswordKey }}
+                  key: {{ $migrationSecretKey }}
             # dbmate's own schema.sql dump is turned off: the migrations
             # volume below is mounted read-only, and nothing in this chart
             # or in solobill's own repository commits or reads a schema.sql,
