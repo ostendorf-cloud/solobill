@@ -7,9 +7,9 @@
 -- of what they ask for.
 
 -- name: CreateCatalogueItem :one
-INSERT INTO catalogue_items (tenant_id, name, description, sku, unit_price_cents)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, tenant_id, name, description, sku, unit_price_cents, deleted_at, created_at, updated_at;
+INSERT INTO catalogue_items (tenant_id, name, description, sku, unit_price_cents, unit)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at;
 
 -- GetCatalogueItemByID deliberately does not filter on deleted_at: a
 -- later document still has to resolve a deleted catalogue item by id
@@ -17,7 +17,7 @@ RETURNING id, tenant_id, name, description, sku, unit_price_cents, deleted_at, c
 -- lookup by id must keep answering for an already soft-deleted row.
 --
 -- name: GetCatalogueItemByID :one
-SELECT id, tenant_id, name, description, sku, unit_price_cents, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at
 FROM catalogue_items
 WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid;
 
@@ -29,7 +29,7 @@ WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')
 -- not in creation order.
 --
 -- name: ListCatalogueItems :many
-SELECT id, tenant_id, name, description, sku, unit_price_cents, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at
 FROM catalogue_items
 WHERE deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 ORDER BY name;
@@ -46,9 +46,10 @@ SET name = $2,
     description = $3,
     sku = $4,
     unit_price_cents = $5,
+    unit = $6,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-RETURNING id, tenant_id, name, description, sku, unit_price_cents, deleted_at, created_at, updated_at;
+RETURNING id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at;
 
 -- DeleteCatalogueItem is the soft delete itself: an UPDATE, never a
 -- DELETE, guarded by "AND deleted_at IS NULL" so a second call against

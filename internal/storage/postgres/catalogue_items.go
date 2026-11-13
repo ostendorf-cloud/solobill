@@ -16,11 +16,22 @@ import (
 // produced; see txFromContext.
 type catalogueItemRepository struct{}
 
+// catalogueItemDefaultUnit mirrors the database's own DEFAULT 'piece' on
+// catalogue_items.unit (see db/migrations), so a caller that leaves
+// storage.CatalogueItem.Unit as the Go zero value gets the same default
+// through either path.
+const catalogueItemDefaultUnit = "piece"
+
 // Create implements storage.CatalogueItemRepository.
 func (r *catalogueItemRepository) Create(ctx context.Context, item storage.CatalogueItem) (storage.CatalogueItem, error) {
 	tx, err := txFromContext(ctx)
 	if err != nil {
 		return storage.CatalogueItem{}, err
+	}
+
+	unit := item.Unit
+	if unit == "" {
+		unit = catalogueItemDefaultUnit
 	}
 
 	row, err := sqlcgen.New(tx).CreateCatalogueItem(ctx, sqlcgen.CreateCatalogueItemParams{
@@ -29,6 +40,7 @@ func (r *catalogueItemRepository) Create(ctx context.Context, item storage.Catal
 		Description:    ptrToText(item.Description),
 		Sku:            ptrToText(item.SKU),
 		UnitPriceCents: item.UnitPriceCents,
+		Unit:           unit,
 	})
 	if err != nil {
 		return storage.CatalogueItem{}, mapWriteError(err)
@@ -93,12 +105,18 @@ func (r *catalogueItemRepository) Update(ctx context.Context, item storage.Catal
 		return storage.CatalogueItem{}, err
 	}
 
+	unit := item.Unit
+	if unit == "" {
+		unit = catalogueItemDefaultUnit
+	}
+
 	row, err := sqlcgen.New(tx).UpdateCatalogueItem(ctx, sqlcgen.UpdateCatalogueItemParams{
 		ID:             item.ID,
 		Name:           item.Name,
 		Description:    ptrToText(item.Description),
 		Sku:            ptrToText(item.SKU),
 		UnitPriceCents: item.UnitPriceCents,
+		Unit:           unit,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -143,6 +161,7 @@ func catalogueItemFromRow(row sqlcgen.CatalogueItem) storage.CatalogueItem {
 		Description:    textToPtr(row.Description),
 		SKU:            textToPtr(row.Sku),
 		UnitPriceCents: row.UnitPriceCents,
+		Unit:           row.Unit,
 		DeletedAt:      timeToPtr(row.DeletedAt),
 		CreatedAt:      timeFromTimestamptz(row.CreatedAt),
 		UpdatedAt:      timeFromTimestamptz(row.UpdatedAt),

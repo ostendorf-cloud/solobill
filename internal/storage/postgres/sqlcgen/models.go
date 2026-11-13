@@ -30,6 +30,7 @@ type CatalogueItem struct {
 	Description    pgtype.Text
 	Sku            pgtype.Text
 	UnitPriceCents int64
+	Unit           string
 	DeletedAt      pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
