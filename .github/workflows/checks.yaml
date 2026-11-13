@@ -152,11 +152,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      # Installs helm-unittest too: see mise.toml's own entry for it for why
+      # it is not a plain "helm plugin install <url>" step here.
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785  # v5.2.8
-      # Not a mise tool: see mise.toml's own comment on the helm pin for why,
-      # and for the verified Helm 3/4 compatibility this exact plugin version
-      # has with the helm version pinned there.
-      - run: helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.2.1
       - run: task test:helm
 
   integration:
