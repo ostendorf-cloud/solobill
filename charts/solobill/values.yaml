@@ -63,6 +63,46 @@ ingress:
           pathType: Prefix
   tls: []
 
+# Gateway API alternative to ingress above. Mutually exclusive with it (see
+# templates/deployment.yaml's own fail guard): an install never renders
+# both for the same hostname. Off by default, same as ingress, so a
+# default install renders no external route at all until one of the two
+# is chosen.
+#
+# The HTTPRoute and Gateway kinds are Gateway API CRDs. This chart never
+# ships them (see kubernetes-conventions) and never creates the Gateway
+# itself: both the CRDs and a running Gateway with a listener that allows
+# this release's namespace are prerequisites, provisioned once per cluster,
+# not by this chart.
+httpRoute:
+  enabled: false
+  # Hostnames this HTTPRoute matches, mirroring ingress.hosts' host field.
+  # A Gateway listener's own hostname (and allowedRoutes) still decides
+  # whether traffic for one of these actually reaches this HTTPRoute; see
+  # kubernetes-conventions.
+  hostnames: []
+  annotations: {}
+  # Routing is fixed to this chart's own Service on service.port: no
+  # values-driven way to add a second backend or a per-path rule, the same
+  # single-backend shape ingress.hosts already assumes. An HTTPRoute rule
+  # with no "matches" defaults to a "/" prefix match per the Gateway API
+  # spec, the same default an Ingress with one "/" path rule gives.
+  parentRefs:
+    # Name of the Gateway this HTTPRoute attaches to. Required when
+    # httpRoute.enabled is true.
+    name: ""
+    # Namespace the Gateway lives in. Required when httpRoute.enabled is
+    # true: a Gateway is usually platform owned and lives in a different
+    # namespace than this release, and Gateway API's own parentRefs
+    # defaults an unset namespace to the HTTPRoute's own namespace, which
+    # is normally wrong here. The Gateway's own allowedRoutes still decides
+    # whether this reference is actually honoured.
+    namespace: ""
+    # Optional: the specific listener to attach to, when the Gateway
+    # exposes more than one, for example separate HTTP and HTTPS
+    # listeners.
+    sectionName: ""
+
 resources:
   requests:
     # A govue HTTP server with one Postgres pool and no background polling:

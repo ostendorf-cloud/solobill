@@ -90,6 +90,32 @@
         "tls": { "type": "array" }
       }
     },
+    "httpRoute": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "hostnames": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "annotations": { "type": "object" },
+        "parentRefs": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the Gateway this HTTPRoute attaches to. Required when httpRoute.enabled is true; enforced by a template fail guard, not minLength, matching this chart's existing pattern for a value with no usable default."
+            },
+            "namespace": {
+              "type": "string",
+              "description": "Namespace the Gateway lives in. Required when httpRoute.enabled is true; see parentRefs.name's own description."
+            },
+            "sectionName": { "type": "string" }
+          }
+        }
+      }
+    },
     "resources": { "type": "object" },
     "startupProbe": {
       "type": "object",

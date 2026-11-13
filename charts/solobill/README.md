@@ -19,6 +19,9 @@ Installs [solobill](https://github.com/ostendorf-cloud/solobill) on a Kubernetes
 - A `Secret` already in the target namespace, created by your own secret manager operator,
   carrying the required database password and signing keys (see "Secrets" below). This chart
   never creates that `Secret` itself.
+- Only if `httpRoute.enabled` is set: the Gateway API CRDs and a running `Gateway` with a
+  listener that allows this release's namespace. See "External routing" below; this chart
+  ships neither.
 
 ## Installing
 
@@ -89,6 +92,57 @@ secret-generation convention (`openssl rand -hex ...`, see this repository's own
 `.env.example`) already produces hex-only passwords, which have none; generate the password the
 same way.
 
+## External routing
+
+This chart reaches external traffic to its own `Service` two ways, chosen by
+`ingress.enabled` and `httpRoute.enabled`. Both default to `false`: a default install creates
+neither, reachable only from inside the cluster, until one is deliberately turned on. They are
+mutually exclusive: turning both on fails the install or upgrade with a readable message
+naming which one to turn off, enforced once in `templates/deployment.yaml`, the one template
+that always renders regardless of which routing flag is set.
+
+### Ingress
+
+Set `ingress.enabled: true`. `ingress.hosts` names the host and path rules, and `ingress.tls`
+carries the certificate configuration directly on the `Ingress` object: this chart owns that
+configuration. `ingress.enabled: true` also requires `config.trustedProxies`; see "Values"
+below for why.
+
+### Gateway API HTTPRoute
+
+Set `httpRoute.enabled: true`, `httpRoute.parentRefs.name` and `httpRoute.parentRefs.namespace`
+to the `Gateway` this release attaches to. The namespace is required, not optional the way
+`ingress.className` is: a `Gateway` is almost always platform owned and lives in a different
+namespace than this release, and the Gateway API's own default for an unset
+`parentRefs.namespace` is the `HTTPRoute`'s own namespace, normally wrong here.
+
+This chart never creates the `Gateway` and never ships the Gateway API CRDs (`Gateway`,
+`HTTPRoute` and the rest): both are cluster-level prerequisites, installed and operated once
+per cluster by the cluster operator, same as any other CRD (see `kubernetes-conventions`'s
+`install-crds` convention), outside this chart. The `Gateway`'s own `allowedRoutes` decides
+whether it actually accepts this `HTTPRoute`; a `httpRoute.enabled: true` release that the
+`Gateway` does not allow installs without error but never actually receives traffic.
+
+Unlike `Ingress`, an `HTTPRoute` carries no `tls` field of its own. TLS terminates on the
+`Gateway`'s listener instead, which the cluster operator, not this chart, owns and configures;
+`httpRoute.hostnames` only has to match a hostname the listener itself already serves for
+traffic to reach this `HTTPRoute` at all.
+
+Routing itself is fixed to this chart's own `Service`: no values-driven way to add a second
+backend or a per-path rule, the same single-backend assumption `ingress.hosts` already makes.
+An `HTTPRoute` rule with no `matches` defaults to a `/` prefix match per the Gateway API spec,
+the same default an `Ingress` with one `/` path rule gives, so this chart's `HTTPRoute` sets
+none explicitly.
+
+`httpRoute.hostnames` is a list today because `HTTPRoute` itself accepts more than one
+hostname for the one set of rules above; solobill's own concept (the application on one
+hostname, each tenant's shop on its own) does not need that yet; it is set up front to one or
+a few hostnames, not resolved per request from a tenant's own record. A `Gateway` capable of
+hosting tenant shops with per-tenant certificates, and a values shape that renders one
+`HTTPRoute` (or one rule) per tenant from a list instead of this chart's current single fixed
+one, stay future work; this values shape does not rule either out, but does not build toward
+them either.
+
 ## Secrets
 
 Every secret-shaped setting is read from one existing `Secret`, named by
@@ -147,11 +201,17 @@ field as secret-only instead; this is solobill's own contract, verified by readi
 | `securityContext` | Container-level security context: read-only root filesystem, no privilege escalation, all capabilities dropped. Safe: `cmd/solobill` keeps its session store in memory and writes nothing else to disk. | see `values.yaml` |
 | `service.type` | `Service` type. | `ClusterIP` |
 | `service.port` | `Service`, container and probe port. Keep in sync with `config.listenAddr`. | `8080` |
-| `ingress.enabled` | Create an `Ingress`. Requires `config.trustedProxies` to be set; see that row. | `false` |
+| `ingress.enabled` | Create an `Ingress`. Requires `config.trustedProxies` to be set; see that row. Mutually exclusive with `httpRoute.enabled`; see "External routing" above. | `false` |
 | `ingress.className` | `ingressClassName` to set. | `""` |
 | `ingress.annotations` | Annotations for the `Ingress`. | `{}` |
 | `ingress.hosts` | Host/path rules. | see `values.yaml` |
 | `ingress.tls` | TLS configuration for the `Ingress`. | `[]` |
+| `httpRoute.enabled` | Create a Gateway API `HTTPRoute`. Mutually exclusive with `ingress.enabled`; see "External routing" above. | `false` |
+| `httpRoute.hostnames` | Hostnames the `HTTPRoute` matches. | `[]` |
+| `httpRoute.annotations` | Annotations for the `HTTPRoute`. | `{}` |
+| `httpRoute.parentRefs.name` | Name of the `Gateway` to attach to. Required when `httpRoute.enabled` is true. | `""` |
+| `httpRoute.parentRefs.namespace` | Namespace the `Gateway` lives in. Required when `httpRoute.enabled` is true; see "External routing" above for why this has no same-namespace fallback. | `""` |
+| `httpRoute.parentRefs.sectionName` | Specific listener on the `Gateway` to attach to, when it exposes more than one. | `""` |
 | `resources.requests` | Resource requests, always set. | `cpu: 100m`, `memory: 128Mi` |
 | `resources.limits` | Resource limits. No CPU limit: request handling is bursty, not broken, under brief CPU pressure. A memory limit stays as a leak safety net. | `memory: 256Mi` |
 | `startupProbe.enabled` | Enable a startup probe. Off by default: the migration Job, not `cmd/solobill`'s own startup, is what waits on the database. | `false` |
@@ -193,6 +253,12 @@ are enforced by a `fail` guard in `templates/deployment.yaml` instead of `values
 `minLength`: an install or upgrade with any of them missing or empty fails the render with a
 readable message. Every other required field above is still enforced by the schema.
 
+`httpRoute.parentRefs.name` and `httpRoute.parentRefs.namespace` are the same kind of
+conditionally-required field, enforced the same way: a `fail` guard in `templates/httproute.yaml`
+that only fires when `httpRoute.enabled` is true. The `ingress.enabled`/`httpRoute.enabled`
+mutual exclusion is its own `fail` guard, in `templates/deployment.yaml`; see "External routing"
+above.
+
 ## Upgrading
 
 A plain `helm upgrade` is safe for any change to this chart's values: the migration Job
@@ -207,7 +273,8 @@ helm uninstall solobill
 ```
 
 Removes every ordinary object this chart created: the `Deployment`, `Service`, and the `Ingress`
-if it was enabled. The `ServiceAccount`, the migration Job and its `ConfigMap` are all Helm
+or `HTTPRoute`, whichever was enabled. The `ServiceAccount`, the migration Job and its
+`ConfigMap` are all Helm
 hooks, which Helm does not track as part of the release for `helm uninstall` to remove; each is
 governed only by its own `helm.sh/hook-delete-policy` instead. The Job and its `ConfigMap` carry
 `before-hook-creation,hook-succeeded`, so a completed one is already gone by the time the install
@@ -224,16 +291,23 @@ instance and its data, are never touched, since this chart never owned them.
 This chart is verified with:
 
 - `helm lint`
-- `helm template`, for the default values, OIDC-enabled and ingress-enabled combinations
-- `kubeconform`, against every one of those rendered manifests
-- [`helm-unittest`](https://github.com/helm-unittest/helm-unittest), plugin version `v1.2.1`,
-  installed with:
+- `helm template`, for the default values, OIDC-enabled, ingress-enabled and
+  httpRoute-enabled combinations
+- `kubeconform`, against every one of those rendered manifests. The default schema set
+  carries no Gateway API schemas, so the httpRoute-enabled combination's `HTTPRoute` is
+  validated with a second `-schema-location` added after the default one, pointing at the
+  community [CRDs-catalog](https://github.com/datreeio/CRDs-catalog):
 
   ```sh
-  helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.2.1
+  kubeconform -strict -summary \
+    -schema-location default \
+    -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
   ```
 
-  and run with `helm unittest charts/solobill`.
+- [`helm-unittest`](https://github.com/helm-unittest/helm-unittest), plugin version `v1.2.1`,
+  pinned in `mise.toml` as a generic GitHub release backend entry (not installed with
+  `helm plugin install`, which Helm 4 refuses for an unsigned plugin source) and run with
+  `helm unittest charts/solobill`.
 
 Every check above runs on every push and pull request, through `task lint:helm`,
 `task validate:kubeconform` and `task test:helm`, each its own CI job (`helm-lint`,
