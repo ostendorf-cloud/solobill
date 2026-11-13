@@ -113,9 +113,10 @@ asserting isolation through a superuser connection would prove nothing.
 
 - No `LICENSE` file and no Apache-2.0 header on any source file: this is a private repository,
   never distributed, so the baseline's default license does not apply.
-- `.github/workflows/dco.yaml` calls `ostendorf-cloud/workflows`'s reusable workflow at `v0.1.1`,
-  the latest tag that exists, not a floating `v0` major tag: `ostendorf-cloud/workflows` has not
-  cut one yet. Repoint at `v0` once it exists.
+- `.github/workflows/dco.yaml`, `checks.yaml`'s `renovate-config` job and `renovate.yaml` all
+  call `ostendorf-cloud/workflows`'s reusable workflows at the latest tag each one has, not a
+  floating `v0` major tag: `ostendorf-cloud/workflows` has not cut one yet. Repoint all three at
+  `v0` once it exists.
 - No CodeQL workflow. Code scanning on a private repository needs GitHub Advanced Security, which
   this account does not have.
 - Every job runs on `blacksmith-2vcpu-ubuntu-2404`, never on a GitHub hosted runner: this
