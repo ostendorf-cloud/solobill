@@ -40,7 +40,12 @@ func Calculate(lines []Line, documentDiscount Discount) (Result, error) {
 			return Result{}, fmt.Errorf("line %d: vat rate %d permyriad out of range [0, 10000]", i, line.VATRatePermyriad)
 		}
 
-		lineNets[i] = roundLineNet(line)
+		net, err := roundLineNet(line)
+		if err != nil {
+			return Result{}, fmt.Errorf("line %d: %w", i, err)
+		}
+
+		lineNets[i] = net
 	}
 
 	netTotal := sumCents(lineNets)
@@ -81,7 +86,22 @@ func Calculate(lines []Line, documentDiscount Discount) (Result, error) {
 // subtracted, which would risk rounding twice (the doc's own, explicit
 // "never rounded twice" rule) for no stated benefit, so this package
 // subtracts first, at full precision, and rounds only the result.
-func roundLineNet(line Line) Cents {
+//
+// It returns an error when the discount exceeds rawNet: a percentage
+// discount can never do that on its own, since line.Discount.validate
+// already caps PercentPermyriad at 10000 (100%), but an amount discount
+// is a caller-supplied number of cents with no such relationship to
+// this particular line's own price and quantity, so nothing before this
+// point rules out a discount larger than the line it is discounting.
+// Accepting that would produce a negative NetAfterLineDiscountCents, an
+// invoice line with a negative amount, and, for a document-level amount
+// discount with more than one distinct VAT rate, a bucket allocation
+// that can silently drop or misattribute VAT when a negative and a
+// positive line's nets cancel inside the same bucket (see
+// allocateAmountAcrossBuckets's netTotal == 0 guard). A discount is
+// capped at the line's own net, never reduced to fit: this is this
+// package's job to refuse, not to repair.
+func roundLineNet(line Line) (Cents, error) {
 	rawNet := new(big.Rat).Mul(
 		new(big.Rat).SetFrac64(int64(line.QuantityThousandths), 1000),
 		new(big.Rat).SetInt64(int64(line.UnitPriceCents)),
@@ -96,9 +116,13 @@ func roundLineNet(line Line) Cents {
 		lineDiscountExact.SetInt64(int64(*line.Discount.AmountCents))
 	}
 
+	if lineDiscountExact.Cmp(rawNet) > 0 {
+		return 0, fmt.Errorf("discount exceeds the line's own net amount")
+	}
+
 	netAfterLineDiscountExact := new(big.Rat).Sub(rawNet, lineDiscountExact)
 
-	return Cents(roundHalfAwayFromZero(netAfterLineDiscountExact))
+	return Cents(roundHalfAwayFromZero(netAfterLineDiscountExact)), nil
 }
 
 // resolveLineShares resolves the document-level discount to a whole
