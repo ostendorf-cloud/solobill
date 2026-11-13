@@ -186,16 +186,20 @@ type IssueDocumentParams struct {
 // with documents_block_issued_mutation the way UpdateDocument's guard
 // would be: that trigger only ever rejects an UPDATE on a row that is
 // ALREADY issued; it has nothing to say about a row that is still draft,
-// which is exactly the row this statement targets. The guard here is
-// what stops two concurrent calls to Issue racing on the very same
-// document (as opposed to the very same counter, which
-// document_numbers' own locking already serialises): without it, a
-// second IssueDocument on an already-issued row would silently succeed
-// a second time, each allocating its own number, both written to the
-// same document_id, rather than failing. A :one query with zero rows
-// answers pgx.ErrNoRows; internal/storage/postgres/documents.go maps
-// that to storage.ErrConflict here, not storage.ErrNotFound, since the
-// row usually does exist, just not in the state this call needed it in.
+// which is exactly the row this statement targets. By the time this
+// statement runs, LockDraftDocumentForIssue above has already verified
+// and locked exactly this (id, type, state) combination for the rest of
+// the transaction, so this guard no longer has anything left to actually
+// catch in practice; it stays as defense in depth; for example against a
+// future caller that runs this statement directly, bypassing
+// documentRepository.Issue's own ordering. The guard is what originally
+// stopped two concurrent calls to Issue racing on the very same document
+// (as opposed to the very same counter, which document_numbers' own
+// locking already serialises): without it, a second IssueDocument on an
+// already-issued row would silently succeed a second time, each
+// allocating its own number, both written to the same document_id,
+// rather than failing; LockDraftDocumentForIssue's own FOR NO KEY UPDATE
+// now serialises that race one statement earlier instead.
 //
 // "AND type = $7" guards against a second, different mistake: the
 // caller (documentRepository.Issue) already has to name docType itself,
@@ -295,6 +299,53 @@ func (q *Queries) ListDocuments(ctx context.Context) ([]Document, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockDraftDocumentForIssue = `-- name: LockDraftDocumentForIssue :one
+SELECT 1 FROM documents
+WHERE id = $1
+    AND type = $2
+    AND state = 'draft'
+    AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+FOR NO KEY UPDATE
+`
+
+type LockDraftDocumentForIssueParams struct {
+	ID   uuid.UUID
+	Type string
+}
+
+// LockDraftDocumentForIssue is documentRepository.Issue's first
+// statement, run before document_numbers' own counter is ever touched:
+// it verifies id resolves to a draft of type $2 in this tenant, and
+// takes a FOR NO KEY UPDATE lock on that row for the rest of the
+// transaction, so nothing else can move it out from under the
+// allocation that follows. Without this, Issue allocated a number first
+// and only found out it could not actually issue the document second
+// (IssueDocument's own "AND state = 'draft'" below answering zero rows):
+// storage.ErrConflict on that path then depended entirely on the
+// caller propagating the error and letting TenantScope.WithTenant roll
+// the transaction back, since WithTenant commits whenever the closure
+// returns nil; a caller that mapped ErrConflict to a response and
+// returned nil from that closure would commit the already-incremented
+// counter and permanently skip the number nobody ever issued. Locking
+// and verifying before allocating makes the ordering itself carry that
+// guarantee instead: Issue now returns storage.ErrConflict from this
+// statement's own zero rows before allocateNextDocumentNumber ever
+// runs, so there is nothing for a careless caller to leave half
+// committed.
+//
+// A :one query with zero rows answers pgx.ErrNoRows;
+// internal/storage/postgres/documents.go maps that to
+// storage.ErrConflict here, not storage.ErrNotFound, since the row
+// usually does exist, just not in the state (or type) this call needed
+// it in; see IssueDocument's own comment below for why type is checked
+// here too, not only state.
+func (q *Queries) LockDraftDocumentForIssue(ctx context.Context, arg LockDraftDocumentForIssueParams) (int32, error) {
+	row := q.db.QueryRow(ctx, lockDraftDocumentForIssue, arg.ID, arg.Type)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const updateDocument = `-- name: UpdateDocument :one

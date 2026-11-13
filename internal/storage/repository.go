@@ -182,16 +182,24 @@ type DocumentRepository interface {
 	// ErrConflict for the same two cases, and the same reason, as Update.
 	DeleteDraft(ctx context.Context, id uuid.UUID) error
 
-	// Issue allocates the next number for docType and year (via
+	// Issue first verifies that id resolves to a draft of docType in
+	// this tenant and locks that row for the rest of the transaction
+	// (ErrConflict otherwise: already issued, no such row, or the wrong
+	// type), before it ever allocates a number. Only then does it
+	// allocate the next number for docType and year (via
 	// DocumentNumberRepository.AllocateNext, inside this call's own
 	// transaction: see that method's doc comment for what that
-	// allocation actually guarantees under concurrency) and writes it,
+	// allocation actually guarantees under concurrency) and write it,
 	// together with issuedAt, payload and payloadHash, moving the
 	// document from DocumentStateDraft to DocumentStateIssued in one
-	// statement. ErrConflict when id does not resolve to a draft in
-	// this tenant (already issued, or raced by a concurrent Issue
-	// call): see internal/storage/postgres/queries/documents.sql's
-	// IssueDocument for why that case is a conflict, not a not-found.
+	// statement. See internal/storage/postgres/queries/documents.sql's
+	// LockDraftDocumentForIssue for why this ordering, not a caller's
+	// own discipline, is what keeps gaplessness holding even when the
+	// caller maps ErrConflict to a response and returns nil.
+	//
+	// year must equal issuedAt's own calendar year; Issue returns an
+	// error otherwise. This is a precondition on the caller, not
+	// something this method derives on its own.
 	//
 	// payloadHash must be the lowercase hex-encoded SHA-256 of payload's
 	// own bytes, exactly as the caller is about to freeze them: this is

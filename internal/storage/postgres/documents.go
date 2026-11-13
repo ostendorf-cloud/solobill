@@ -182,25 +182,61 @@ func (r *documentRepository) DeleteDraft(ctx context.Context, id uuid.UUID) erro
 	return nil
 }
 
-// Issue implements storage.DocumentRepository: allocates the next
-// number for docType and year via allocateNextDocumentNumber, on this
-// same transaction, then writes it together with issuedAt, payload and
-// payloadHash in the one UPDATE queries/documents.sql's IssueDocument
-// performs. Both run inside the transaction WithTenant already opened,
-// which is exactly what makes a rolled-back Issue call give its
-// allocated number back: see storage.DocumentNumberRepository.AllocateNext.
+// Issue implements storage.DocumentRepository. It first verifies and
+// locks the draft via queries/documents.sql's LockDraftDocumentForIssue
+// (storage.ErrConflict when id does not resolve to a draft of docType in
+// this tenant), so that a document which cannot actually be issued is
+// caught before document_numbers' own counter is ever touched: see that
+// query's own comment for why the ordering itself, not a caller's own
+// discipline, is what has to carry gaplessness on this path. Only then
+// does it allocate the next number for docType and year via
+// allocateNextDocumentNumber, on this same transaction, and write it
+// together with issuedAt, payload and payloadHash in the one UPDATE
+// queries/documents.sql's IssueDocument performs. All three statements
+// run inside the transaction WithTenant already opened, which is exactly
+// what makes a rolled-back Issue call give its allocated number back:
+// see storage.DocumentNumberRepository.AllocateNext.
 func (r *documentRepository) Issue(ctx context.Context, id uuid.UUID, docType storage.DocumentType, year int, issuedAt time.Time, payload []byte, payloadHash string) (storage.Document, error) {
 	tx, err := txFromContext(ctx)
 	if err != nil {
 		return storage.Document{}, err
 	}
 
+	// A counter-issued document's number_year and issuedAt must agree:
+	// number_year is only ever independent of issuedAt for an imported
+	// historical document (see db/migrations' documents migration),
+	// which sets Number/NumberYear directly and never calls this method
+	// at all. A caller of Issue passing a year that does not match
+	// issuedAt's own calendar year would otherwise silently allocate
+	// from the wrong counter and freeze a number whose year contradicts
+	// the invoice date it is issued under.
+	if issuedAt.Year() != year {
+		return storage.Document{}, fmt.Errorf("issue: year %d does not match issuedAt's own year %d", year, issuedAt.Year())
+	}
+
+	yearInt32 := int32(year) //nolint:gosec // year is a calendar year, far inside int32's range
+
+	if _, err := sqlcgen.New(tx).LockDraftDocumentForIssue(ctx, sqlcgen.LockDraftDocumentForIssueParams{
+		ID:   id,
+		Type: string(docType),
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// id does not exist in this tenant at all, exists but is not
+			// a draft (already issued, or raced by a concurrent Issue
+			// call that won this lock first), or exists as a draft of a
+			// different type: see LockDraftDocumentForIssue's own
+			// comment for why this is a conflict, not a not-found, the
+			// same reasoning IssueDocument below already documented.
+			return storage.Document{}, storage.ErrConflict
+		}
+
+		return storage.Document{}, mapWriteError(err)
+	}
+
 	number, err := allocateNextDocumentNumber(ctx, tx, docType, year)
 	if err != nil {
 		return storage.Document{}, fmt.Errorf("allocate document number: %w", err)
 	}
-
-	yearInt32 := int32(year) //nolint:gosec // year is a calendar year, far inside int32's range
 
 	row, err := sqlcgen.New(tx).IssueDocument(ctx, sqlcgen.IssueDocumentParams{
 		ID:                  id,
