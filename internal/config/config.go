@@ -1,17 +1,19 @@
 // Package config loads solobill's configuration from the environment once,
 // at startup, and validates it fully before anything listens: see Load.
 //
-// Every non-secret value is read through govue's envconf.Loader. Every
-// secret value is read through secretValue instead, which is this
-// repository's own convention, not envconf.Loader.Secret: envconf's Secret
-// treats the named environment variable as unconditionally a file path,
-// which is a different and narrower contract than the one this package
-// needs. Here, a secret's own variable (for example DATABASE_PASSWORD) may
-// carry the value directly, or the same name with a "_FILE" suffix
+// Every value, secret included, is read through govue's envconf.Loader.
+// A secret's own variable (for example DATABASE_PASSWORD) may carry the
+// value directly, or the same name with a "_FILE" suffix
 // (DATABASE_PASSWORD_FILE) may point at a file holding it, and setting both
-// at once is an error rather than a silent precedence rule. That is the
+// at once is an error rather than a silent precedence rule: that is the
 // shape a Kubernetes Secret mounted as a file and a plain environment value
-// both need to fit through the same configuration surface.
+// both need to fit through the same configuration surface. That contract is
+// envconf.Loader.SecretOrFile and RequiredSecretOrFile, not
+// envconf.Loader.Secret: Secret treats the named environment variable as
+// unconditionally a file path, which is a different and narrower contract
+// than this package needs. This package carried its own, identical
+// hand-rolled version of SecretOrFile/RequiredSecretOrFile until govue
+// v0.3.0 added them upstream.
 package config
 
 import (
@@ -21,7 +23,6 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/ostendorf-cloud/govue/clientip"
@@ -204,19 +205,13 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.DatabaseURL = l.Required("DATABASE_URL")
 	cfg.DatabaseUser = l.Required("DATABASE_USER")
 
-	dbPassword, err := requiredSecret(getenv, "DATABASE_PASSWORD")
-	fail(err)
-	cfg.DatabasePassword = dbPassword
+	cfg.DatabasePassword = l.RequiredSecretOrFile("DATABASE_PASSWORD")
 
-	sessionKeyRaw, err := secretValue(getenv, "SESSION_CODEC_KEY")
-	fail(err)
-	sessionKey, err := decodeHexKey("SESSION_CODEC_KEY", sessionKeyRaw)
+	sessionKey, err := decodeHexKey("SESSION_CODEC_KEY", l.SecretOrFile("SESSION_CODEC_KEY"))
 	fail(err)
 	cfg.SessionCodecKey = sessionKey
 
-	csrfKeyRaw, err := secretValue(getenv, "CSRF_KEY")
-	fail(err)
-	csrfKey, err := decodeHexKey("CSRF_KEY", csrfKeyRaw)
+	csrfKey, err := decodeHexKey("CSRF_KEY", l.SecretOrFile("CSRF_KEY"))
 	fail(err)
 	cfg.CSRFKey = csrfKey
 
@@ -226,11 +221,7 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.OIDCEnabled = cfg.OIDCIssuerURL != ""
 	if cfg.OIDCEnabled {
 		cfg.OIDCClientID = l.Required("OIDC_CLIENT_ID")
-
-		clientSecret, err := requiredSecret(getenv, "OIDC_CLIENT_SECRET")
-		fail(err)
-		cfg.OIDCClientSecret = clientSecret
-
+		cfg.OIDCClientSecret = l.RequiredSecretOrFile("OIDC_CLIENT_SECRET")
 		cfg.OIDCRedirectURL = l.Required("OIDC_REDIRECT_URL")
 		cfg.OIDCDefaultTenantSlug = l.Required("OIDC_DEFAULT_TENANT_SLUG")
 		cfg.OIDCScopes = l.List("OIDC_SCOPES")
@@ -267,59 +258,6 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	return cfg, nil
-}
-
-// secretValue resolves one configuration value that may be a secret:
-// either name's own value, or the content of the file name+"_FILE"
-// points at. Based on ostendorf.tech's own secretValue; see the package
-// doc for why this, and not envconf.Loader.Secret, is used for every
-// secret field here.
-//
-// Whether a source counts as "set" is decided from its raw, untrimmed
-// value, so a whitespace-only direct value still counts as set for the
-// both-set-is-an-error check below, rather than silently losing to its
-// _FILE twin. The file path itself is trimmed with strings.TrimSpace
-// before it is opened (a path is not a secret, trimming it is expected);
-// the secret value itself, whichever source it came from, is trimmed
-// identically, with strings.TrimRight(value, "\r\n") only, so the same
-// secret resolves to the same value regardless of which path carried it.
-func secretValue(resolved func(string) string, name string) (string, error) {
-	directRaw := resolved(name)
-	filePathRaw := resolved(name + "_FILE")
-
-	switch {
-	case directRaw != "" && filePathRaw != "":
-		return "", fmt.Errorf("%s and %s_FILE are both set, set only one", name, name)
-	case filePathRaw != "":
-		filePath := strings.TrimSpace(filePathRaw)
-
-		raw, err := os.ReadFile(filePath)
-		if err != nil {
-			return "", fmt.Errorf("%s_FILE: read %s: %w", name, filePath, err)
-		}
-
-		return strings.TrimRight(string(raw), "\r\n"), nil
-	default:
-		return strings.TrimRight(directRaw, "\r\n"), nil
-	}
-}
-
-// requiredSecret is secretValue plus the "is required" check envconf.Loader
-// applies to a non-secret field via Required: secretValue alone reports an
-// empty value as success, since "unset" and "a problem reading it" are
-// different outcomes, so a caller for whom unset is itself the problem
-// checks for it here.
-func requiredSecret(resolved func(string) string, name string) (string, error) {
-	value, err := secretValue(resolved, name)
-	if err != nil {
-		return "", err
-	}
-
-	if value == "" {
-		return "", fmt.Errorf("%s or %s_FILE: is required", name, name)
-	}
-
-	return value, nil
 }
 
 // decodeHexKey decodes raw as hex and checks its length, the same
