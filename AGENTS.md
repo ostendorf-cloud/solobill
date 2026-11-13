@@ -38,8 +38,9 @@ The global baseline already applies here and is not repeated below.
   its package doc for the middleware chain shape and how a login or invite-accept request
   resolves its tenant.
 - `internal/config/` loads solobill's configuration from the environment once, at startup, and
-  validates it fully before anything listens. Every secret follows this repository's own
-  `_FILE`-suffix convention rather than govue's `envconf.Loader.Secret`; see its package doc.
+  validates it fully before anything listens. Every secret follows the `_FILE`-suffix convention
+  of govue's `envconf.Loader.SecretOrFile` and `RequiredSecretOrFile`, not the narrower
+  `envconf.Loader.Secret`; see its package doc.
 - `Dockerfile` and `docker-compose.yaml` are the local `docker compose up --build` path: a
   multi-stage build (Vue, then Go with the build embedded, then a distroless runtime) behind a
   Postgres that runs with two separate roles, a superuser used only to apply `db/migrations` and
