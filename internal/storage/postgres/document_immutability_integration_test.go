@@ -115,7 +115,9 @@ func TestDocumentImmutability_RawSQL(t *testing.T) {
 			return err
 		}
 
-		issued, err = store.Documents().Issue(ctx, draft.ID, storage.DocumentTypeInvoice, 2028, nowForTest(), []byte(`{"total":1190}`), "deadbeef")
+		payload, payloadHash := testFrozenPayload()
+
+		issued, err = store.Documents().Issue(ctx, draft.ID, storage.DocumentTypeInvoice, 2028, nowForTest(), payload, payloadHash)
 
 		return err
 	}); err != nil {

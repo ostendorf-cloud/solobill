@@ -173,9 +173,13 @@ CREATE POLICY document_lines_tenant_isolation ON document_lines
 -- Issue) does so before it ever touches document_lines in the same
 -- transaction, so no transaction ever waits for a document_lines-driven
 -- lock on documents while already holding a lock document_lines itself
--- needs, and no transaction here ever holds a lock on more than one
--- documents row at a time, which rules out the AB-BA cycle a deadlock
--- would need.
+-- needs. A transaction creating a correction does hold a lock on a
+-- second documents row at the same time (its own newly inserted row,
+-- plus the KEY SHARE lock documents_corrects_document_id_fkey takes on
+-- the original), so "never holds a lock on more than one documents row
+-- at a time" overstates it; it is still harmless, since KEY SHARE
+-- conflicts with neither FOR SHARE nor FOR NO KEY UPDATE, so it cannot
+-- be the other half of an AB-BA cycle with this trigger's own lookup.
 CREATE FUNCTION document_lines_block_issued_document_mutation() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path = pg_catalog, public
@@ -201,6 +205,17 @@ BEGIN
 END;
 $$;
 
+-- This trigger's UPDATE arm is unreachable for solobill_app today:
+-- docker-compose.yaml's "grant-app-role" grants document_lines only
+-- SELECT, INSERT and DELETE, never UPDATE (no query ever updates a line
+-- in place; see that grant's own comment), so a raw UPDATE is already
+-- refused by the privilege check before this trigger ever runs, and the
+-- test suite has no way to exercise this arm as a result (see
+-- document_immutability_integration_test.go's own comment on why
+-- asserting 42501 there is the only honest assertion available). That is
+-- fine while the grant stays this narrow; if a later change ever widens
+-- it to include UPDATE, nothing today would catch this arm regressing,
+-- so that change should add the UPDATE subtest at the same time.
 CREATE TRIGGER document_lines_block_issued_document_mutation
     BEFORE INSERT OR UPDATE OR DELETE ON document_lines
     FOR EACH ROW
