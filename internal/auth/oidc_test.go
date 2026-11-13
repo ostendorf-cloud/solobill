@@ -216,19 +216,23 @@ func TestNewOIDCProviderReadsKeycloakRealmRoles(t *testing.T) {
 func TestResolveOIDCIdentity(t *testing.T) {
 	t.Parallel()
 
+	const subject = "f:realm:subject-1"
+
 	tests := []struct {
 		name    string
 		setup   func(store *fakeStore, tenantID uuid.UUID)
 		wantErr error
 	}{
 		{
-			name: "active account exists",
+			name: "active account provisioned for this subject",
 			setup: func(store *fakeStore, tenantID uuid.UUID) {
+				s := subject
 				store.addAccount(storage.Account{
-					TenantID: tenantID,
-					Email:    "owner@acme.example",
-					Role:     storage.AccountRoleOwner,
-					Status:   storage.AccountStatusActive,
+					TenantID:    tenantID,
+					Email:       "owner@acme.example",
+					OIDCSubject: &s,
+					Role:        storage.AccountRoleOwner,
+					Status:      storage.AccountStatusActive,
 				})
 			},
 		},
@@ -240,11 +244,13 @@ func TestResolveOIDCIdentity(t *testing.T) {
 		{
 			name: "account exists but is pending",
 			setup: func(store *fakeStore, tenantID uuid.UUID) {
+				s := subject
 				store.addAccount(storage.Account{
-					TenantID: tenantID,
-					Email:    "owner@acme.example",
-					Role:     storage.AccountRoleOwner,
-					Status:   storage.AccountStatusPending,
+					TenantID:    tenantID,
+					Email:       "owner@acme.example",
+					OIDCSubject: &s,
+					Role:        storage.AccountRoleOwner,
+					Status:      storage.AccountStatusPending,
 				})
 			},
 			wantErr: ErrOIDCAccountNotProvisioned,
@@ -252,11 +258,48 @@ func TestResolveOIDCIdentity(t *testing.T) {
 		{
 			name: "account exists but is disabled",
 			setup: func(store *fakeStore, tenantID uuid.UUID) {
+				s := subject
+				store.addAccount(storage.Account{
+					TenantID:    tenantID,
+					Email:       "owner@acme.example",
+					OIDCSubject: &s,
+					Role:        storage.AccountRoleOwner,
+					Status:      storage.AccountStatusDisabled,
+				})
+			},
+			wantErr: ErrOIDCAccountNotProvisioned,
+		},
+		{
+			// This is the case that would have slipped through the old,
+			// email-based matching: an active account exists with the
+			// same email the identity carries, but it was provisioned
+			// for a different OIDC subject (or none at all). Matching on
+			// subject, never on email, must still refuse it.
+			name: "active account with a matching email but a different subject",
+			setup: func(store *fakeStore, tenantID uuid.UUID) {
+				other := "f:realm:someone-else"
+				store.addAccount(storage.Account{
+					TenantID:    tenantID,
+					Email:       "owner@acme.example",
+					OIDCSubject: &other,
+					Role:        storage.AccountRoleOwner,
+					Status:      storage.AccountStatusActive,
+				})
+			},
+			wantErr: ErrOIDCAccountNotProvisioned,
+		},
+		{
+			// Same as above, but the matching-email account has no
+			// oidc_subject at all (the common case today, since nothing
+			// provisions one yet): still refused, never silently matched
+			// by email.
+			name: "active account with a matching email but no subject provisioned",
+			setup: func(store *fakeStore, tenantID uuid.UUID) {
 				store.addAccount(storage.Account{
 					TenantID: tenantID,
 					Email:    "owner@acme.example",
 					Role:     storage.AccountRoleOwner,
-					Status:   storage.AccountStatusDisabled,
+					Status:   storage.AccountStatusActive,
 				})
 			},
 			wantErr: ErrOIDCAccountNotProvisioned,
@@ -272,7 +315,7 @@ func TestResolveOIDCIdentity(t *testing.T) {
 			tt.setup(store, tenant.ID)
 
 			identity, err := ResolveOIDCIdentity(t.Context(), store, tenant.ID, govueoidc.Identity{
-				Subject: "f:realm:subject-1",
+				Subject: subject,
 				Email:   "owner@acme.example",
 				Name:    "Simon Ostendorf",
 				Groups:  []string{"owner"},
@@ -313,6 +356,7 @@ type oidcHandlerFixture struct {
 	codec    *session.Codec
 	sessions *session.Manager
 	store    *fakeStore
+	invites  *InviteManager
 	tenant   storage.Tenant
 	now      time.Time
 }
@@ -349,10 +393,11 @@ func newOIDCHandlerFixture(t *testing.T) *oidcHandlerFixture {
 
 	store := newFakeStore()
 	tenant := store.addTenant(storage.Tenant{Slug: "acme", Name: "Acme"})
+	invites := NewInviteManager(store, func() time.Time { return now })
 
 	return &oidcHandlerFixture{
 		idp: idp, provider: provider, codec: codec, sessions: sessions,
-		store: store, tenant: tenant, now: now,
+		store: store, invites: invites, tenant: tenant, now: now,
 	}
 }
 
@@ -391,14 +436,16 @@ func TestNewOIDCHandlersCallbackStartsASessionForAProvisionedAccount(t *testing.
 	t.Parallel()
 
 	f := newOIDCHandlerFixture(t)
+	subject := "f:realm:subject-1"
 	f.store.addAccount(storage.Account{
-		TenantID: f.tenant.ID,
-		Email:    "owner@acme.example",
-		Role:     storage.AccountRoleOwner,
-		Status:   storage.AccountStatusActive,
+		TenantID:    f.tenant.ID,
+		Email:       "owner@acme.example",
+		OIDCSubject: &subject,
+		Role:        storage.AccountRoleOwner,
+		Status:      storage.AccountStatusActive,
 	})
 
-	handlers, err := NewOIDCHandlers(f.provider, f.codec, f.sessions, f.store,
+	handlers, err := NewOIDCHandlers(f.provider, f.codec, f.sessions, f.store, f.invites,
 		func(*http.Request) (uuid.UUID, error) { return f.tenant.ID, nil },
 		OIDCHandlerOptions{},
 	)
@@ -458,7 +505,7 @@ func TestNewOIDCHandlersCallbackRefusesAnUnprovisionedAccount(t *testing.T) {
 	// implicit creation on first OIDC login" judgment call, exercised
 	// end to end through the handler.
 
-	handlers, err := NewOIDCHandlers(f.provider, f.codec, f.sessions, f.store,
+	handlers, err := NewOIDCHandlers(f.provider, f.codec, f.sessions, f.store, f.invites,
 		func(*http.Request) (uuid.UUID, error) { return f.tenant.ID, nil },
 		OIDCHandlerOptions{},
 	)
@@ -474,5 +521,147 @@ func TestNewOIDCHandlersCallbackRefusesAnUnprovisionedAccount(t *testing.T) {
 	}
 	if rec.Body.String() == "" {
 		t.Error("response body is empty, want the opaque refusal message")
+	}
+}
+
+// callbackWithInvite drives handlers.Callback() exactly like f.callback
+// does, with one addition: the request also carries the pending-invite
+// cookie StartOIDCInviteAccept signs for rawToken, as if
+// internal/httpapi's invite-accept-via-OIDC start endpoint had already
+// run and the browser had already been round tripped to the fake IDP
+// and back.
+func (f *oidcHandlerFixture) callbackWithInvite(t *testing.T, handlers *govueoidc.Handlers, rawToken, subject string, roles []string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	login, err := govueoidc.NewLogin("/dashboard")
+	if err != nil {
+		t.Fatalf("NewLogin: %v", err)
+	}
+
+	f.idp.idToken = signRS256(t, f.idp.key, f.idp.kid, keycloakClaims(
+		f.idp.issuer(), oidcTestClientID, subject, login.Nonce, f.now, roles,
+	))
+
+	cookieRec := httptest.NewRecorder()
+	if err := f.codec.SetLoginCookie(cookieRec, login); err != nil {
+		t.Fatalf("SetLoginCookie: %v", err)
+	}
+	if err := StartOIDCInviteAccept(cookieRec, f.codec, true, f.tenant.ID, rawToken); err != nil {
+		t.Fatalf("StartOIDCInviteAccept: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/auth/callback?state="+login.State+"&code=test-code", nil)
+	for _, c := range cookieRec.Result().Cookies() {
+		req.AddCookie(c)
+	}
+
+	rec := httptest.NewRecorder()
+	handlers.Callback().ServeHTTP(rec, req)
+
+	return rec
+}
+
+// TestNewOIDCHandlersCallbackRedeemsAPendingInviteAndBindsTheSubject
+// drives the whole invite-carried OIDC binding shape end to end: an
+// owner creates an invite, the browser arrives at the callback carrying
+// the pending-invite cookie StartOIDCInviteAccept sets, and the
+// identity provider vouches for a subject that has never been seen
+// before. The callback must bind that subject to a brand new account
+// for the invite's own email and role, start a session for it (an OIDC
+// login by a subject bound to an account succeeds), and leave the
+// invite used so it cannot be redeemed again.
+func TestNewOIDCHandlersCallbackRedeemsAPendingInviteAndBindsTheSubject(t *testing.T) {
+	t.Parallel()
+
+	f := newOIDCHandlerFixture(t)
+
+	rawToken, invite, err := f.invites.CreateInvite(t.Context(), CreateInviteParams{
+		TenantID: f.tenant.ID,
+		Email:    "invitee@acme.example",
+		Role:     storage.AccountRoleMember,
+		TTL:      time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+
+	handlers, err := NewOIDCHandlers(f.provider, f.codec, f.sessions, f.store, f.invites,
+		func(*http.Request) (uuid.UUID, error) { return f.tenant.ID, nil },
+		OIDCHandlerOptions{AllowPlainHTTP: true},
+	)
+	if err != nil {
+		t.Fatalf("NewOIDCHandlers: %v", err)
+	}
+
+	const newSubject = "f:realm:brand-new-member"
+
+	rec := f.callbackWithInvite(t, handlers, rawToken, newSubject, []string{"member"})
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+
+	var (
+		sessionCookie *http.Cookie
+		inviteCookie  *http.Cookie
+	)
+
+	for _, c := range rec.Result().Cookies() {
+		switch c.Name {
+		case f.sessions.CookieName():
+			sessionCookie = c
+		case inviteOIDCCookieName:
+			inviteCookie = c
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("Callback did not set a session cookie")
+	}
+	if inviteCookie == nil || inviteCookie.MaxAge >= 0 {
+		t.Error("the pending-invite cookie was not cleared by the callback")
+	}
+
+	checkReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+	checkReq.AddCookie(sessionCookie)
+
+	started, ok, err := f.sessions.Read(t.Context(), checkReq)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !ok {
+		t.Fatal("no session was found for the cookie Callback set")
+	}
+	if started.Email != invite.Email {
+		t.Errorf("session Email = %q, want %q", started.Email, invite.Email)
+	}
+	if started.Data[roleDataKey] != string(storage.AccountRoleMember) {
+		t.Errorf("session Data[%q] = %q, want %q", roleDataKey, started.Data[roleDataKey], storage.AccountRoleMember)
+	}
+
+	account, err := f.store.Accounts().FindByOIDCSubject(t.Context(), newSubject)
+	if err != nil {
+		t.Fatalf("FindByOIDCSubject: %v", err)
+	}
+	if started.Subject != account.ID.String() {
+		t.Errorf("session Subject = %q, want the newly bound account's id %q", started.Subject, account.ID.String())
+	}
+
+	stored, err := f.store.Invites().FindByID(t.Context(), invite.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if stored.UsedAt == nil {
+		t.Error("the invite's UsedAt is still nil after a successful callback accept")
+	}
+
+	// A second callback for the same invite token, even with a fresh
+	// login and a fresh pending-invite cookie signed for it, must not
+	// succeed: the invite is already used. This is the single-threaded
+	// half of the single-use guarantee at this layer; the genuinely
+	// concurrent half is TestAcceptInviteOIDCIsSingleUseUnderConcurrentAccept.
+	replay := f.callbackWithInvite(t, handlers, rawToken, "f:realm:a-second-subject", []string{"member"})
+	if replay.Code != http.StatusServiceUnavailable {
+		t.Errorf("replay status = %d, want %d (an already-used invite is refused the same opaque way); body: %s",
+			replay.Code, http.StatusServiceUnavailable, replay.Body.String())
 	}
 }

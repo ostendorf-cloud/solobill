@@ -150,6 +150,30 @@ func TestLocalAuthenticatorLoginRejectsAPendingAccount(t *testing.T) {
 	}
 }
 
+// TestLocalAuthenticatorLoginRejectsAReplayedTOTPCode proves that a second
+// Login call with the exact same, just-succeeded totpCode is refused: RFC
+// 6238 Section 5.2 requires a verifier to reject a second use of an
+// already validated OTP. This fails against the pre-fix code, which
+// checked a code's validity only against the current time window and
+// never recorded that it had already been consumed.
+func TestLocalAuthenticatorLoginRejectsAReplayedTOTPCode(t *testing.T) {
+	t.Parallel()
+
+	f := newLocalTestFixture(t)
+	authenticator := NewLocalAuthenticator(f.store, func() time.Time { return f.now })
+
+	code := f.code(t)
+
+	if _, err := authenticator.Login(t.Context(), f.tenant.Slug, f.account.Email, f.password, code); err != nil {
+		t.Fatalf("first Login: %v", err)
+	}
+
+	_, err := authenticator.Login(t.Context(), f.tenant.Slug, f.account.Email, f.password, code)
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("second Login with the same totp code: err = %v, want errors.Is(err, ErrInvalidCredentials)", err)
+	}
+}
+
 func TestLocalAuthenticatorLoginRejectsADisabledAccount(t *testing.T) {
 	t.Parallel()
 

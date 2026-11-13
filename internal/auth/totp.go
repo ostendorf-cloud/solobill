@@ -103,9 +103,14 @@ func GenerateTOTPCode(secret string, at time.Time) (string, error) {
 
 // VerifyTOTPCode reports whether code is valid for secret at time at,
 // accepting the step containing at and totpSkewSteps steps either side of
-// it. at is explicit rather than defaulted to time.Now() internally, the
-// same choice session.Config and oidc.Config make for their own clocks:
-// a caller that needs a fixed clock for a test passes one, and
+// it, and if so, the RFC 6238 counter the matched step used: a caller
+// compares that counter against the account's last accepted one (see
+// storage.Account.TOTPLastCounter) and refuses a code whose counter is
+// not strictly greater, so the exact same code cannot be replayed (RFC
+// 6238 Section 5.2). counter is 0 and meaningless when ok is false. at is
+// explicit rather than defaulted to time.Now() internally, the same
+// choice session.Config and oidc.Config make for their own clocks: a
+// caller that needs a fixed clock for a test passes one, and
 // LocalAuthenticator and InviteManager hold the one clock they use for
 // everything time related, TOTP included.
 //
@@ -113,10 +118,10 @@ func GenerateTOTPCode(secret string, at time.Time) (string, error) {
 // than as an error: LocalAuthenticator.Login compares against a dummy
 // secret for an account that does not exist at all, and that path must
 // stay indistinguishable from a wrong code, not surface a decode error.
-func VerifyTOTPCode(secret, code string, at time.Time) bool {
+func VerifyTOTPCode(secret, code string, at time.Time) (counter uint64, ok bool) {
 	key, err := base32Encoding.DecodeString(strings.ToUpper(secret))
 	if err != nil {
-		return false
+		return 0, false
 	}
 
 	// Every candidate step is checked, not short-circuited on the first
@@ -125,14 +130,18 @@ func VerifyTOTPCode(secret, code string, at time.Time) bool {
 	// since that is exactly the kind of timing signal a second factor
 	// must not leak.
 	matched := 0
+	var matchedCounter uint64
+
 	for offset := -totpSkewSteps; offset <= totpSkewSteps; offset++ {
-		candidate := hotp(key, counterAt(at, offset), totpDigits)
+		candidateCounter := counterAt(at, offset)
+		candidate := hotp(key, candidateCounter, totpDigits)
 		if subtle.ConstantTimeCompare([]byte(candidate), []byte(code)) == 1 {
 			matched = 1
+			matchedCounter = candidateCounter
 		}
 	}
 
-	return matched == 1
+	return matchedCounter, matched == 1
 }
 
 // counterAt is the RFC 6238 time counter: the number of whole totpStep
