@@ -1,0 +1,77 @@
+-- document_numbers' own tenant isolation follows the same two-layer
+-- pattern as every other query file: tenant_id named explicitly here,
+-- row level security enforcing the same scope underneath regardless.
+--
+-- The three queries below are always run together, in this order,
+-- inside the single transaction that is issuing a document (see
+-- internal/storage/postgres/numbering.go):
+--
+--   1. EnsureDocumentNumberRow, so a (tenant, type, number_year) counter
+--      that has never been used yet has a row to lock at all.
+--   2. LockDocumentNumber, a plain SELECT ... FOR UPDATE: this is the
+--      lock issue #15's own gaplessness guarantee rests on. Holding it
+--      for the rest of the issuing transaction is what serialises two
+--      concurrent attempts to issue under the same (tenant, type,
+--      number_year): the second one blocks here until the first either
+--      commits (having consumed last_number + 1) or rolls back (having
+--      consumed nothing), and only then reads last_number for itself.
+--   3. IncrementDocumentNumber, the actual allocation: last_number + 1,
+--      returned as the number this document is issued under. Because
+--      this UPDATE runs inside the same transaction that already holds
+--      step 2's lock on this exact row, no other transaction's
+--      IncrementDocumentNumber can interleave between steps 2 and 3 of
+--      this one.
+--
+-- A transaction that allocates a number this way and then rolls back
+-- (the issuing transaction failed for any other reason, or the test
+-- that exercises this directly) leaves last_number exactly where step 2
+-- found it: the UPDATE in step 3 never committed, so nothing else ever
+-- observes the number it would have produced, and the next successful
+-- call still gets that same, un-skipped number.
+
+-- EnsureDocumentNumberRow deliberately reads tenant_id from
+-- current_setting rather than taking it as a bound parameter, unlike
+-- CreateCustomer and CreateCatalogueItem's own tenant_id column value:
+-- there is no caller-supplied Go value for it to come from in the first
+-- place (internal/storage.DocumentNumberRepository.AllocateNext takes no
+-- tenant id; it is implicit in the TenantScope.WithTenant scope the
+-- whole call already runs inside), and reading it the same way every
+-- other query here reads it back for its WHERE clause keeps this
+-- statement from being the one place in this file a caller could get
+-- the tenant wrong.
+--
+-- name: EnsureDocumentNumberRow :exec
+INSERT INTO document_numbers (tenant_id, type, number_year, last_number)
+VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1, $2, 0)
+ON CONFLICT (tenant_id, type, number_year) DO NOTHING;
+
+-- name: LockDocumentNumber :one
+SELECT last_number
+FROM document_numbers
+WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+    AND type = $1
+    AND number_year = $2
+FOR UPDATE;
+
+-- name: IncrementDocumentNumber :one
+UPDATE document_numbers
+SET last_number = last_number + 1,
+    updated_at = now()
+WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+    AND type = $1
+    AND number_year = $2
+RETURNING last_number;
+
+-- GetDocumentNumber is a plain, unlocked read of the current counter:
+-- used by tests asserting what the counter holds, and never by the
+-- allocation path itself, which needs the lock the two queries above
+-- give it. A missing row (nothing ever issued yet under this key)
+-- answers pgx.ErrNoRows, which the test helper reading this treats the
+-- same as last_number = 0.
+--
+-- name: GetDocumentNumber :one
+SELECT last_number
+FROM document_numbers
+WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+    AND type = $1
+    AND number_year = $2;

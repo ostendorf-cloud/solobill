@@ -103,3 +103,49 @@ func timeFromTimestamptz(t pgtype.Timestamptz) time.Time {
 func toTimestamptz(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
+
+// dateToPtr and ptrToDate convert between a nullable Postgres date
+// column (for example documents.service_date and documents.due_date)
+// and a *time.Time. Nothing in this package reads the time-of-day
+// component of either side: a date column carries none, and pgx itself
+// always decodes one with a zero time-of-day in UTC.
+
+func dateToPtr(d pgtype.Date) *time.Time {
+	if !d.Valid {
+		return nil
+	}
+
+	v := d.Time
+
+	return &v
+}
+
+func ptrToDate(t *time.Time) pgtype.Date {
+	if t == nil {
+		return pgtype.Date{}
+	}
+
+	return pgtype.Date{Time: *t, Valid: true}
+}
+
+// int4ToPtr and ptrToInt4 convert between a nullable Postgres integer
+// column (for example documents.discount_percent_permyriad and
+// documents.number_year) and an *int32.
+
+func int4ToPtr(i pgtype.Int4) *int32 {
+	if !i.Valid {
+		return nil
+	}
+
+	v := i.Int32
+
+	return &v
+}
+
+func ptrToInt4(i *int32) pgtype.Int4 {
+	if i == nil {
+		return pgtype.Int4{}
+	}
+
+	return pgtype.Int4{Int32: *i, Valid: true}
+}
