@@ -1,12 +1,28 @@
 #!/usr/bin/env bash
-# Lints and schema-validates charts/solobill for its default values and every documented
-# non-default combination, so CI and a local run share the exact same logic. The combinations
-# below mirror charts/solobill/tests/*_test.yaml exactly: default, OIDC enabled, ingress enabled.
+# Validates charts/solobill for its default values and every documented non-default
+# combination, so CI and a local run share the exact same logic. The combinations below
+# mirror charts/solobill/tests/*_test.yaml exactly: default, OIDC enabled, ingress enabled.
+#
+# Takes exactly one mode argument:
+#   lint        - helm lint, one job per check (Taskfile's lint:helm / CI's helm-lint job)
+#   kubeconform - helm template piped into kubeconform, its own job (CI's kubeconform job)
+# kept as two modes of one script, not two near-duplicate scripts, so the three --set
+# combinations above live in exactly one place.
 #
 # kubeconform resolves its Kubernetes schemas over the network with its normal default
 # behaviour (no local schema clone, no relaxed TLS verification): a CI runner with normal
 # internet access reaches raw.githubusercontent.com directly with no further setup needed.
 set -euo pipefail
+
+mode="${1:?usage: validate-chart.sh <lint|kubeconform>}"
+
+case "$mode" in
+  lint|kubeconform) ;;
+  *)
+    echo "validate-chart: unknown mode '${mode}', expected 'lint' or 'kubeconform'" >&2
+    exit 1
+    ;;
+esac
 
 chart="charts/solobill"
 
@@ -21,24 +37,29 @@ names=(
 sets=(
   "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app"
   "existingSecret.name=solobill-secrets,existingSecret.oidcClientSecretKey=OIDC_CLIENT_SECRET,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,config.oidc.issuerUrl=https://idp.example.com,config.oidc.clientId=solobill,config.oidc.redirectUrl=https://solobill.example.com/api/v1/auth/oidc/callback,config.oidc.defaultTenantSlug=acme"
-  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,ingress.enabled=true,ingress.className=nginx,ingress.hosts[0].host=solobill.example.org,ingress.hosts[0].paths[0].path=/,ingress.hosts[0].paths[0].pathType=Prefix"
+  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx,ingress.hosts[0].host=solobill.example.org,ingress.hosts[0].paths[0].path=/,ingress.hosts[0].paths[0].pathType=Prefix"
 )
 
 for i in "${!names[@]}"; do
   name="${names[$i]}"
   set_args="${sets[$i]}"
 
-  echo "==> validating combination: ${name}"
+  echo "==> validating combination (${mode}): ${name}"
 
-  if ! helm lint "${chart}" --set "${set_args}"; then
-    echo "validate-chart: helm lint failed for combination: ${name}" >&2
-    exit 1
-  fi
-
-  if ! helm template "${chart}" --set "${set_args}" | kubeconform -strict -summary; then
-    echo "validate-chart: kubeconform failed for combination: ${name}" >&2
-    exit 1
-  fi
+  case "$mode" in
+    lint)
+      if ! helm lint "${chart}" --set "${set_args}"; then
+        echo "validate-chart: helm lint failed for combination: ${name}" >&2
+        exit 1
+      fi
+      ;;
+    kubeconform)
+      if ! helm template "${chart}" --set "${set_args}" | kubeconform -strict -summary; then
+        echo "validate-chart: kubeconform failed for combination: ${name}" >&2
+        exit 1
+      fi
+      ;;
+  esac
 done
 
-echo "all combinations valid"
+echo "all combinations valid (${mode})"

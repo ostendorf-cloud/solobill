@@ -19,7 +19,9 @@ concurrency:
 
 jobs:
   signoff:
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-dco.yaml@v0.1.1
+    # v0.1.1 - kept on its own line, not a trailing comment: inline it would push this
+    # line past yamllint's 120-character line-length limit (the SHA alone is 40 characters).
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-dco.yaml@f64e9f521dd9d66f0233cd8e8035c778b9567f0c
     secrets: inherit
     with:
       runs-on-runner: blacksmith-2vcpu-ubuntu-2404

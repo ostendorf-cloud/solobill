@@ -54,7 +54,12 @@ tasks:
   lint:helm:
     desc: Helm chart lint and schema validation
     cmds:
-      - scripts/validate-chart.sh
+      - scripts/validate-chart.sh lint
+
+  validate:kubeconform:
+    desc: Schema validation of the rendered Helm chart against the Kubernetes API
+    cmds:
+      - scripts/validate-chart.sh kubeconform
 
   test:helm:
     desc: Helm chart unit tests
@@ -173,6 +178,7 @@ tasks:
       - task: build
       - task: test:go
       - task: lint:helm
+      - task: validate:kubeconform
       - task: test:helm
 
   fmt:
