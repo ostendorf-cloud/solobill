@@ -169,3 +169,204 @@ type CatalogueItem struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// DocumentType is what a Document actually is. This step (issue #15,
+// step 2) only ever writes DocumentTypeInvoice and DocumentTypeCorrection:
+// offers are a later milestone on the same model, per the issue's own
+// scope, and are deliberately not a value here yet; see db/migrations'
+// documents migration for why adding one later is a cheap, additive
+// change rather than a reason to add it speculatively now.
+type DocumentType string
+
+const (
+	// DocumentTypeInvoice is an ordinary, independently issued invoice.
+	DocumentTypeInvoice DocumentType = "invoice"
+	// DocumentTypeCorrection is its own document, referencing an
+	// original invoice via Document.CorrectsDocumentID, never a
+	// modification of it: see Document.CorrectsDocumentID and
+	// DocumentRepository for how immutability is actually enforced.
+	DocumentTypeCorrection DocumentType = "correction"
+)
+
+// DocumentState is a Document's lifecycle state. "A state transition is a
+// new row" (docs/concepts/solobill.md) is implemented at the document
+// level, not by a transitions table of its own: DocumentStateDraft to
+// DocumentStateIssued is the one in-place transition this package ever
+// allows (see DocumentRepository.Issue); the only transition an issued
+// document can go through after that is answered by creating a wholly
+// new Document (a correction) that references it, never by writing a
+// third state onto the same row. See db/migrations' documents migration
+// for the fuller reasoning behind not adding a separate transitions
+// table for this.
+type DocumentState string
+
+const (
+	// DocumentStateDraft is mutable: its header and its lines can still
+	// be changed or the whole document discarded.
+	DocumentStateDraft DocumentState = "draft"
+	// DocumentStateIssued is frozen: see Document.FrozenPayload. Nothing
+	// in this package can change a row once it carries this state; see
+	// db/migrations' documents_block_issued_mutation trigger, the actual
+	// enforcement mechanism, not a convention this package merely
+	// follows.
+	DocumentStateIssued DocumentState = "issued"
+)
+
+// VATRegime is the tax treatment a Document is issued under; both are
+// explicit goals of docs/concepts/solobill.md.
+type VATRegime string
+
+const (
+	// VATRegimeStandard charges VAT normally, per line, at that line's
+	// own VATRatePermyriad.
+	VATRegimeStandard VATRegime = "standard"
+	// VATRegimeKleinunternehmer is section 19 UStG: no VAT is charged,
+	// which in practice means every line's VATRatePermyriad is 0, but
+	// the regime itself is still recorded, since the wording a rendered
+	// document carries differs by regime even when the tax figure does
+	// not.
+	VATRegimeKleinunternehmer VATRegime = "kleinunternehmer"
+)
+
+// Document is one entry in the append-only ledger
+// docs/concepts/solobill.md's Approach section describes: an offer,
+// invoice or correction a tenant has drafted or issued, scoped to one
+// tenant. Lines is populated by DocumentRepository.FindByID and
+// DocumentRepository.Create/Update (its own input and output), ordered
+// by each DocumentLine's Position; DocumentRepository.List leaves it
+// nil, since a list view never needs every line of every document.
+//
+// A draft (State == DocumentStateDraft) has every field below Lines
+// unset except Type, CustomerID, VATRegime and whichever of
+// ServiceDate/DueDate/the discount fields the caller has filled in so
+// far. An issued document (State == DocumentStateIssued) has Number,
+// NumberYear, IssuedAt, FrozenPayload and FrozenPayloadSHA256 all set
+// together, and never changes again; see
+// db/migrations' documents_issued_fields_consistent and
+// documents_block_issued_mutation.
+type Document struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+	Type     DocumentType
+	State    DocumentState
+	// CustomerID is this document's customer. Composite foreign key to
+	// customers (tenant_id, id); see db/migrations' documents migration
+	// for why a plain, single-column reference is never used across a
+	// row-level-security boundary in this schema.
+	CustomerID uuid.UUID
+	// CorrectsDocumentID names the original invoice this document
+	// corrects. nil for Type == DocumentTypeInvoice; set, and only set,
+	// for Type == DocumentTypeCorrection: see db/migrations'
+	// documents_correction_requires_original.
+	CorrectsDocumentID *uuid.UUID
+	VATRegime          VATRegime
+	// ServiceDate is the Leistungsdatum/Lieferdatum German VAT law
+	// (§14 UStG) requires, separate from the document's own date
+	// (IssuedAt once issued). nil until known, which is routinely the
+	// case while a draft is still being edited.
+	ServiceDate *time.Time
+	// DueDate is nil until decided, for the same reason ServiceDate is.
+	DueDate *time.Time
+	// DiscountPercentPermyriad and DiscountAmountCents are this
+	// document's own discount, mutually exclusive, both nil for no
+	// document-level discount at all. Permyriad (parts per 10,000:
+	// 1500 = 15.00%): see db/migrations' documents migration for why
+	// this is a scaled integer, never a Postgres numeric and never a
+	// float. internal/money's Calculate allocates whichever is set
+	// across this document's lines per docs/concepts/solobill.md's
+	// Rounding section; this package only stores and returns the
+	// configured discount itself, never that allocation.
+	DiscountPercentPermyriad *int32
+	DiscountAmountCents      *int64
+	// Number is this document's own number within Type and NumberYear:
+	// nil for a draft, set exactly once, together with NumberYear,
+	// IssuedAt, FrozenPayload and FrozenPayloadSHA256, by
+	// DocumentRepository.Issue (or, for an imported historical document,
+	// a later import step setting Imported true and Number/NumberYear
+	// directly, outside DocumentNumberRepository's counter entirely; see
+	// Imported).
+	Number     *int64
+	NumberYear *int32
+	// Imported marks a document brought in from before this tool
+	// existed, carrying the Number it was actually issued under rather
+	// than one DocumentNumberRepository allocated.
+	// docs/concepts/solobill.md requires this to be possible so that an
+	// import can never shift or reuse a number a customer already
+	// holds; the import itself (reading a historical record and setting
+	// this) is a later milestone, out of this step's scope. False for
+	// every document this step's own code ever creates.
+	Imported bool
+	// FrozenPayload is the complete, self-contained snapshot an issued
+	// document is rendered from forever: nil until State ==
+	// DocumentStateIssued. See DocumentPayload for its shape, and
+	// FrozenPayloadSHA256 for how it is verified.
+	FrozenPayload []byte
+	// FrozenPayloadSHA256 is the lowercase hex-encoded SHA-256 of
+	// FrozenPayload's own bytes, exactly as persisted: nil until State
+	// == DocumentStateIssued. Computed once, by whichever caller freezes
+	// the payload (the issuing step; see
+	// db/migrations' documents migration for why this package never
+	// re-derives it from a separate canonical re-encoding).
+	FrozenPayloadSHA256 *string
+	// IssuedAt is nil until State == DocumentStateIssued, set exactly
+	// once, together with Number, NumberYear, FrozenPayload and
+	// FrozenPayloadSHA256.
+	IssuedAt  *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	// Lines is this document's lines, ordered by DocumentLine.Position;
+	// see the type's own doc comment for when it is populated.
+	Lines []DocumentLine
+}
+
+// DocumentLine is one billable line on a Document, scoped to the same
+// tenant as its document. Nothing here is a computed total:
+// internal/money's Calculate derives a line's net amount, its discount
+// in cents, its share of the document's own discount and its VAT
+// entirely from the fields below, at render time for a draft and once,
+// frozen into Document.FrozenPayload, at issue time; see db/migrations'
+// document_lines migration for why no computed column is stored here
+// instead.
+type DocumentLine struct {
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	DocumentID uuid.UUID
+	// Position is this line's place within its document, used both for
+	// display and as the tie-break order internal/money's
+	// largest-remainder discount allocation needs; see db/migrations'
+	// document_lines migration.
+	Position int32
+	// CatalogueItemID is nil for an ad hoc line with no catalogue item
+	// behind it. Kept for reporting even though Description, UnitPriceCents
+	// and Unit below are copied onto this line and do not need it for
+	// referential integrity; see db/migrations' document_lines migration.
+	CatalogueItemID *uuid.UUID
+	// Description, UnitPriceCents and Unit are copied from the catalogue
+	// item (when CatalogueItemID is set) at the moment this line is
+	// added to a draft, or typed directly for an ad hoc line; never
+	// re-read from catalogue_items afterward, so a later price change or
+	// rename on the catalogue item never moves an already-drafted line.
+	Description string
+	// QuantityThousandths is this line's quantity scaled by 1000 (three
+	// decimal places: 2500 = 2.5). Scaled integer, never a Postgres
+	// numeric and never a float; see db/migrations' document_lines
+	// migration for the full reasoning, the same one
+	// catalogue_items.unit_price_cents already established for money.
+	QuantityThousandths int64
+	UnitPriceCents      int64
+	// Unit is one of "piece", "hour" or "day"; see catalogue_items'
+	// migration for why this is the complete set today.
+	Unit string
+	// VATRatePermyriad is this line's own VAT rate, in parts per 10,000
+	// (1900 = 19.00%). 0 covers both a genuinely zero-rated line and
+	// every line under VATRegimeKleinunternehmer.
+	VATRatePermyriad int32
+	// LineDiscountPercentPermyriad and LineDiscountAmountCents are this
+	// line's own discount, mutually exclusive, both nil for no
+	// line-level discount, entirely independent of the document's own
+	// discount fields above.
+	LineDiscountPercentPermyriad *int32
+	LineDiscountAmountCents      *int64
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
+}

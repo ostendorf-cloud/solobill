@@ -130,3 +130,94 @@ type CatalogueItemRepository interface {
 	Update(ctx context.Context, item CatalogueItem) (CatalogueItem, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }
+
+// DocumentRepository persists and queries documents, together with their
+// lines. Every method must run inside a context TenantScope.WithTenant
+// produced; see ErrNoTenantScope.
+//
+// Immutability once State == DocumentStateIssued is not this interface's
+// job to enforce: db/migrations' documents_block_issued_mutation and
+// document_lines_block_issued_document_mutation triggers are what
+// actually refuse an UPDATE or DELETE against an issued document or its
+// lines, at the database level, so that raw SQL run through the same
+// connection is refused exactly as a call through this interface is.
+// Update, DeleteDraft and Issue below rely on that refusal rather than
+// repeating it as an application-level check that a direct SQL
+// statement could simply not call.
+type DocumentRepository interface {
+	// Create inserts a new draft document together with its lines, in
+	// one call: a document is never meaningfully created without at
+	// least the lines it is drafted with, and inserting both under the
+	// same transaction is what keeps every line's Position contiguous
+	// and correctly ordered from the first write onward.
+	Create(ctx context.Context, document Document, lines []DocumentLine) (Document, error)
+
+	// FindByID returns a document together with its lines, ordered by
+	// each line's Position. It does not filter on State: a caller
+	// resolving a correction's CorrectsDocumentID, or displaying an
+	// issued document, needs exactly this, unconditionally, the same
+	// FindByID-does-not-filter pattern CustomerRepository.FindByID and
+	// CatalogueItemRepository.FindByID already use for their own reason.
+	FindByID(ctx context.Context, id uuid.UUID) (Document, error)
+
+	// List returns every document's own header, with Lines left nil: a
+	// human-facing list view has no use for every line of every
+	// document it is not currently showing.
+	List(ctx context.Context) ([]Document, error)
+
+	// Update replaces a draft's header and its complete set of lines.
+	// Fails with ErrNotFound when id does not exist in this tenant at
+	// all, or ErrConflict when it exists but is already issued: the
+	// underlying query's zero-row result cannot tell those two cases
+	// apart by itself the way CustomerRepository.Update's "AND
+	// deleted_at IS NULL" guard can, since nothing here filters on
+	// State; db/migrations' documents_block_issued_mutation trigger is
+	// what actually refuses the write for an issued row, as a database
+	// error this package recognizes and maps to ErrConflict, not a
+	// query that simply matches zero rows.
+	Update(ctx context.Context, document Document, lines []DocumentLine) (Document, error)
+
+	// DeleteDraft removes a draft document and its lines (document_lines'
+	// own ON DELETE CASCADE foreign key takes the lines). ErrNotFound or
+	// ErrConflict for the same two cases, and the same reason, as Update.
+	DeleteDraft(ctx context.Context, id uuid.UUID) error
+
+	// Issue allocates the next number for docType and year (via
+	// DocumentNumberRepository.AllocateNext, inside this call's own
+	// transaction: see that method's doc comment for what that
+	// allocation actually guarantees under concurrency) and writes it,
+	// together with issuedAt, payload and payloadHash, moving the
+	// document from DocumentStateDraft to DocumentStateIssued in one
+	// statement. ErrConflict when id does not resolve to a draft in
+	// this tenant (already issued, or raced by a concurrent Issue
+	// call): see internal/storage/postgres/queries/documents.sql's
+	// IssueDocument for why that case is a conflict, not a not-found.
+	Issue(ctx context.Context, id uuid.UUID, docType DocumentType, year int, issuedAt time.Time, payload []byte, payloadHash string) (Document, error)
+}
+
+// DocumentNumberRepository allocates and reads the per-tenant,
+// per-type, per-year counters docs/concepts/solobill.md's gapless
+// numbering rests on. Every method must run inside a context
+// TenantScope.WithTenant produced; see ErrNoTenantScope.
+type DocumentNumberRepository interface {
+	// AllocateNext locks docType's counter for year, for the remaining
+	// lifetime of the caller's own transaction, and returns the next
+	// number: the counter's last_number + 1, persisted atomically with
+	// that same increment. This is the one mechanism issue #15's
+	// gaplessness guarantee rests on: a caller that calls this and then
+	// returns a non-nil error from its own TenantScope.WithTenant
+	// closure rolls the whole transaction back, this allocation
+	// included, so the number just returned is never actually issued to
+	// anything, and the next successful call still gets it, not the one
+	// after it. A concurrent call for the same tenant, docType and year
+	// blocks here until this transaction commits or rolls back, which
+	// is what makes two concurrent issues under the same key serialize
+	// rather than race.
+	AllocateNext(ctx context.Context, docType DocumentType, year int) (int64, error)
+
+	// Current reads docType's counter for year without allocating or
+	// locking anything, answering 0 when nothing has been issued under
+	// that key yet. DocumentRepository.Issue never calls this; it
+	// exists for a test asserting what the counter currently holds.
+	Current(ctx context.Context, docType DocumentType, year int) (int64, error)
+}
