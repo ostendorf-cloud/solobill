@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@ostendorf-cloud/govue':
-        specifier: ostendorf-cloud/govue#v0.2.0&path:/web
-        version: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/066451ce55fe3c0f991fbcbf46dffeafd8cd77e1#path:/web(tailwindcss@4.3.5)(vue@3.5.45(typescript@5.9.3))
+        specifier: ostendorf-cloud/govue#v0.3.1&path:/web
+        version: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/4119c8e7c7a1e9f96d9b14b28830b40ce73a414f#path:/web(tailwindcss@4.3.5)(vue@3.5.45(typescript@5.9.3))
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.5
@@ -275,9 +275,9 @@ packages:
   '@one-ini/wasm@0.2.1':
     resolution: {integrity: sha512-TUqERXGNTifZ9y2g3wPxQrw3HpHv/02DsW3D90T9x0hhonrL1ZqpSmNrU2XkoIq0fP1N6gZfVQzy2Fw1ZvGBNg==}
 
-  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/066451ce55fe3c0f991fbcbf46dffeafd8cd77e1#path:/web':
-    resolution: {gitHosted: true, integrity: sha512-t92um6VYZDG/arKAhRZbzZmogVer8Ym2PpqYJl/TpvD4tM85Gdd6uJnfc/D3rFexboX6umTldNRrM6CFqyEkcg==, path: /web, tarball: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/066451ce55fe3c0f991fbcbf46dffeafd8cd77e1}
-    version: 0.2.0
+  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/4119c8e7c7a1e9f96d9b14b28830b40ce73a414f#path:/web':
+    resolution: {gitHosted: true, integrity: sha512-I2eTLbcV+nsRY8yCDyzcwkA9J3LSc02++7GRYX7bsbWB+WBx76CAXlhsGq6R6F9O/W/YhfEDcfmHaKGozN4c3w==, path: /web, tarball: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/4119c8e7c7a1e9f96d9b14b28830b40ce73a414f}
+    version: 0.3.1
     peerDependencies:
       tailwindcss: ^4.1.0
       vue: ^3.5.0
@@ -1873,7 +1873,7 @@ snapshots:
 
   '@one-ini/wasm@0.2.1': {}
 
-  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/066451ce55fe3c0f991fbcbf46dffeafd8cd77e1#path:/web(tailwindcss@4.3.5)(vue@3.5.45(typescript@5.9.3))':
+  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/4119c8e7c7a1e9f96d9b14b28830b40ce73a414f#path:/web(tailwindcss@4.3.5)(vue@3.5.45(typescript@5.9.3))':
     dependencies:
       reka-ui: 2.11.0(vue@3.5.45(typescript@5.9.3))
       tailwindcss: 4.3.5
