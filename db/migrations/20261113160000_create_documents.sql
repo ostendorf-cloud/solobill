@@ -114,21 +114,46 @@ CREATE TABLE documents (
     -- copied in at issue time, so a later change to customers or
     -- catalogue_items, or a later change to internal/money's own rounding
     -- code, can never alter what an already-issued document reads back
-    -- as. jsonb, not a hand-rolled set of columns: the payload's shape is
+    -- as.
+    --
+    -- bytea, not jsonb: this column's whole purpose is reproducing the
+    -- document exactly as it was issued, years later, for an audit or an
+    -- e-invoice. frozen_payload_sha256 below has to be reproducible from
+    -- this row for that purpose to mean anything, and Postgres does not
+    -- make that possible for jsonb, because a jsonb column never stores
+    -- the bytes it is given: it parses and re-serializes them into a
+    -- decomposed binary form that drops insignificant whitespace,
+    -- reorders object keys, discards a duplicate key, and normalizes
+    -- numbers through numeric. A jsonb column read back is Postgres' own
+    -- re-encoding, not the input, so a hash computed over the submitted
+    -- bytes could never be recomputed from the stored row again, which
+    -- defeats the one guarantee this column exists for. bytea has no
+    -- such step: what is written is byte-for-byte what is read back.
+    -- The cost is that this table cannot query into the payload's own
+    -- fields with a jsonb operator; nothing in this schema or in
+    -- internal/storage/postgres does that today, the payload's shape is
     -- a Go-side concern (internal/storage.DocumentPayload, a later
-    -- rendering step's contract, not this migration's), and jsonb keeps
-    -- this table from having to grow a column for every field that
-    -- shape ever needs. Set exactly once, together with
-    -- frozen_payload_sha256, issued_at, number and number_year: see
-    -- documents_issued_fields_consistent.
-    frozen_payload jsonb,
+    -- rendering step's contract, not this migration's), and a later
+    -- feature that genuinely needs to query into it can add its own
+    -- derived jsonb column then, decided and reviewed against an actual
+    -- query, rather than this migration keeping jsonb speculatively and
+    -- giving up the one guarantee that matters more. Set exactly once,
+    -- together with frozen_payload_sha256, issued_at, number and
+    -- number_year: see documents_issued_fields_consistent.
+    frozen_payload bytea,
     -- Hex-encoded SHA-256 of frozen_payload's own bytes, exactly as
     -- stored: computed in Go over the exact byte slice written to this
     -- row, not re-derived from a separate canonical re-encoding, so
     -- verifying it later (docs/concepts/solobill.md: "every figure in a
     -- report can be traced back to the documents it came from") is
     -- "hash these bytes and compare", with no second encoding step that
-    -- could itself drift from what was actually persisted.
+    -- could itself drift from what was actually persisted. This is the
+    -- guarantee that the issued document matches what was actually
+    -- submitted at issue time, not merely that the row has not changed
+    -- since it was written (immutability, below, already gives that one
+    -- for free and would make a hash of the stored form alone nearly
+    -- vacuous): bytea above is what makes "hash these bytes and compare"
+    -- true rather than aspirational.
     frozen_payload_sha256 text,
     issued_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -179,8 +204,9 @@ CREATE TABLE documents (
     CONSTRAINT documents_customer_id_fkey FOREIGN KEY (tenant_id, customer_id) REFERENCES customers (tenant_id, id),
     CONSTRAINT documents_corrects_document_id_fkey FOREIGN KEY (tenant_id, corrects_document_id) REFERENCES documents (tenant_id, id),
     -- The database-level backstop for gapless, never-reused numbering:
-    -- document_numbers' SELECT ... FOR UPDATE counter is what actually
-    -- allocates a number without a gap under concurrency (see
+    -- document_numbers' own counter, allocated by a single
+    -- UPDATE ... RETURNING, is what actually allocates a number without
+    -- a gap under concurrency (see
     -- internal/storage/postgres's numbering code and its own tests), but
     -- this constraint is what makes a second row ever carrying the same
     -- (type, number_year, number) impossible outright, including through
@@ -216,9 +242,23 @@ CREATE POLICY documents_tenant_isolation ON documents
 -- one mechanism in Postgres that can compare OLD against the operation
 -- being attempted, so it is the only one of the four options (trigger,
 -- policy, constraint, or a combination) that can express this rule at
--- all; FORCE ROW LEVEL SECURITY above already makes sure this trigger
--- cannot be sidestepped by owning the table either, the same as every
--- other check on this table.
+-- all.
+--
+-- FORCE ROW LEVEL SECURITY above has no bearing on this trigger: it
+-- only ever changes whose rows a row-level-security policy applies to
+-- (without it, the table owner is exempt from the policy; with it, the
+-- owner is scoped by the policy too), and a trigger is a wholly
+-- separate mechanism a policy cannot touch either way. What actually
+-- keeps this trigger from being sidestepped is that solobill_app (the
+-- role docker-compose.yaml's "solobill" service and
+-- charts/solobill/README.md's deployment both connect as) is not this
+-- table's owner and is NOSUPERUSER: disabling a trigger
+-- (ALTER TABLE ... DISABLE TRIGGER) or skipping it
+-- (SET session_replication_role = 'replica') both require owning the
+-- table or being a superuser, neither of which solobill_app ever is.
+-- The migration role that creates and owns this table (solobill_super
+-- in docker-compose.yaml) could do either, but that role only ever
+-- runs db/migrations itself, never application traffic.
 --
 -- Deliberately blocks every UPDATE and DELETE once OLD.state = 'issued',
 -- with no column-by-column exception: nothing in this step's scope (no
@@ -228,8 +268,19 @@ CREATE POLICY documents_tenant_isolation ON documents
 -- document (for example a send attempt) is a new, explicit exception to
 -- this trigger, decided and reviewed then, not something this migration
 -- should anticipate and leave a gap for now.
+-- SET search_path pins this function's own name resolution to
+-- pg_catalog and public, regardless of whatever search_path the
+-- calling session happens to have: Postgres 15+ already revokes CREATE
+-- on public from PUBLIC, so a session-supplied search_path hijacking an
+-- unqualified name in this function is not a live risk today, but
+-- setting it costs nothing and is the standard hardening for a
+-- SECURITY DEFINER-adjacent function (this one is not SECURITY
+-- DEFINER, but the same search_path pinning is cheap defense in depth
+-- regardless).
 CREATE FUNCTION documents_block_issued_mutation() RETURNS trigger
-    LANGUAGE plpgsql AS $$
+    LANGUAGE plpgsql
+    SET search_path = pg_catalog, public
+    AS $$
 BEGIN
     IF OLD.state = 'issued' THEN
         RAISE EXCEPTION 'document % is issued and is immutable; create a correction instead', OLD.id
@@ -248,6 +299,15 @@ CREATE TRIGGER documents_block_issued_mutation
     BEFORE UPDATE OR DELETE ON documents
     FOR EACH ROW
     EXECUTE FUNCTION documents_block_issued_mutation();
+
+-- ENABLE ALWAYS, not the implicit default ENABLE: a plain ENABLE
+-- trigger is skipped when session_replication_role is set to
+-- 'replica' (the setting a logical-replication subscriber runs under),
+-- which would otherwise quietly turn this trigger off for any session
+-- in that mode. Setting session_replication_role at all requires
+-- superuser, which solobill_app never is, so this is defence in depth
+-- rather than closing a real hole today; it costs nothing to set.
+ALTER TABLE documents ENABLE ALWAYS TRIGGER documents_block_issued_mutation;
 
 -- migrate:down
 

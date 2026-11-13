@@ -3,11 +3,14 @@
 -- document_numbers is the gapless counter docs/concepts/solobill.md's
 -- Approach section describes: one row per tenant, per document type and
 -- per year, holding the last number issued. internal/storage/postgres's
--- numbering code allocates the next number by locking this row with
--- SELECT ... FOR UPDATE and incrementing it, inside the same transaction
--- that writes the document's own issued state, so a transaction that
--- rolls back after allocating takes its number back with it: nothing
--- else ever observes a number that was allocated and then abandoned.
+-- numbering code allocates the next number with a single
+-- UPDATE ... SET last_number = last_number + 1 ... RETURNING, inside the
+-- same transaction that writes the document's own issued state, so a
+-- transaction that rolls back after allocating takes its number back
+-- with it: nothing else ever observes a number that was allocated and
+-- then abandoned. See internal/storage/postgres/queries/document_numbers.sql
+-- for why that single UPDATE is already the serialising lock this
+-- counter needs, with no separate SELECT ... FOR UPDATE beforehand.
 --
 -- Deliberately a separate table from documents, not a sequence or a
 -- column on documents itself: a Postgres SEQUENCE never rolls back (by
@@ -38,11 +41,11 @@ CREATE TABLE document_numbers (
     CONSTRAINT document_numbers_number_year_range CHECK (number_year >= 2000),
     CONSTRAINT document_numbers_last_number_nonneg CHECK (last_number >= 0),
     -- The counter's own identity: one row per tenant, per type, per
-    -- year. This is also exactly the row SELECT ... FOR UPDATE locks,
-    -- which is what serialises issuing per tenant, per type and per
-    -- year, and nothing coarser or finer than that: two different
-    -- tenants, or two different years, or an invoice and a correction in
-    -- the same year, never contend for the same lock.
+    -- year. This is also exactly the row IncrementDocumentNumber's own
+    -- UPDATE locks, which is what serialises issuing per tenant, per
+    -- type and per year, and nothing coarser or finer than that: two
+    -- different tenants, or two different years, or an invoice and a
+    -- correction in the same year, never contend for the same lock.
     PRIMARY KEY (tenant_id, type, number_year)
 );
 
