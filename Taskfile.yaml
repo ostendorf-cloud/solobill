@@ -1,0 +1,194 @@
+version: "3"
+
+tasks:
+  setup:
+    desc: Install the pinned toolchain
+    cmds:
+      - mise trust
+      - mise install
+
+  lint:fmt:
+    desc: Go format check through golangci-lint
+    cmds:
+      - golangci-lint fmt --diff
+
+  lint:golangci-config:
+    desc: golangci-lint configuration check
+    cmds:
+      - golangci-lint config verify
+
+  # cmd/solobill embeds web/'s build output, so its go:embed directive fails
+  # on an empty dist/ unless the frontend exists first.
+  lint:vet:
+    desc: Go vet
+    deps: [web:build]
+    cmds:
+      - go vet ./...
+
+  lint:golangci:
+    desc: golangci-lint run
+    deps: [web:build]
+    cmds:
+      - golangci-lint run ./...
+
+  lint:markdown:
+    desc: Markdown lint
+    cmds:
+      - markdownlint-cli2 "**/*.md"
+
+  lint:yaml:
+    desc: YAML lint
+    cmds:
+      - yamllint .
+
+  lint:actions:
+    desc: GitHub Actions workflow lint
+    cmds:
+      - actionlint
+
+  lint:secrets:
+    desc: Secret scan over the git history
+    cmds:
+      - gitleaks git --no-banner --redact
+
+  lint:helm:
+    desc: Helm chart lint and schema validation
+    cmds:
+      - scripts/validate-chart.sh
+
+  test:helm:
+    desc: Helm chart unit tests
+    cmds:
+      - helm unittest charts/solobill
+
+  generate:sqlc:
+    desc: Regenerate the sqlc query code under internal/storage/postgres/sqlcgen
+    cmds:
+      - sqlc generate
+
+  # sqlc reads its schema from db/migrations itself (see sqlc.yaml), parsed
+  # statically, so this needs no database and no network, exactly like
+  # every other task in the check aggregate.
+  generate:check:
+    desc: Fail if the committed sqlc output does not match a fresh generate
+    deps: [generate:sqlc]
+    cmds:
+      - |
+        if [ -n "$(git status --porcelain -- internal/storage/postgres/sqlcgen)" ]; then
+          echo "sqlc output is out of date; run 'task generate:sqlc' and commit the result:" >&2
+          git status --porcelain -- internal/storage/postgres/sqlcgen >&2
+          git diff -- internal/storage/postgres/sqlcgen >&2
+          exit 1
+        fi
+
+  # Needs a reachable Postgres via DATABASE_URL, so it is never part of
+  # check: check runs with no network and no port binding. The checks.yaml
+  # "integration" job runs this against a real postgres:18 service
+  # container, after applying the migrations with dbmate.
+  test:integration:
+    desc: Go test against a live Postgres (DATABASE_URL), including the row level security isolation test
+    cmds:
+      - go test -tags=integration -race -count=1 ./internal/...
+
+  build:
+    desc: Compile the solobill binary
+    deps: [web:build]
+    cmds:
+      - go build -o bin/solobill ./cmd/solobill
+
+  test:go:
+    desc: Go test
+    deps: [web:build]
+    cmds:
+      - go test -race -count=1 ./...
+
+  # The web/ half. Every target below runs inside web/ and depends on web:deps,
+  # so one of them on its own is enough in a fresh checkout and in CI.
+  web:deps:
+    desc: Install the web/ dependencies
+    dir: web
+    run: once
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  web:lint:
+    desc: ESLint over the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run lint
+
+  web:format:
+    desc: Prettier format check over the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run format:check
+
+  web:types:
+    desc: TypeScript and template typecheck of the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run typecheck
+
+  web:test:
+    desc: Vitest suite of the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run test
+
+  web:build:
+    desc: Build the SPA bundle into cmd/solobill/dist
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run build
+
+  web:fmt:
+    desc: Format the web/ package
+    dir: web
+    deps: [web:deps]
+    cmds:
+      - pnpm run format
+
+  check:
+    desc: Every check, one after another
+    cmds:
+      - task: lint:fmt
+      - task: lint:golangci-config
+      - task: lint:vet
+      - task: lint:golangci
+      - task: generate:check
+      - task: lint:markdown
+      - task: lint:yaml
+      - task: lint:actions
+      - task: lint:secrets
+      - task: web:lint
+      - task: web:format
+      - task: web:types
+      - task: web:test
+      - task: web:build
+      - task: build
+      - task: test:go
+      - task: lint:helm
+      - task: test:helm
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - golangci-lint fmt
+
+  # Convenience wrappers around docker-compose.yaml for local development;
+  # deliberately not part of check, which runs with no network and no port
+  # binding at all.
+  dev:up:
+    desc: Build and start solobill, Postgres and the migrate step via Docker Compose
+    cmds:
+      - docker compose up --build -d
+
+  dev:down:
+    desc: Stop and remove the Docker Compose services started by dev:up
+    cmds:
+      - docker compose down
