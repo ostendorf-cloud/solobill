@@ -146,6 +146,11 @@ services:
       - GRANT SELECT, INSERT ON tenants TO solobill_app;
       - -c
       - GRANT SELECT, INSERT, UPDATE ON accounts, invites TO solobill_app;
+      # customers and catalogue_items only ever soft delete (an UPDATE
+      # setting deleted_at), never a real DELETE, so no DELETE grant
+      # here either: the same reasoning as accounts and invites above.
+      - -c
+      - GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO solobill_app;
       - -c
       - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO solobill_app;
 
