@@ -1,5 +1,12 @@
 {
-  "ignores": ["**/node_modules/**", "**/CHANGELOG.md", "CLAUDE.md"],
+  // .task holds Task's scratch output, including the helm-unittest plugin
+  // `task test:helm` symlinks in. Its own README is not ours to lint.
+  "ignores": [
+    "**/node_modules/**",
+    "**/CHANGELOG.md",
+    "CLAUDE.md",
+    ".task/**"
+  ],
   "config": {
     "MD013": {
       "line_length": 100,
