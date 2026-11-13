@@ -477,21 +477,6 @@ func TestInviteTOTPSecretAndAccept(t *testing.T) {
 	ownerTenant, ownerSecret := seedActiveAccount(t, app.store)
 	ownerCookie, ownerToken := loginAndCSRF(t, app, ownerTenant.Slug, "owner@acme.test", "correct-password", ownerSecret)
 
-	secretRec := doJSON(t, app.handler, http.MethodGet, "/api/v1/invites/totp-secret?email=new@acme.test", nil, nil, "")
-	if secretRec.Code != http.StatusOK {
-		t.Fatalf("GET /api/v1/invites/totp-secret status = %d, want %d", secretRec.Code, http.StatusOK)
-	}
-	var secretBody struct {
-		Secret          string `json:"secret"`
-		ProvisioningURI string `json:"provisioning_uri"`
-	}
-	if err := json.Unmarshal(secretRec.Body.Bytes(), &secretBody); err != nil {
-		t.Fatalf("unmarshal totp secret response: %v", err)
-	}
-	if secretBody.Secret == "" || secretBody.ProvisioningURI == "" {
-		t.Fatal("totp secret response carries an empty secret or provisioning uri")
-	}
-
 	inviteRec := doJSON(t, app.handler, http.MethodPost, "/api/v1/invites", map[string]string{
 		"email": "new@acme.test", "role": "member",
 	}, []*http.Cookie{ownerCookie}, ownerToken)
@@ -505,10 +490,45 @@ func TestInviteTOTPSecretAndAccept(t *testing.T) {
 		t.Fatalf("unmarshal invite response: %v", err)
 	}
 
+	secretRec := doJSON(t, app.handler, http.MethodPost, "/api/v1/invites/totp-secret", map[string]string{
+		"tenant_slug": ownerTenant.Slug, "token": inviteBody.Token,
+	}, nil, "")
+	if secretRec.Code != http.StatusOK {
+		t.Fatalf("POST /api/v1/invites/totp-secret status = %d, want %d, body = %s", secretRec.Code, http.StatusOK, secretRec.Body.String())
+	}
+	var secretBody struct {
+		Secret          string `json:"secret"`
+		ProvisioningURI string `json:"provisioning_uri"`
+	}
+	if err := json.Unmarshal(secretRec.Body.Bytes(), &secretBody); err != nil {
+		t.Fatalf("unmarshal totp secret response: %v", err)
+	}
+	if secretBody.Secret == "" || secretBody.ProvisioningURI == "" {
+		t.Fatal("totp secret response carries an empty secret or provisioning uri")
+	}
+
 	code, err := auth.GenerateTOTPCode(secretBody.Secret, time.Now())
 	if err != nil {
 		t.Fatalf("GenerateTOTPCode() error = %v", err)
 	}
+
+	t.Run("totp-secret for an unknown tenant", func(t *testing.T) {
+		rec := doJSON(t, app.handler, http.MethodPost, "/api/v1/invites/totp-secret", map[string]string{
+			"tenant_slug": "no-such-tenant", "token": inviteBody.Token,
+		}, nil, "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want %d, body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
+		}
+	})
+
+	t.Run("totp-secret for an unknown token", func(t *testing.T) {
+		rec := doJSON(t, app.handler, http.MethodPost, "/api/v1/invites/totp-secret", map[string]string{
+			"tenant_slug": ownerTenant.Slug, "token": "not-a-real-token",
+		}, nil, "")
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want %d, body = %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+		}
+	})
 
 	tests := []struct {
 		name       string
@@ -519,23 +539,51 @@ func TestInviteTOTPSecretAndAccept(t *testing.T) {
 			name: "unknown tenant",
 			body: map[string]string{
 				"tenant_slug": "no-such-tenant", "token": inviteBody.Token,
-				"password": "a-new-password", "totp_secret": secretBody.Secret, "totp_code": code,
+				"password": "a-new-password", "totp_code": code,
 			},
 			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "password too short",
+			body: map[string]string{
+				"tenant_slug": ownerTenant.Slug, "token": inviteBody.Token,
+				"password": "short11char", "totp_code": code,
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "password too long",
+			body: map[string]string{
+				"tenant_slug": ownerTenant.Slug, "token": inviteBody.Token,
+				"password": strings.Repeat("a", 129), "totp_code": code,
+			},
+			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "wrong totp code",
 			body: map[string]string{
 				"tenant_slug": ownerTenant.Slug, "token": inviteBody.Token,
-				"password": "a-new-password", "totp_secret": secretBody.Secret, "totp_code": "000000",
+				"password": "a-new-password", "totp_code": "000000",
 			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "attacker-supplied secret and matching code is ignored",
+			body: func() map[string]string {
+				secret, code := attackerSecretAndCode(t)
+
+				return map[string]string{
+					"tenant_slug": ownerTenant.Slug, "token": inviteBody.Token,
+					"password": "a-new-password", "totp_secret": secret, "totp_code": code,
+				}
+			}(),
 			wantStatus: http.StatusBadRequest,
 		},
 		{
 			name: "invalid token",
 			body: map[string]string{
 				"tenant_slug": ownerTenant.Slug, "token": "not-a-real-token",
-				"password": "a-new-password", "totp_secret": secretBody.Secret, "totp_code": code,
+				"password": "a-new-password", "totp_code": code,
 			},
 			wantStatus: http.StatusBadRequest,
 		},
@@ -543,7 +591,7 @@ func TestInviteTOTPSecretAndAccept(t *testing.T) {
 			name: "accept succeeds",
 			body: map[string]string{
 				"tenant_slug": ownerTenant.Slug, "token": inviteBody.Token,
-				"password": "a-new-password", "totp_secret": secretBody.Secret, "totp_code": code,
+				"password": "a-new-password", "totp_code": code,
 			},
 			wantStatus: http.StatusNoContent,
 		},
@@ -560,6 +608,27 @@ func TestInviteTOTPSecretAndAccept(t *testing.T) {
 			}
 		})
 	}
+}
+
+// attackerSecretAndCode builds a self-consistent secret/code pair the
+// server never issued, to prove it is ignored: acceptInviteRequest has no
+// totp_secret field any more, so that body field is simply extra JSON the
+// decoder drops, and only the real, server-issued secret the invite's own
+// totp-secret request already attached to it can ever confirm the invite.
+func attackerSecretAndCode(t *testing.T) (secret, code string) {
+	t.Helper()
+
+	secret, err := auth.GenerateTOTPSecret()
+	if err != nil {
+		t.Fatalf("GenerateTOTPSecret() error = %v", err)
+	}
+
+	code, err = auth.GenerateTOTPCode(secret, time.Now())
+	if err != nil {
+		t.Fatalf("GenerateTOTPCode() error = %v", err)
+	}
+
+	return secret, code
 }
 
 func TestRateLimitedRoutes(t *testing.T) {
