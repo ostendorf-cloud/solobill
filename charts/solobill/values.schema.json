@@ -79,6 +79,12 @@
         }
       }
     },
+    "adminPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "The administrative container port cmd/solobill serves /metrics, /healthz and /readyz on through govue's httpserver.RunAdmin. Must match config.adminListenAddr. Deliberately not a field under service: it is not exposed on the Service, see values.yaml's own comment for why."
+    },
     "ingress": {
       "type": "object",
       "required": ["enabled"],
@@ -148,9 +154,14 @@
     "affinity": { "type": "object" },
     "config": {
       "type": "object",
-      "required": ["listenAddr", "databaseUrl", "databaseUser"],
+      "required": ["listenAddr", "adminListenAddr", "databaseUrl", "databaseUser"],
       "properties": {
         "listenAddr": { "type": "string", "minLength": 1 },
+        "adminListenAddr": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ADMIN_LISTEN_ADDR. Must match adminPort. /metrics, /healthz and /readyz are served here, never on listenAddr; see adminPort's own description."
+        },
         "logLevel": {
           "type": "string",
           "enum": ["debug", "info", "warn", "error"]
