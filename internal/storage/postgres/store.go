@@ -12,9 +12,10 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
-// Store wires a connection pool into the three repositories and the
+// Store wires a connection pool into the five repositories and the
 // tenant-scoping mechanism. Store satisfies storage.TenantScope itself;
-// Tenants, Accounts and Invites return the repository interfaces.
+// Tenants, Accounts, Invites, Customers and CatalogueItems return the
+// repository interfaces.
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -103,4 +104,17 @@ func (s *Store) Accounts() storage.AccountRepository {
 // context WithTenant produced; see storage.InviteRepository.
 func (s *Store) Invites() storage.InviteRepository {
 	return &inviteRepository{}
+}
+
+// Customers returns the customer repository. Every method on it
+// requires a context WithTenant produced; see storage.CustomerRepository.
+func (s *Store) Customers() storage.CustomerRepository {
+	return &customerRepository{}
+}
+
+// CatalogueItems returns the catalogue item repository. Every method on
+// it requires a context WithTenant produced; see
+// storage.CatalogueItemRepository.
+func (s *Store) CatalogueItems() storage.CatalogueItemRepository {
+	return &catalogueItemRepository{}
 }

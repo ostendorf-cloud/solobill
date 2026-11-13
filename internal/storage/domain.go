@@ -95,3 +95,77 @@ type Invite struct {
 	// against this value, never against anything the client supplies.
 	TOTPSecret *string
 }
+
+// Customer is a person or company a tenant issues offers and invoices
+// to, scoped to one tenant. Every address field is nil until known: a
+// customer is routinely entered with only a name, and completeness at
+// issuing time is a later business-logic validation, not something this
+// package enforces. DeletedAt is nil for an active customer; see
+// CustomerRepository for the FindByID-versus-List asymmetry a soft
+// delete requires.
+type Customer struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+	Name     string
+	Email    *string
+	// VATID is the EU VAT identification number (USt-IdNr.), nil until
+	// known. Its format varies by EU member state; this package never
+	// validates it.
+	VATID      *string
+	Street     *string
+	PostalCode *string
+	City       *string
+	// CountryCode is ISO 3166-1 alpha-2, nil until known. There is
+	// deliberately no default: picking one is a business-policy decision
+	// for a later UI layer, not this package's.
+	CountryCode *string
+	// DeletedAt is nil for an active customer, set once soft deleted. A
+	// customer is never hard deleted: see db/migrations' customers
+	// migration for why.
+	DeletedAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// CatalogueItem is a good or service a tenant can bill, with its current
+// price, scoped to one tenant. UnitPriceCents is an integer minor unit
+// (implicitly EUR cents: multi-currency is an explicit non-goal, see
+// docs/concepts/solobill.md), never a float, so "round to the nearest
+// cent" is a representation guarantee rather than something arithmetic
+// elsewhere has to remember. This struct carries no price history: a
+// document line (a later step) copies the price onto itself, and that
+// copy, not anything here, is what keeps an issued document's totals
+// frozen even after this item's price later changes.
+type CatalogueItem struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	Name        string
+	Description *string
+	// SKU is optional and user-supplied, never generated: a human-assigned
+	// mnemonic lookup key, unique per tenant among active items,
+	// case-insensitively, when set. nil means none was assigned.
+	SKU *string
+	// UnitPriceCents is this item's current price, in integer minor
+	// units. Never negative; see db/migrations' catalogue_items
+	// migration.
+	UnitPriceCents int64
+	// Unit is never empty once read back: the column is NOT NULL. Create
+	// and Update treat the Go zero value differently, deliberately:
+	// Create defaults it to "piece" when the caller leaves it unset,
+	// mirroring the column's own DEFAULT, for a genuinely new item not
+	// yet given a unit. Update is a full-column replace, the same
+	// contract Description and SKU already carry, so it does not
+	// default an empty Unit; the caller must supply the item's current
+	// Unit, and leaving it empty fails against the column's CHECK
+	// constraint instead of silently rewriting the item to "piece". See
+	// db/migrations' catalogue_items migration for the full set and
+	// reasoning, and postgres.catalogueItemRepository.Update for why the
+	// two methods disagree on purpose.
+	Unit string
+	// DeletedAt is nil for an active item, set once soft deleted. A
+	// catalogue item is never hard deleted: see db/migrations'
+	// catalogue_items migration for why.
+	DeletedAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
