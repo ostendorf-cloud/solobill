@@ -383,7 +383,7 @@ func newOIDCHandlerFixture(t *testing.T) *oidcHandlerFixture {
 	}
 
 	sessions, err := session.New(session.Config{
-		Store:          session.NewMemoryStore(func() time.Time { return now }),
+		Store:          session.NewMemoryStore(func() time.Time { return now }, 100),
 		AllowPlainHTTP: true,
 		Now:            func() time.Time { return now },
 	})

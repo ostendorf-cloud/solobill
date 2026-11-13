@@ -36,6 +36,33 @@ func main() {
 	}
 }
 
+// maxSessions bounds session.NewMemoryStore's tracked session count,
+// deliberately rather than leaving it at govue's own default of 10000
+// (the floor session.NewMemoryStore clamps a non-positive value to),
+// which is sized for a SaaS with many concurrent users, not for this
+// application's actual scale.
+//
+// A Session is a handful of short strings (an id, a subject, an email, a
+// name, a two-entry Data map for tenant_id and role) plus three
+// time.Time fields: comfortably under 1 KiB each including map and
+// runtime overhead, so even 1000 of them cost on the order of 1 MiB,
+// against charts/solobill/values.yaml's 256Mi memory limit. A session is
+// only ever created by a login that already succeeded (a verified local
+// password plus TOTP code, a verified OIDC identity, or a redeemed
+// single-use invite token), never by an anonymous request, so nothing
+// short of a credential compromise can drive the store toward this
+// bound. docs/concepts/solobill.md frames this application's own scale
+// as "a single-user start" where "a second tenant can be added without a
+// data migration": an owner plus a handful of invited members, per
+// tenant, for however many tenants one deployment serves. 1000 is
+// generous headroom over that, with room for a session per device per
+// user and for the up-to-a-minute lag before session.MemoryStore's sweep
+// reclaims one past session.DefaultIdle (2h) or session.DefaultLifetime
+// (12h), while keeping the worst case a known, small number of
+// megabytes instead of inheriting a bound sized for a different kind of
+// deployment.
+const maxSessions = 1000
+
 func run() error {
 	if err := checkEmbeddedDist(); err != nil {
 		return err
@@ -68,7 +95,7 @@ func run() error {
 	}
 
 	sessions, err := session.New(session.Config{
-		Store:          session.NewMemoryStore(nil),
+		Store:          session.NewMemoryStore(nil, maxSessions),
 		AllowPlainHTTP: cfg.SessionAllowPlainHTTP,
 	})
 	if err != nil {

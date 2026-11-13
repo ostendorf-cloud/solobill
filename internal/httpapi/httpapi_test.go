@@ -45,7 +45,7 @@ func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 	csrfKey := fixedKey(t, 1)
 
 	sessions, err := session.New(session.Config{
-		Store:          session.NewMemoryStore(nil),
+		Store:          session.NewMemoryStore(nil, 100),
 		AllowPlainHTTP: true,
 	})
 	if err != nil {
@@ -191,10 +191,73 @@ func TestReadinessFailsWhenACheckFails(t *testing.T) {
 	}
 }
 
+// brokenSessionStore is a session.Store whose Get always fails with
+// something other than session.ErrNotFound, for TestSessionStoreFailure
+// Unavailable: a store outage, not an ordinary "no such session".
+type brokenSessionStore struct{}
+
+func (brokenSessionStore) Get(context.Context, string) (session.Session, error) {
+	return session.Session{}, errors.New("store: connection refused")
+}
+func (brokenSessionStore) Save(context.Context, session.Session) error { return nil }
+func (brokenSessionStore) Delete(context.Context, string) error        { return nil }
+func (brokenSessionStore) DeleteSubject(context.Context, string) error { return nil }
+
+// TestSessionStoreFailureIsExposedAsAStaticMessage proves that handleMe and
+// requireOwnerSession's api.Unavailable("session store is unavailable")
+// actually reaches the client: both mark it Exposed, the only way a 503
+// survives api.WriteError's usual collapse to the generic internal-error
+// shape, since govue v0.3.0 added api.Error.Exposed.
+func TestSessionStoreFailureIsExposedAsAStaticMessage(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeStore()
+	sessions, err := session.New(session.Config{Store: brokenSessionStore{}, AllowPlainHTTP: true})
+	if err != nil {
+		t.Fatalf("session.New() error = %v", err)
+	}
+
+	handler, err := httpapi.NewHandler(httpapi.Deps{
+		Logger:           logging.New(io.Discard, slog.LevelError),
+		Store:            store,
+		Sessions:         sessions,
+		CSRFKey:          fixedKey(t, 3),
+		LocalAuth:        auth.NewLocalAuthenticator(store, nil),
+		Invites:          auth.NewInviteManager(store, nil),
+		HealthRegistry:   health.New(),
+		RateLimitBurst:   100,
+		RateLimitPer:     time.Minute,
+		DefaultInviteTTL: time.Hour,
+		DistFS:           fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
+	})
+	if err != nil {
+		t.Fatalf("httpapi.NewHandler() error = %v", err)
+	}
+
+	cookie := &http.Cookie{Name: sessions.CookieName(), Value: "whatever-the-store-will-refuse"}
+	rec := doJSON(t, handler, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{cookie}, "")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if body.Error.Message != "session store is unavailable" {
+		t.Errorf("message = %q, want the deliberately exposed static message", body.Error.Message)
+	}
+}
+
 func mustSessions(t *testing.T) *session.Manager {
 	t.Helper()
 
-	sessions, err := session.New(session.Config{Store: session.NewMemoryStore(nil), AllowPlainHTTP: true})
+	sessions, err := session.New(session.Config{Store: session.NewMemoryStore(nil, 100), AllowPlainHTTP: true})
 	if err != nil {
 		t.Fatalf("session.New() error = %v", err)
 	}
