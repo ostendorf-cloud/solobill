@@ -120,6 +120,11 @@ tasks:
     cmds:
       - go build -o bin/solobill ./cmd/solobill
 
+  build:image:
+    desc: Build the container image, without pushing it anywhere
+    cmds:
+      - docker build .
+
   test:go:
     desc: Go test
     deps: [web:build]
@@ -200,6 +205,7 @@ tasks:
       - task: web:test
       - task: web:build
       - task: build
+      - task: build:image
       - task: test:go
       - task: check:govue-version
       - task: lint:helm
