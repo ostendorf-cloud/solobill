@@ -138,12 +138,15 @@ func sessionCookie(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
 // TestPublicHandlerServesNoAdminEndpoint is this issue's own acceptance
 // criterion, proven by a test rather than by inspection: anything that can
 // reach the application's own Ingress-routed listener must get a plain
-// 404 for /metrics, /healthz and /readyz, never the real answer. The
-// catch-all SPA route (mux.Handle("/", route(spaHandler))) is what
-// actually answers here: http.ServeMux routes an unregistered pattern to
-// it, the same as any other unknown path, see TestSPAFallback's "unknown
-// api route" case for /api/, and newSPAHandler itself for the plain path
-// case these three happen to fall under.
+// 404 for /metrics, /healthz and /readyz, never the real answer. The 404
+// comes from httpapi.go's own explicit registrations
+// (mux.Handle(path, route(api.NotFoundHandler()))), not from the SPA
+// catch-all: those three paths are registered patterns, so http.ServeMux
+// dispatches to the explicit handler ahead of "/", the same precedence
+// TestSPAFallback's "unknown api route" case relies on for /api/. Without
+// that registration the catch-all would answer instead, with a 200 and
+// the SPA shell, the exact "looks like the endpoint still exists"
+// outcome this split exists to prevent.
 func TestPublicHandlerServesNoAdminEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -156,6 +159,39 @@ func TestPublicHandlerServesNoAdminEndpoint(t *testing.T) {
 			rec := doJSON(t, app.handler, http.MethodGet, path, nil, nil, "")
 			if rec.Code != http.StatusNotFound {
 				t.Errorf("GET %s on the public handler status = %d, want %d", path, rec.Code, http.StatusNotFound)
+			}
+		})
+	}
+}
+
+// TestPublicHandlerServesNoAdminEndpointForEveryMethodAndSubpath proves the
+// 404 registration is not GET-only and not exact-path-only: a non-GET
+// method and a path nested under one of the three must both still get the
+// explicit 404, never the 200 the SPA catch-all would otherwise answer
+// with for an unregistered pattern.
+func TestPublicHandlerServesNoAdminEndpointForEveryMethodAndSubpath(t *testing.T) {
+	t.Parallel()
+
+	app := buildTestApp(t, 100)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "post metrics", method: http.MethodPost, path: "/metrics"},
+		{name: "put readyz", method: http.MethodPut, path: "/readyz"},
+		{name: "metrics trailing slash", method: http.MethodGet, path: "/metrics/"},
+		{name: "path under healthz", method: http.MethodGet, path: "/healthz/anything"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := doJSON(t, app.handler, tt.method, tt.path, nil, nil, "")
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("%s %s on the public handler status = %d, want %d", tt.method, tt.path, rec.Code, http.StatusNotFound)
 			}
 		})
 	}
@@ -241,6 +277,48 @@ func TestReadinessFailsWhenACheckFails(t *testing.T) {
 	rec := doJSON(t, handlers.Admin, http.MethodGet, "/readyz", nil, nil, "")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("GET /readyz status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// TestAdminReadyzReflectsDrain proves the claim cmd/solobill's main.go
+// makes in its BeforeShutdown comment: draining the health.Registry it
+// hands to HealthRegistry makes the admin listener's own /readyz answer
+// 503, even with every check still passing. This is the one part of that
+// comment invisible from the chart, since the registry is shared with
+// main rather than owned by this package.
+func TestAdminReadyzReflectsDrain(t *testing.T) {
+	t.Parallel()
+
+	healthRegistry := health.New()
+	healthRegistry.Add("fixture", 0, func(context.Context) error { return nil })
+
+	handlers, err := httpapi.NewHandler(httpapi.Deps{
+		Logger:           logging.New(io.Discard, slog.LevelError),
+		Store:            newFakeStore(),
+		Sessions:         mustSessions(t),
+		CSRFKey:          fixedKey(t, 4),
+		LocalAuth:        auth.NewLocalAuthenticator(newFakeStore(), nil),
+		Invites:          auth.NewInviteManager(newFakeStore(), nil),
+		HealthRegistry:   healthRegistry,
+		RateLimitBurst:   100,
+		RateLimitPer:     time.Minute,
+		DefaultInviteTTL: time.Hour,
+		DistFS:           fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
+	})
+	if err != nil {
+		t.Fatalf("httpapi.NewHandler() error = %v", err)
+	}
+
+	before := doJSON(t, handlers.Admin, http.MethodGet, "/readyz", nil, nil, "")
+	if before.Code != http.StatusOK {
+		t.Fatalf("GET /readyz before Drain() status = %d, want %d", before.Code, http.StatusOK)
+	}
+
+	healthRegistry.Drain()
+
+	after := doJSON(t, handlers.Admin, http.MethodGet, "/readyz", nil, nil, "")
+	if after.Code != http.StatusServiceUnavailable {
+		t.Errorf("GET /readyz after Drain() status = %d, want %d, even though the fixture check still passes", after.Code, http.StatusServiceUnavailable)
 	}
 }
 

@@ -323,9 +323,13 @@ func NewHandler(d Deps) (Handlers, error) {
 	// handlers, two listeners" section), and the SPA fallback answers
 	// every unrecognised path outside /api/ with its own shell and a 200,
 	// which would otherwise hide the fact that nothing real is behind
-	// these three paths on this listener.
+	// these three paths on this listener. Registered with no method, so
+	// every method gets the 404, not only GET, and as both the exact path
+	// and its trailing-slash subtree, so a path under it (e.g.
+	// /metrics/anything) cannot fall through to the catch-all either.
 	for _, path := range [...]string{"/metrics", "/healthz", "/readyz"} {
-		mux.Handle("GET "+path, route(api.NotFoundHandler()))
+		mux.Handle(path, route(api.NotFoundHandler()))
+		mux.Handle(path+"/", route(api.NotFoundHandler()))
 	}
 
 	// The SPA fallback. It answers an unmatched /api/ path with the same
