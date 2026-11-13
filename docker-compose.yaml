@@ -120,11 +120,17 @@ services:
   # it runs, by the role that ran it (solobill_super, the same role
   # "migrate" above uses), so it cannot retroactively cover tenants,
   # accounts or invites: those still need their own explicit GRANT
-  # here, once. The ALTER DEFAULT PRIVILEGES line is what then covers
-  # any later migration's new table automatically, with no further
-  # edit to this file. "solobill" below waits on this service, not
-  # merely on "migrate", so the application itself never opens a
-  # connection before these grants exist either.
+  # here, once. The ALTER DEFAULT PRIVILEGES line below then covers a
+  # later migration's new table automatically, but only for SELECT and
+  # INSERT: any table that also needs UPDATE (or DELETE) always needs
+  # its own explicit GRANT here too, with no way around editing this
+  # file for it. customers and catalogue_items, right above, are exactly
+  # that case: both needed an explicit GRANT ... UPDATE line of their
+  # own despite the standing default-privileges rule, since nothing
+  # about becoming a later migration's table changes what privilege a
+  # table needs. "solobill" below waits on this service, not merely on
+  # "migrate", so the application itself never opens a connection
+  # before these grants exist either.
   #
   # Runs as solobill_super against the postgres service: it only grants
   # privileges, so it needs no password of solobill_app's own.
@@ -146,6 +152,11 @@ services:
       - GRANT SELECT, INSERT ON tenants TO solobill_app;
       - -c
       - GRANT SELECT, INSERT, UPDATE ON accounts, invites TO solobill_app;
+      # customers and catalogue_items only ever soft delete (an UPDATE
+      # setting deleted_at), never a real DELETE, so no DELETE grant
+      # here either: the same reasoning as accounts and invites above.
+      - -c
+      - GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO solobill_app;
       - -c
       - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO solobill_app;
 

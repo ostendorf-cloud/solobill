@@ -23,6 +23,34 @@ type Account struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type CatalogueItem struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	Name           string
+	Description    pgtype.Text
+	Sku            pgtype.Text
+	UnitPriceCents int64
+	Unit           string
+	DeletedAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type Customer struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	Name        string
+	Email       pgtype.Text
+	VatID       pgtype.Text
+	Street      pgtype.Text
+	PostalCode  pgtype.Text
+	City        pgtype.Text
+	CountryCode pgtype.Text
+	DeletedAt   pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Invite struct {
 	ID         uuid.UUID
 	TenantID   uuid.UUID

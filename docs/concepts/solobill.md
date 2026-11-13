@@ -68,6 +68,72 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
   scoped token, so an agent can never exceed what that token grants.
 - Mail goes out through the existing SMTP service, with send attempts recorded on the document.
 
+## Rounding
+
+- Every persisted amount is an integer minor unit (cents): catalogue price, line price, VAT,
+  document totals. No column is ever a float.
+- A line's net amount is computed at full precision before any rounding: quantity times unit
+  price. A fractional quantity (hours, days) means this multiplication is not done in integer
+  cents directly; it is done at sub-cent precision (a scaled integer or a rational, never a
+  float) and only rounded to the cent at the point the figure is persisted or displayed.
+- A percentage discount, per line or per document, is applied at that same sub-cent precision,
+  rounded to the nearest cent exactly once, using commercial rounding (half away from zero,
+  kaufmännisches Runden), at the point the figure is persisted or displayed. It is never rounded
+  twice.
+- VAT rounds once per rate, on that rate's net total after discount, matching issue #15's own
+  prior decision, never once per line.
+- A document-level percentage discount is allocated across lines by the largest-remainder
+  method: compute each line's exact, unrounded share of the discount first, round every share
+  down to the cent, then distribute the leftover cents (the document-level discount amount minus
+  the sum of the rounded-down shares) one cent at a time to the lines with the largest
+  fractional remainder, breaking ties by line order. The sum of the per-line shares then always
+  equals the document-level discount exactly: no cent is lost or invented. Each line's exact
+  share is that line's own net *after* any line-level discount, never the raw, pre-line-discount
+  net: a document-level discount is the final adjustment on top of whatever the customer is
+  already being charged per line, so it is proportional to what that line is actually worth at
+  that point, not to a figure the line-level discount has already superseded.
+- A document-level amount discount, not a percentage, needs no allocation: it is already its own
+  figure and is shown as such, never divided across lines.
+- Rejected: carrying the whole rounding residual on one named line. It makes that line's shown
+  figure depend on how many other lines exist, which the reader cannot see, rather than on that
+  line's own weight.
+
+### Worked example
+
+A document with two lines and a 15% document-level discount, VAT at 19%:
+
+- Line 1: net after its own line-level discount, EUR 120.04.
+- Line 2: no line-level discount, net EUR 70.04.
+- Document net total: EUR 190.08.
+
+Each line's exact, unrounded share of the 15% document discount:
+
+- Line 1: 120.04 × 0.15 = EUR 18.006.
+- Line 2: 70.04 × 0.15 = EUR 10.506.
+- Exact total: EUR 28.512, which rounds half away from zero to EUR 28.51. This rounded total,
+  not the floored shares below, is the figure the per-line shares must add up to.
+
+Largest-remainder allocation: floor every share to the cent first (Line 1 EUR 18.00, Line 2
+EUR 10.50; floored sum EUR 28.50), then hand out the single leftover cent (EUR 28.51 minus
+EUR 28.50) to the line with the largest fractional remainder. Both lines carry the same
+remainder here (EUR 0.006), so the tie breaks by line order and Line 1 receives it:
+
+- Line 1 discount: EUR 18.01.
+- Line 2 discount: EUR 10.50.
+- Sum: EUR 28.51, exactly the document-level discount.
+
+Rounding each line's exact share independently instead of applying the largest-remainder step
+looks equally correct line by line (EUR 18.006 rounds to EUR 18.01, EUR 10.506 rounds to
+EUR 10.51), but sums to EUR 28.52, one cent more than the document actually discounts. That
+invented cent, invisible unless the two numbers are added back up, is exactly what per-document
+rounding (round the total once, then allocate) is for, against per-line rounding (round every
+line first, then add).
+
+Carrying the example to the document total: net after discount is EUR 102.03 for Line 1 and
+EUR 59.54 for Line 2, summing to EUR 161.57 (190.08 minus 28.51). VAT rounds once on that total,
+not per line: 161.57 × 0.19 = 30.6983, rounding half away from zero to EUR 30.70. Document
+total: EUR 161.57 + EUR 30.70 = EUR 192.27.
+
 ## Alternatives
 
 - Extending an existing open-source tool such as Kivitendo or InvoicePlane: both are PHP, carry
