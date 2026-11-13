@@ -59,6 +59,9 @@ func TestLoad(t *testing.T) {
 		if cfg.ListenAddr != ":8080" {
 			t.Errorf("ListenAddr = %q, want default :8080", cfg.ListenAddr)
 		}
+		if cfg.AdminListenAddr != ":8081" {
+			t.Errorf("AdminListenAddr = %q, want default :8081", cfg.AdminListenAddr)
+		}
 		if cfg.DatabaseUser != "solobill" {
 			t.Errorf("DatabaseUser = %q", cfg.DatabaseUser)
 		}
@@ -67,6 +70,20 @@ func TestLoad(t *testing.T) {
 		}
 		if cfg.OIDCEnabled {
 			t.Error("OIDCEnabled = true, want false with no OIDC_ISSUER_URL set")
+		}
+	})
+
+	t.Run("admin listen addr overridden", func(t *testing.T) {
+		t.Parallel()
+
+		getenv := validEnv(t, map[string]string{"ADMIN_LISTEN_ADDR": ":9091"})
+
+		cfg, err := Load(getenv)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.AdminListenAddr != ":9091" {
+			t.Errorf("AdminListenAddr = %q, want %q", cfg.AdminListenAddr, ":9091")
 		}
 	})
 

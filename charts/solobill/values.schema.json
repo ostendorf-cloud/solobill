@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "solobill",
   "type": "object",
-  "required": ["image", "service", "config", "existingSecret"],
+  "required": ["image", "service", "adminPort", "config", "existingSecret"],
   "properties": {
     "replicaCount": {
       "type": "integer",
@@ -79,6 +79,12 @@
         }
       }
     },
+    "adminPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "The administrative container port cmd/solobill serves /metrics, /healthz and /readyz on through govue's httpserver.RunAdmin. Must match config.adminListenAddr. Deliberately a field of its own, not under service: it is exposed on the Service as its own named port (see templates/service.yaml), but the Ingress still only ever routes to service.port; see values.yaml's own comment for why."
+    },
     "ingress": {
       "type": "object",
       "required": ["enabled"],
@@ -148,9 +154,14 @@
     "affinity": { "type": "object" },
     "config": {
       "type": "object",
-      "required": ["listenAddr", "databaseUrl", "databaseUser"],
+      "required": ["listenAddr", "adminListenAddr", "databaseUrl", "databaseUser"],
       "properties": {
         "listenAddr": { "type": "string", "minLength": 1 },
+        "adminListenAddr": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ADMIN_LISTEN_ADDR. Must match adminPort. /metrics, /healthz and /readyz are served here, never on listenAddr; see adminPort's own description."
+        },
         "logLevel": {
           "type": "string",
           "enum": ["debug", "info", "warn", "error"]
