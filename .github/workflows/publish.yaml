@@ -1,0 +1,91 @@
+name: publish
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  image:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+
+      - name: Resolve the image tags
+        id: tags
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          version="${TAG_NAME#v}"
+          tags="${IMAGE}:${version}"
+          if [ "${PRERELEASE}" != "true" ]; then
+            tags="$(printf '%s\n%s' "${tags}" "${IMAGE}:latest")"
+          fi
+          {
+            echo "version=${version}"
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - uses: useblacksmith/setup-docker-builder@8fbda8108100092be0ef3320da0a93fbb8f47d7f  # v1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850  # v2
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+
+  chart:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785  # v5.2.8
+
+      - name: Resolve the chart version
+        id: version
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG_NAME#v}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Package the chart
+        run: helm package charts/solobill
+
+      - name: Verify the packaged chart version matches the release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          package="solobill-${VERSION}.tgz"
+          if [ ! -f "${package}" ]; then
+            actual="$(ls solobill-*.tgz)"
+            echo "packaged chart version does not match the release version ${VERSION}: found ${actual}" >&2
+            exit 1
+          fi
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GITHUB_TOKEN}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Push the chart
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: helm push "solobill-${VERSION}.tgz" oci://ghcr.io/ostendorf-cloud/charts
