@@ -68,6 +68,32 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
   scoped token, so an agent can never exceed what that token grants.
 - Mail goes out through the existing SMTP service, with send attempts recorded on the document.
 
+## Rounding
+
+- Every persisted amount is an integer minor unit (cents): catalogue price, line price, VAT,
+  document totals. No column is ever a float.
+- A line's net amount is computed at full precision before any rounding: quantity times unit
+  price. A fractional quantity (hours, days) means this multiplication is not done in integer
+  cents directly; it is done at sub-cent precision (a scaled integer or a rational, never a
+  float) and only rounded to the cent at the point the figure is persisted or displayed.
+- A percentage discount, per line or per document, is applied at that same sub-cent precision,
+  rounded to the nearest cent exactly once, using commercial rounding (half away from zero,
+  kaufmännisches Runden), at the point the figure is persisted or displayed. It is never rounded
+  twice.
+- VAT rounds once per rate, on that rate's net total after discount, matching issue #15's own
+  prior decision, never once per line.
+- A document-level percentage discount is allocated across lines by the largest-remainder
+  method: compute each line's exact, unrounded share of the discount first, round every share
+  down to the cent, then distribute the leftover cents (the document-level discount amount minus
+  the sum of the rounded-down shares) one cent at a time to the lines with the largest
+  fractional remainder, breaking ties by line order. The sum of the per-line shares then always
+  equals the document-level discount exactly: no cent is lost or invented.
+- A document-level amount discount, not a percentage, needs no allocation: it is already its own
+  figure and is shown as such, never divided across lines.
+- Rejected: carrying the whole rounding residual on one named line. It makes that line's shown
+  figure depend on how many other lines exist, which the reader cannot see, rather than on that
+  line's own weight.
+
 ## Alternatives
 
 - Extending an existing open-source tool such as Kivitendo or InvoicePlane: both are PHP, carry
