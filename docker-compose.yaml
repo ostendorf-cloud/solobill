@@ -164,10 +164,22 @@ services:
       # (DeleteDocumentLines, and document_lines' own ON DELETE CASCADE
       # foreign key when a draft document is removed) but no UPDATE: no
       # query ever updates an existing line in place, Update instead
-      # deletes every line and recreates the caller's current set.
+      # deletes every line and recreates the caller's current set. That
+      # means a raw UPDATE against document_lines is refused for
+      # solobill_app unconditionally, for a draft's own line exactly as
+      # much as for an issued one: the rejection comes from this grant
+      # withholding the privilege itself (Postgres' own
+      # "permission denied for table document_lines", SQLSTATE 42501),
+      # before any trigger ever runs, not from
+      # document_lines_block_issued_document_mutation deciding the write
+      # is illegal. The trigger below still has its own job: refusing an
+      # INSERT or a DELETE once the parent document is issued, which
+      # this grant does nothing about since both of those are granted.
+      #
       # Neither grant lets solobill_app actually touch an issued
-      # document or its lines despite holding UPDATE/DELETE: see
-      # db/migrations' documents_block_issued_mutation and
+      # document or its lines despite holding UPDATE/DELETE (documents)
+      # or INSERT/DELETE (document_lines): see db/migrations'
+      # documents_block_issued_mutation and
       # document_lines_block_issued_document_mutation triggers, which
       # refuse that at the database level regardless of what this role
       # is granted.
