@@ -181,6 +181,24 @@ and the secret-only `DATABASE_PASSWORD` are assembled into it by `cmd/solobill` 
 field as secret-only instead; this is solobill's own contract, verified by reading
 `internal/config/config.go`, not a convention copied from elsewhere.
 
+## Metrics and probes live on their own port
+
+`cmd/solobill` runs two listeners, through govue's `httpserver.RunAdmin`: the public one,
+`config.listenAddr`/`service.port`, which this chart's `Ingress` routes to, and a second,
+administrative one, `config.adminListenAddr`/`adminPort`, which it does not. `/metrics`,
+`/healthz` and `/readyz` are served only on the second: anything that can reach this
+application through its `Ingress` can no longer scrape its metrics or poll its probes, which
+it previously could, since all three used to share the public listener. `templates/ingress.yaml`
+only ever references `service.port`, never `adminPort`, so the admin listener is reachable only
+by a caller already inside the cluster, pod to pod.
+
+`adminPort` is deliberately not added to `templates/service.yaml`'s own ports list.
+`livenessProbe` and `readinessProbe` reach it by naming the container port directly
+(`port: admin`), which a kubelet resolves against the pod's own IP, never through the
+`Service`. No `ServiceMonitor` or scrape config exists in this chart yet; add `adminPort` to
+the `Service` as its own named port only once something in-cluster needs to reach it that way,
+rather than exposing it on the `Service` ahead of an actual need.
+
 ## Values
 
 | Key | Description | Default |
@@ -200,7 +218,8 @@ field as secret-only instead; this is solobill's own contract, verified by readi
 | `podSecurityContext` | Pod-level security context. Matches the image's distroless `nonroot` user, uid/gid `65532`. | see `values.yaml` |
 | `securityContext` | Container-level security context: read-only root filesystem, no privilege escalation, all capabilities dropped. Safe: `cmd/solobill` keeps its session store in memory and writes nothing else to disk. | see `values.yaml` |
 | `service.type` | `Service` type. | `ClusterIP` |
-| `service.port` | `Service`, container and probe port. Keep in sync with `config.listenAddr`. | `8080` |
+| `service.port` | `Service` and public container port. Keep in sync with `config.listenAddr`. | `8080` |
+| `adminPort` | Administrative container port (`/metrics`, `/healthz`, `/readyz`). Keep in sync with `config.adminListenAddr`. Not exposed on the `Service`; see "Metrics and probes live on their own port" above. | `8081` |
 | `ingress.enabled` | Create an `Ingress`. Requires `config.trustedProxies` to be set; see that row. Mutually exclusive with `httpRoute.enabled`; see "External routing" above. | `false` |
 | `ingress.className` | `ingressClassName` to set. | `""` |
 | `ingress.annotations` | Annotations for the `Ingress`. | `{}` |
@@ -214,13 +233,14 @@ field as secret-only instead; this is solobill's own contract, verified by readi
 | `httpRoute.parentRefs.sectionName` | Specific listener on the `Gateway` to attach to, when it exposes more than one. | `""` |
 | `resources.requests` | Resource requests, always set. | `cpu: 100m`, `memory: 128Mi` |
 | `resources.limits` | Resource limits. No CPU limit: request handling is bursty, not broken, under brief CPU pressure. A memory limit stays as a leak safety net. | `memory: 256Mi` |
-| `startupProbe.enabled` | Enable a startup probe. Off by default: the migration Job, not `cmd/solobill`'s own startup, is what waits on the database. | `false` |
-| `livenessProbe.*` | Liveness probe timing against `/healthz`. | see `values.yaml` |
-| `readinessProbe.*` | Readiness probe timing against `/readyz`. | see `values.yaml` |
+| `startupProbe.enabled` | Enable a startup probe, against `adminPort`'s `/healthz`. Off by default: the migration Job, not `cmd/solobill`'s own startup, is what waits on the database. | `false` |
+| `livenessProbe.*` | Liveness probe timing against `adminPort`'s `/healthz`. | see `values.yaml` |
+| `readinessProbe.*` | Readiness probe timing against `adminPort`'s `/readyz`. | see `values.yaml` |
 | `nodeSelector` | Node selector. | `{}` |
 | `tolerations` | Tolerations. | `[]` |
 | `affinity` | Affinity rules. | `{}` |
 | `config.listenAddr` | `LISTEN_ADDR`. | `:8080` |
+| `config.adminListenAddr` | `ADMIN_LISTEN_ADDR`. Serves `/metrics`, `/healthz` and `/readyz`; see "Metrics and probes live on their own port" above. Keep in sync with `adminPort`. | `:8081` |
 | `config.logLevel` | `LOG_LEVEL`. One of `debug`, `info`, `warn`, `error`. | `info` |
 | `config.databaseUrl` | `DATABASE_URL`. Credential-free; see "Why `config.databaseUrl` is plain" above. Required. | `""` |
 | `config.databaseUser` | `DATABASE_USER`. Required. Must be `NOSUPERUSER NOBYPASSRLS`; see "Prerequisites" above. | `""` |

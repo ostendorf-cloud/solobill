@@ -86,9 +86,18 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+            # Not exposed on the Service; see values.yaml's own adminPort
+            # comment for why. /metrics, /healthz and /readyz live here,
+            # and the probes below and the Prometheus scrape, if one is
+            # ever added, target this port, never http above.
+            - name: admin
+              containerPort: {{ .Values.adminPort }}
+              protocol: TCP
           env:
             - name: LISTEN_ADDR
               value: {{ .Values.config.listenAddr | quote }}
+            - name: ADMIN_LISTEN_ADDR
+              value: {{ .Values.config.adminListenAddr | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
             - name: DATABASE_URL
@@ -151,7 +160,7 @@ spec:
           startupProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: admin
             initialDelaySeconds: {{ .Values.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.startupProbe.periodSeconds }}
             failureThreshold: {{ .Values.startupProbe.failureThreshold }}
@@ -159,14 +168,14 @@ spec:
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: admin
             initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
             failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
           readinessProbe:
             httpGet:
               path: /readyz
-              port: http
+              port: admin
             initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
             failureThreshold: {{ .Values.readinessProbe.failureThreshold }}

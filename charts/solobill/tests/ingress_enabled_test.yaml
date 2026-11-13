@@ -72,3 +72,34 @@ tests:
       - equal:
           path: spec.rules[0].http.paths[0].pathType
           value: Prefix
+
+  - it: never routes to the admin port, regardless of how many hosts or paths are configured
+    template: templates/ingress.yaml
+    set:
+      ingress:
+        enabled: true
+        className: nginx
+        hosts:
+          - host: solobill.example.org
+            paths:
+              - path: /
+                pathType: Prefix
+          - host: solobill-admin.example.org
+            paths:
+              - path: /metrics
+                pathType: Exact
+              - path: /healthz
+                pathType: Exact
+    asserts:
+      - notEqual:
+          path: spec.rules[0].http.paths[0].backend.service.port.number
+          value: 8081
+      - notEqual:
+          path: spec.rules[1].http.paths[0].backend.service.port.number
+          value: 8081
+      - notEqual:
+          path: spec.rules[1].http.paths[1].backend.service.port.number
+          value: 8081
+      - equal:
+          path: spec.rules[1].http.paths[0].backend.service.port.number
+          value: 8080
