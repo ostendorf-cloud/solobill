@@ -32,7 +32,7 @@ func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
 	store := newFakeStore()
 
 	sessions, err := session.New(session.Config{
-		Store:          session.NewMemoryStore(nil),
+		Store:          session.NewMemoryStore(nil, 100),
 		AllowPlainHTTP: true,
 	})
 	if err != nil {

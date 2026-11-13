@@ -94,10 +94,15 @@ type meResponse struct {
 // contract separates "no session" from "could not tell", and collapsing
 // the second into the first would report an outage as everyone being
 // logged out, with nothing in the log to see it by.
+//
+// The message is marked Exposed: it is a static string with no cause
+// attached, written on purpose to tell a client "retry, this is not you
+// being logged out" instead of the generic message api.WriteError would
+// otherwise collapse every 503 to.
 func (a *app) handleMe(w http.ResponseWriter, r *http.Request) error {
 	s, ok, err := a.sessions.Read(r.Context(), r)
 	if err != nil {
-		return api.Unavailable("session store is unavailable")
+		return api.Unavailable("session store is unavailable").Exposed()
 	}
 	if !ok {
 		return api.Unauthenticated("log in first")
@@ -118,7 +123,9 @@ func (a *app) handleMe(w http.ResponseWriter, r *http.Request) error {
 func (a *app) requireOwnerSession(r *http.Request) (uuidPair, error) {
 	s, ok, err := a.sessions.Read(r.Context(), r)
 	if err != nil {
-		return uuidPair{}, api.Unavailable("session store is unavailable")
+		// Exposed for the same reason as handleMe's identical message: a
+		// static, cause-free string written on purpose for the caller.
+		return uuidPair{}, api.Unavailable("session store is unavailable").Exposed()
 	}
 	if !ok {
 		return uuidPair{}, api.Unauthenticated("log in first")
