@@ -91,15 +91,12 @@ tests:
               - path: /healthz
                 pathType: Exact
     asserts:
-      - notEqual:
+      - equal:
           path: spec.rules[0].http.paths[0].backend.service.port.number
-          value: 8081
-      - notEqual:
-          path: spec.rules[1].http.paths[0].backend.service.port.number
-          value: 8081
-      - notEqual:
-          path: spec.rules[1].http.paths[1].backend.service.port.number
-          value: 8081
+          value: 8080
       - equal:
           path: spec.rules[1].http.paths[0].backend.service.port.number
+          value: 8080
+      - equal:
+          path: spec.rules[1].http.paths[1].backend.service.port.number
           value: 8080
