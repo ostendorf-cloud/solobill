@@ -1,0 +1,18 @@
+/*
+ * The token contract plus solobill's own theme. Tailwind does not scan a
+ * git dependency's sources by default, so @source points it at govue's own
+ * component files, the same way its README documents.
+ *
+ * The seed colours this theme was generated from live in theme/seed.json.
+ * Regenerate by checking out govue at the tag web/package.json pins, then
+ * from its web/ directory: pnpm theme:generate -- --config
+ * <this repo>/web/src/theme/seed.json --out
+ * <this repo>/web/src/theme/solobill.css. This one is a placeholder: a
+ * plain slate neutral with a ledger-green accent, chosen only to be
+ * professional and readable, not as a considered brand decision. A later
+ * branding pass replaces the seed colours and regenerates.
+ */
+@import '@ostendorf-cloud/govue/styles.css';
+@import './theme/solobill.css';
+
+@source '../node_modules/@ostendorf-cloud/govue/src';
