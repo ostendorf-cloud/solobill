@@ -15,7 +15,12 @@ FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c3
 
 WORKDIR /src
 
-RUN corepack enable && corepack prepare pnpm@12.19.0 --activate
+# corepack no longer ships with Node. nodejs/node PR 57617 dropped it,
+# starting with Node.js 25. This image's Node 26 reflects that change.
+# npm still ships, so npm installs corepack first. corepack then
+# installs the pnpm version mise.toml resolves to, matching the comment
+# above.
+RUN npm install -g corepack && corepack enable && corepack prepare pnpm@12.19.0 --activate
 
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml web/
 RUN cd web && pnpm install --frozen-lockfile
