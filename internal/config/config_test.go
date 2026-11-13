@@ -166,6 +166,46 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	t.Run("database password set both directly and via file is an error", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "password")
+		writeFile(t, path, "file-password\n")
+
+		getenv := validEnv(t, map[string]string{
+			"DATABASE_PASSWORD":      "a-password",
+			"DATABASE_PASSWORD_FILE": path,
+		})
+
+		if _, err := Load(getenv); err == nil {
+			t.Fatal("Load() error = nil, want an error for DATABASE_PASSWORD and DATABASE_PASSWORD_FILE both set")
+		}
+	})
+
+	t.Run("database password file resolving empty is an error", func(t *testing.T) {
+		t.Parallel()
+
+		// govue's envconf.Loader.RequiredSecretOrFile (since v0.3.0) refuses
+		// a _FILE that reads back empty as a hard error, rather than the
+		// silent "" this package's own, now-removed secretValue used to
+		// return for the same input. This is the one behavioural
+		// difference the switch to govue's contract introduced; this case
+		// pins it so a regression here fails loudly.
+		dir := t.TempDir()
+		path := filepath.Join(dir, "password")
+		writeFile(t, path, "\n\n")
+
+		getenv := validEnv(t, map[string]string{
+			"DATABASE_PASSWORD":      "",
+			"DATABASE_PASSWORD_FILE": path,
+		})
+
+		if _, err := Load(getenv); err == nil {
+			t.Fatal("Load() error = nil, want an error for a DATABASE_PASSWORD_FILE that resolves to empty")
+		}
+	})
+
 	t.Run("rate limit defaults", func(t *testing.T) {
 		t.Parallel()
 
@@ -260,164 +300,6 @@ func TestLoad(t *testing.T) {
 		}
 		if cfg.SeedOwnerOIDCSubject != "f:realm:owner-subject" {
 			t.Errorf("SeedOwnerOIDCSubject = %q", cfg.SeedOwnerOIDCSubject)
-		}
-	})
-}
-
-func TestSecretValue(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		env     map[string]string
-		want    string
-		wantErr bool
-	}{
-		{
-			name: "direct value works",
-			env:  map[string]string{"SECRET": "direct-value"},
-			want: "direct-value",
-		},
-		{
-			name: "neither set is empty, not an error",
-			env:  map[string]string{},
-			want: "",
-		},
-		{
-			name:    "both set is an error",
-			env:     map[string]string{"SECRET": "direct-value", "SECRET_FILE": "placeholder"},
-			wantErr: true,
-		},
-		{
-			// The direct value and a file's content must be trimmed
-			// identically: strings.TrimRight(value, "\r\n") only, never
-			// strings.TrimSpace, regardless of which source it came
-			// from. A direct value differs from a file's content only
-			// in where it is read from, not in how it is trimmed.
-			name: "direct value with a trailing CRLF is trimmed the same way a file's content would be",
-			env:  map[string]string{"SECRET": "direct-value\r\n"},
-			want: "direct-value",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			getenv := func(key string) string { return tt.env[key] }
-
-			got, err := secretValue(getenv, "SECRET")
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("secretValue() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if err == nil && got != tt.want {
-				t.Errorf("secretValue() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-
-	t.Run("whitespace-only direct value together with _FILE set is still both-set", func(t *testing.T) {
-		t.Parallel()
-
-		// A real, readable file: the old implementation, which decided
-		// "is the direct value set" from its trimmed value, would see
-		// direct == "" and fall through to reading this file
-		// successfully, answering its content with no error at all.
-		// Deciding "set" from the raw value instead, the fix here, must
-		// refuse this as both-set.
-		dir := t.TempDir()
-		path := filepath.Join(dir, "secret")
-		writeFile(t, path, "file-value")
-
-		getenv := func(key string) string {
-			switch key {
-			case "SECRET":
-				return "   "
-			case "SECRET_FILE":
-				return path
-			default:
-				return ""
-			}
-		}
-
-		if _, err := secretValue(getenv, "SECRET"); err == nil {
-			t.Fatal("secretValue() error = nil, want an error for a whitespace-only direct value together with _FILE set")
-		}
-	})
-
-	t.Run("file content trimmed", func(t *testing.T) {
-		t.Parallel()
-
-		dir := t.TempDir()
-		path := filepath.Join(dir, "secret")
-		writeFile(t, path, "  file-value  \r\n")
-
-		getenv := func(key string) string {
-			if key == "SECRET_FILE" {
-				return path
-			}
-			return ""
-		}
-
-		got, err := secretValue(getenv, "SECRET")
-		if err != nil {
-			t.Fatalf("secretValue() error = %v", err)
-		}
-		// Only the trailing CRLF is trimmed by secretValue itself, matching
-		// ostendorf.tech's own implementation; a leading or inner space is
-		// a value the caller actually wrote into the file and is kept.
-		want := "  file-value  "
-		if got != want {
-			t.Errorf("secretValue() = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("file does not exist", func(t *testing.T) {
-		t.Parallel()
-
-		getenv := func(key string) string {
-			if key == "SECRET_FILE" {
-				return filepath.Join(t.TempDir(), "missing")
-			}
-			return ""
-		}
-
-		if _, err := secretValue(getenv, "SECRET"); err == nil {
-			t.Fatal("secretValue() error = nil, want an error for a missing file")
-		}
-	})
-}
-
-func TestRequiredSecret(t *testing.T) {
-	t.Parallel()
-
-	t.Run("missing is an error", func(t *testing.T) {
-		t.Parallel()
-
-		getenv := func(string) string { return "" }
-
-		_, err := requiredSecret(getenv, "SECRET")
-		if err == nil {
-			t.Fatal("requiredSecret() error = nil, want an error for an unset secret")
-		}
-	})
-
-	t.Run("present is not an error", func(t *testing.T) {
-		t.Parallel()
-
-		getenv := func(key string) string {
-			if key == "SECRET" {
-				return "value"
-			}
-			return ""
-		}
-
-		got, err := requiredSecret(getenv, "SECRET")
-		if err != nil {
-			t.Fatalf("requiredSecret() error = %v", err)
-		}
-		if got != "value" {
-			t.Errorf("requiredSecret() = %q", got)
 		}
 	})
 }
