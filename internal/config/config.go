@@ -56,7 +56,14 @@ const defaultInviteTTL = 7 * 24 * time.Hour
 // validated once by Load.
 type Config struct {
 	ListenAddr string
-	LogLevel   slog.Level
+	// AdminListenAddr is the second, administrative listener
+	// cmd/solobill runs through govue's httpserver.RunAdmin: /metrics,
+	// /healthz and /readyz are served there and nowhere on ListenAddr,
+	// so the Ingress ListenAddr is routed through never reaches them.
+	// See internal/httpapi's package doc for the two handlers this
+	// splits into.
+	AdminListenAddr string
+	LogLevel        slog.Level
 
 	// DatabaseURL is the connection URL without credentials: scheme, host,
 	// port, database name and query parameters only. DatabaseUser and
@@ -195,7 +202,8 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		ListenAddr: l.String("LISTEN_ADDR", ":8080"),
+		ListenAddr:      l.String("LISTEN_ADDR", ":8080"),
+		AdminListenAddr: l.String("ADMIN_LISTEN_ADDR", ":8081"),
 	}
 
 	level, err := logging.Level(l.String("LOG_LEVEL", "info"))
