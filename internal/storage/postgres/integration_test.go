@@ -1318,7 +1318,11 @@ $$;`
 	// docker-compose.yaml's own comment on this grant for why DELETE is
 	// real there (DeleteDraftDocument, DeleteDocumentLines and the
 	// ON DELETE CASCADE it triggers) and why document_lines gets no
-	// UPDATE despite that (no query ever updates a line in place).
+	// UPDATE despite that (no query ever updates a line in place, so a
+	// raw UPDATE against document_lines is refused by this grant itself,
+	// unconditionally, not by document_lines_block_issued_document_mutation;
+	// see document_immutability_integration_test.go for the subtest that
+	// exercises exactly that).
 	grant := `
 GRANT USAGE ON SCHEMA public TO ` + testAppRole + `;
 GRANT SELECT, INSERT ON tenants TO ` + testAppRole + `;

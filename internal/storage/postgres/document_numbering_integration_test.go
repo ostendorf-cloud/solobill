@@ -9,6 +9,8 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
@@ -20,6 +22,27 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 	"github.com/ostendorf-cloud/solobill/internal/storage/postgres"
 )
+
+// withPoolMaxConns appends pgxpool's own "pool_max_conns" connection
+// string parameter to rawURL, overriding pgxpool.New's default of
+// max(4, runtime.NumCPU()): see
+// TestDocumentNumbering_ConcurrentIssueIsGapless's own doc comment for
+// why this test needs more than that default actually gives it on this
+// repository's 2-vCPU runner.
+func withPoolMaxConns(t *testing.T, rawURL string, n int) string {
+	t.Helper()
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse connection string: %v", err)
+	}
+
+	query := parsed.Query()
+	query.Set("pool_max_conns", fmt.Sprintf("%d", n))
+	parsed.RawQuery = query.Encode()
+
+	return parsed.String()
+}
 
 // createDocumentTestCustomer creates a minimal, active customer under
 // tenantID, the one piece of data every document test in this package
@@ -59,13 +82,27 @@ func nowForTest() time.Time {
 // breaks under concurrency. This test issues numberOfGoroutines
 // documents concurrently, every one of them for the same tenant, the
 // same storage.DocumentTypeInvoice and the same year, which is exactly
-// the (tenant, type, year) key document_numbers' SELECT ... FOR UPDATE
-// serializes on (see internal/storage/postgres/numbering.go), and
-// asserts the resulting numbers are exactly the contiguous range
-// [1, numberOfGoroutines], with no gap and no repeat: if the locking
-// were missing or wrong, two goroutines could read the same
-// last_number before either commits and both allocate the same number,
-// or a crashed/raced allocation could leave a gap.
+// the (tenant, type, year) key IncrementDocumentNumber's own
+// UPDATE ... RETURNING serializes on (see
+// internal/storage/postgres/numbering.go and
+// queries/document_numbers.sql), and asserts the resulting numbers are
+// exactly the contiguous range [1, numberOfGoroutines], with no gap and
+// no repeat: if that serialisation were missing or wrong, two goroutines
+// could read the same last_number before either commits and both
+// allocate the same number, or a crashed/raced allocation could leave a
+// gap.
+//
+// numberOfGoroutines concurrent goroutines are not numberOfGoroutines
+// concurrent transactions by themselves: restrictedPool below is given
+// an explicit MaxConns of numberOfGoroutines (pgxpool's own default,
+// max(4, runtime.NumCPU()), would otherwise cap this test's own
+// connections at 4 on the 2-vCPU runner this repository's jobs run on,
+// so sixteen of the twenty goroutines would simply queue for a
+// connection rather than ever reaching Postgres concurrently at all).
+// With MaxConns raised, every goroutine's Issue call can actually be in
+// flight against Postgres at the same time, which is what makes this
+// test's own premise - the locking is what prevents a collision, not
+// an accident of how few of them ever overlapped - true.
 func TestDocumentNumbering_ConcurrentIssueIsGapless(t *testing.T) {
 	adminURL := os.Getenv("DATABASE_URL")
 	if adminURL == "" {
@@ -80,9 +117,14 @@ func TestDocumentNumbering_ConcurrentIssueIsGapless(t *testing.T) {
 	}
 	t.Cleanup(adminPool.Close)
 
+	const (
+		numberOfGoroutines = 20
+		year               = 2030 // far from any other test's own year, avoiding collision
+	)
+
 	restrictedURL := setUpTestAppRole(ctx, t, adminPool, adminURL)
 
-	restrictedPool, err := postgres.NewPool(ctx, restrictedURL)
+	restrictedPool, err := postgres.NewPool(ctx, withPoolMaxConns(t, restrictedURL, numberOfGoroutines))
 	if err != nil {
 		t.Fatalf("open restricted pool as %s: %v", testAppRole, err)
 	}
@@ -99,11 +141,6 @@ func TestDocumentNumbering_ConcurrentIssueIsGapless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create customer: %v", err)
 	}
-
-	const (
-		numberOfGoroutines = 20
-		year               = 2030 // far from any other test's own year, avoiding collision
-	)
 
 	numbers := make([]int64, numberOfGoroutines)
 	errs := make([]error, numberOfGoroutines)

@@ -33,6 +33,18 @@ import (
 // an afterthought.
 const pgIntegrityConstraintViolationClass = "23000"
 
+// pgInsufficientPrivilegeClass is the Postgres error class a missing
+// GRANT raises ("permission denied for table ..."), checked before any
+// trigger on that table ever runs: a privilege check happens once, at
+// statement start, independent of which rows the statement would touch
+// or what state they are in. document_lines has no UPDATE grant at all
+// for solobill_app (see docker-compose.yaml's "grant-app-role" and this
+// package's own setUpTestAppRole), so a raw UPDATE against it always
+// fails this way, for a draft's own line exactly as much as for an
+// issued one; see the subtest below that pins this apart from
+// pgIntegrityConstraintViolationClass.
+const pgInsufficientPrivilegeClass = "42501"
+
 // TestDocumentImmutability_RawSQL is issue #15's own requirement: a
 // repository method that refuses a write is not enough if raw SQL run
 // through the same, otherwise-trusted connection can still do it. Every
@@ -130,13 +142,13 @@ func TestDocumentImmutability_RawSQL(t *testing.T) {
 		assertBlockedByImmutabilityTrigger(t, err, "documents")
 	})
 
-	t.Run("a raw UPDATE of an issued document's line is rejected by the trigger, not by something else", func(t *testing.T) {
+	t.Run("a raw UPDATE of a document line is refused by the grant, not by the trigger", func(t *testing.T) {
 		tx := beginScoped(ctx, t, restrictedPool, tenant.ID)
 		defer func() { _ = tx.Rollback(ctx) }()
 
 		_, err := tx.Exec(ctx, `UPDATE document_lines SET description = 'tampered' WHERE id = $1`, issuedLineID)
 
-		assertBlockedByImmutabilityTrigger(t, err, "document_lines")
+		assertRefusedByMissingGrant(t, err, "document_lines")
 	})
 
 	t.Run("a raw DELETE of an issued document's line is rejected by the trigger, not by something else", func(t *testing.T) {
@@ -185,7 +197,7 @@ func TestDocumentImmutability_RawSQL(t *testing.T) {
 		}
 	})
 
-	t.Run("a draft document's line can still be updated and deleted: the trigger only blocks an issued document", func(t *testing.T) {
+	t.Run("a draft document's line can still be deleted and reinserted: the trigger only blocks an issued document", func(t *testing.T) {
 		var draft storage.Document
 
 		if err := store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
@@ -207,8 +219,22 @@ func TestDocumentImmutability_RawSQL(t *testing.T) {
 		tx := beginScoped(ctx, t, restrictedPool, tenant.ID)
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		if _, err := tx.Exec(ctx, `UPDATE document_lines SET description = 'edited while draft' WHERE id = $1`, draft.Lines[0].ID); err != nil {
-			t.Fatalf("UPDATE a draft's own line: %v, want it to succeed", err)
+		// This is documentRepository.Update's own path (see
+		// internal/storage/postgres/documents.go): it never raw-UPDATEs
+		// an existing line, it deletes every line of the document and
+		// recreates the caller's current set. Run directly here, against
+		// the restricted role, it proves that is also the only thing
+		// solobill_app itself can actually do to a draft's own line, not
+		// merely a convention the Go code happens to follow.
+		if _, err := tx.Exec(ctx, `DELETE FROM document_lines WHERE id = $1`, draft.Lines[0].ID); err != nil {
+			t.Fatalf("DELETE a draft's own line: %v, want it to succeed", err)
+		}
+
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO document_lines (tenant_id, document_id, position, description, quantity_thousandths, unit_price_cents, unit, vat_rate_permyriad)
+			 VALUES ($1, $2, 0, 'Replacement line', 1000, 1000, 'piece', 1900)`,
+			tenant.ID, draft.ID); err != nil {
+			t.Fatalf("INSERT a replacement line on the same still-draft document: %v, want it to succeed", err)
 		}
 	})
 }
@@ -259,5 +285,38 @@ func assertBlockedByImmutabilityTrigger(t *testing.T, err error, tableName strin
 
 	if !strings.Contains(pgErr.Message, "issued") || !strings.Contains(pgErr.Message, "immutable") {
 		t.Fatalf("pgErr.Message = %q, want it to name the issued document as immutable: this must be the trigger's own RAISE EXCEPTION, not some other integrity_constraint_violation", pgErr.Message)
+	}
+}
+
+// assertRefusedByMissingGrant fails t unless err is exactly the
+// rejection a missing table privilege raises against tableName:
+// pgInsufficientPrivilegeClass with Postgres' own "permission denied"
+// wording, not pgIntegrityConstraintViolationClass. solobill_app holds
+// no UPDATE grant on document_lines at all (see docker-compose.yaml's
+// "grant-app-role" and this package's own setUpTestAppRole), so this is
+// what a raw UPDATE against it must always produce, regardless of
+// whether the targeted line's document happens to be a draft or
+// issued: the rejection has to come from the grant itself, before
+// document_lines_block_issued_document_mutation ever gets a chance to
+// run.
+func assertRefusedByMissingGrant(t *testing.T, err error, tableName string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("write against %s succeeded, want it refused by the missing grant", tableName)
+	}
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("err = %v, want a *pgconn.PgError", err)
+	}
+
+	if pgErr.Code != pgInsufficientPrivilegeClass {
+		t.Fatalf("pgErr.Code = %q, want %q (a missing grant's own class, not the immutability trigger's %q)",
+			pgErr.Code, pgInsufficientPrivilegeClass, pgIntegrityConstraintViolationClass)
+	}
+
+	if !strings.Contains(pgErr.Message, "permission denied") {
+		t.Fatalf("pgErr.Message = %q, want it to name a permission denial: this must be the grant's own rejection, not the trigger's", pgErr.Message)
 	}
 }
