@@ -1,0 +1,16 @@
+extends: default
+
+ignore:
+  - web/node_modules/
+  - web/pnpm-lock.yaml
+  # Helm template files use Go template syntax ({{ }}), which is not valid
+  # plain YAML; values.yaml, Chart.yaml, values.schema.json and tests/ stay
+  # linted. Matches cve-notifier's own .yamllint.yaml.
+  - charts/*/templates/
+
+rules:
+  line-length:
+    max: 120
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false", "on"]

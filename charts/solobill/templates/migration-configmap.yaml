@@ -1,0 +1,33 @@
+{{/*
+Embeds db/migrations verbatim, through the charts/solobill/migrations
+symlink (-> ../../db/migrations) committed next to this template: Helm's
+.Files.Glob only ever reads inside a chart's own directory, so the symlink,
+not a hand-copied duplicate, is what keeps this ConfigMap always matching
+what internal/storage actually needs. An empty glob (the symlink broken,
+for example) fails the render instead of silently producing an empty
+ConfigMap: the migration Job would otherwise mount an empty directory,
+"dbmate up" would succeed having applied nothing, and the Deployment would
+start against an unmigrated database with no error anywhere.
+*/}}
+{{- if .Values.migrationJob.enabled -}}
+{{- $migrations := .Files.Glob "migrations/*.sql" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "solobill.migration.fullname" . }}
+  labels:
+    {{- include "solobill.migration.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+{{- if $migrations }}
+data:
+  {{- range $path, $_ := $migrations }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
+{{- else }}
+{{ fail "migrationJob.enabled is true but charts/solobill/migrations is empty" }}
+{{- end }}
+{{- end -}}

@@ -1,0 +1,197 @@
+# Local development only: `docker compose up --build` gives a running
+# solobill, a Postgres, and one seeded tenant to log into. Nothing here
+# is a deployment manifest; a real deployment is a later issue's concern
+# (a Helm chart, per this organisation's own convention elsewhere).
+#
+# Every secret this file needs comes from a developer's own .env, never
+# from a value written into this file: see .env.example for the full
+# list and how to generate each one.
+services:
+  # ---------------------------------------------------------------------
+  # Two Postgres roles, on purpose
+  # ---------------------------------------------------------------------
+  # db/migrations enables FORCE ROW LEVEL SECURITY on accounts and
+  # invites: internal/storage/postgres/integration_test.go's
+  # TestRowLevelSecurity is the proof that this, not application code, is
+  # what keeps one tenant's rows out of another tenant's reach. That
+  # proof depends on one fact about Postgres that is easy to miss: a
+  # superuser bypasses row level security regardless of FORCE. The
+  # official postgres image makes whatever POSTGRES_USER is set here a
+  # superuser. If cmd/solobill connected as that same user, every policy
+  # those migrations create would do nothing at all in this compose
+  # file - the isolation guarantee the whole milestone is built around
+  # would be cosmetic the moment anyone actually ran it.
+  #
+  # So this service ends up with two roles:
+  #   - the bootstrap superuser below (POSTGRES_USER/POSTGRES_PASSWORD),
+  #     used only by the "migrate" service to run the schema migrations
+  #     themselves. Table ownership has to exist before FORCE ROW LEVEL
+  #     SECURITY means anything, and the owning role is irrelevant to the
+  #     guarantee once FORCE is set - exactly db/migrations' own
+  #     reasoning for not creating an application role itself.
+  #   - "solobill_app", NOSUPERUSER NOBYPASSRLS, created by
+  #     docker/postgres/init-app-role.sh (mounted below into
+  #     /docker-entrypoint-initdb.d/, which the official image runs
+  #     once, against a freshly initialized data directory, as the
+  #     bootstrap superuser). That script only grants USAGE on the
+  #     schema: tenants, accounts and invites do not exist yet at
+  #     initdb time, since "migrate" below only creates them after
+  #     postgres is healthy, well after every initdb script has already
+  #     run. A third step, "grant-app-role", runs after "migrate"
+  #     completes and grants solobill_app exactly SELECT/INSERT on
+  #     tenants and SELECT/INSERT/UPDATE on accounts and invites - the
+  #     same grants internal/storage/postgres/integration_test.go's
+  #     setUpTestAppRole gives its own test role, for the same reason -
+  #     plus a standing default-privileges rule so a later migration's
+  #     new table is covered without editing this file again. This is
+  #     the role the "solobill" service's DATABASE_USER /
+  #     DATABASE_PASSWORD point at; it is the only role that ever runs
+  #     this application's own queries.
+  #
+  # The init script needs solobill_app's password without ever reading
+  # or forwarding the superuser's own password: APP_DB_PASSWORD is a
+  # separate environment variable, generated separately in .env, for
+  # exactly that reason.
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: solobill_super
+      POSTGRES_PASSWORD: "${POSTGRES_SUPERUSER_PASSWORD:?set in .env, see .env.example}"
+      POSTGRES_DB: solobill
+      APP_DB_PASSWORD: "${APP_DB_PASSWORD:?set in .env, see .env.example}"
+    volumes:
+      # Postgres 18 changed its own default PGDATA to a version-specific
+      # path (/var/lib/postgresql/18/docker); the image's own docs now
+      # say to target the mount at /var/lib/postgresql itself, not
+      # .../data as every earlier major documented. cve-notifier (this
+      # organisation's only other Postgres-backed compose file) hit this
+      # exact change; this mirrors its fix.
+      - postgres-data:/var/lib/postgresql
+      - ./docker/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-init-app-role.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U solobill_super -d solobill"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # One-shot: applies db/migrations as the bootstrap superuser, then
+  # exits. "solobill" below waits for this to exit 0
+  # (service_completed_successfully), not merely for postgres to be
+  # healthy, so the tables and row level security policies are always
+  # there before the application ever opens a connection.
+  #
+  # Reuses the official dbmate image rather than installing dbmate into
+  # this repository's own Go build stage: dbmate and this application
+  # share nothing at runtime (they only coordinate through files on disk,
+  # per AGENTS.md), so pulling a small, maintained, single-purpose image
+  # is simpler than adding a tool this application itself never calls to
+  # its own multi-stage build. Pinned to 2.38.1, the latest patch in the
+  # 2.38 line mise.toml already pins dbmate to.
+  migrate:
+    image: ghcr.io/amacneil/dbmate:2.38.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgres://solobill_super:${POSTGRES_SUPERUSER_PASSWORD:?}@postgres:5432/solobill?sslmode=disable"
+      # dbmate's default "up" also rewrites db/schema.sql next to the
+      # migrations it just ran. db/migrations is bind mounted read-only
+      # below (this service is not allowed to write back into the
+      # repository it is running against), and nothing in this
+      # repository commits or reads a schema.sql at all, so that rewrite
+      # is turned off rather than left to fail against a read-only mount.
+      DBMATE_NO_DUMP_SCHEMA: "true"
+    volumes:
+      - ./db/migrations:/db/migrations:ro
+    command: ["up"]
+
+  # One-shot: grants solobill_app exactly the table privileges it needs,
+  # then exits. Separate from docker/postgres/init-app-role.sh above
+  # because this step needs tenants, accounts and invites to already
+  # exist, and those are only created by "migrate", which only runs
+  # after postgres is healthy - well after init-app-role.sh already ran
+  # as part of initdb. Running the GRANTs there instead would fail
+  # "psql -v ON_ERROR_STOP=1" against tables that do not exist yet and
+  # abort the whole "docker compose up --build".
+  #
+  # ALTER DEFAULT PRIVILEGES only ever applies to a table created AFTER
+  # it runs, by the role that ran it (solobill_super, the same role
+  # "migrate" above uses), so it cannot retroactively cover tenants,
+  # accounts or invites: those still need their own explicit GRANT
+  # here, once. The ALTER DEFAULT PRIVILEGES line is what then covers
+  # any later migration's new table automatically, with no further
+  # edit to this file. "solobill" below waits on this service, not
+  # merely on "migrate", so the application itself never opens a
+  # connection before these grants exist either.
+  #
+  # Runs as solobill_super against the postgres service: it only grants
+  # privileges, so it needs no password of solobill_app's own.
+  grant-app-role:
+    image: postgres:18
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: "${POSTGRES_SUPERUSER_PASSWORD:?set in .env, see .env.example}"
+    command:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - --host=postgres
+      - --username=solobill_super
+      - --dbname=solobill
+      - -c
+      - GRANT SELECT, INSERT ON tenants TO solobill_app;
+      - -c
+      - GRANT SELECT, INSERT, UPDATE ON accounts, invites TO solobill_app;
+      - -c
+      - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO solobill_app;
+
+  solobill:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      grant-app-role:
+        condition: service_completed_successfully
+    environment:
+      LISTEN_ADDR: ":8080"
+      LOG_LEVEL: info
+      # No credentials here: DatabaseDSN (internal/config) assembles them
+      # from DATABASE_USER/DATABASE_PASSWORD below, matching DATABASE_URL's
+      # own contract (connection URL only, see internal/config.Config).
+      # sslmode=disable is this compose network's own local-dev choice -
+      # postgres and solobill share an unencrypted Docker network with no
+      # other tenant on it; a real deployment's managed Postgres would set
+      # sslmode=require instead, which is exactly why the runtime image
+      # still carries a CA trust store (see the Dockerfile).
+      DATABASE_URL: "postgres://postgres:5432/solobill?sslmode=disable"
+      DATABASE_USER: solobill_app
+      DATABASE_PASSWORD: "${APP_DB_PASSWORD:?set in .env, see .env.example}"
+      SESSION_CODEC_KEY: "${SESSION_CODEC_KEY:?set in .env, see .env.example}"
+      CSRF_KEY: "${CSRF_KEY:?set in .env, see .env.example}"
+      # Drops the Secure cookie attribute: this compose setup is plain
+      # HTTP on localhost, with no TLS-terminating ingress in front of
+      # it. Never set this in a real deployment (see internal/config).
+      SESSION_ALLOW_PLAIN_HTTP: "true"
+      # cmd/solobill creates this tenant on startup if it does not exist
+      # yet (main.go's seedTenant), so a fresh `docker compose up --build`
+      # has something to log into immediately instead of a chicken-and-egg
+      # problem (no tenant exists yet, and nothing can create one through
+      # the API without a tenant to belong to). Both empty is this
+      # application's own production default (a no-op); only this compose
+      # file sets them.
+      SEED_TENANT_SLUG: "${SEED_TENANT_SLUG:-demo}"
+      SEED_TENANT_NAME: "${SEED_TENANT_NAME:-Demo Tenant}"
+    ports:
+      # Bound to loopback only: "8080:8080" alone binds every interface,
+      # which on a shared network (coffee shop wifi, office LAN) would
+      # serve a plain-HTTP login with a seeded, known tenant to anyone
+      # else on that network.
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  postgres-data:

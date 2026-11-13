@@ -1,0 +1,68 @@
+# Every tool this repository needs, pinned. CI installs from this same file through
+# mise-action, so local and CI run identical versions. Nothing is installed any other way.
+[tools]
+go = "1.27.0"
+task = "3"
+# The web/ package. pnpm is the package manager, so npm is never called directly, and the
+# lockfile is written by the major pinned here.
+node = "26"
+# ostendorf.tech pins pnpm's major at "10", but the registry's current latest stable major
+# is "12" (one newer release is held back by mise's own minimum release age); a brand-new
+# repository tracks the current major instead of copying that stale pin.
+pnpm = "12"
+# Pinned to the patch, not "2", and to the exact patch golangci-lint 2.15.0 was built with:
+# its release workflow builds its binaries with go1.27.0, and that binary can only read
+# export data up to format version 4. go1.27.3, the newest patch in the 1.27 line, writes
+# export data version 5, so "golangci-lint run" fails on every standard library import with
+# "export data version 5 is greater than maximum supported version 4" when go is newer than
+# 1.27.0; verified locally by running golangci-lint against both go versions. ostendorf.tech's
+# own mise.toml pins go to "1.27.3" alongside this same golangci-lint version, which the same
+# check would fail there; 1.27.0 is the version that is actually proven to work.
+golangci-lint = "2.15.0"
+actionlint = "1"
+# 0.24 is the latest minor on the mise registry (one newer release is held back by mise's
+# own minimum release age).
+markdownlint-cli2 = "0.24"
+yamllint = "1"
+gitleaks = "8"
+# dbmate and sqlc coordinate only through files on disk (db/migrations, sqlc.yaml), never
+# through each other's version, so a minor pin is enough; neither is coupled to the other's
+# patch the way golangci-lint is coupled to go above. 2.38 and 1.31 are each the latest minor
+# on the mise registry.
+dbmate = "2.38"
+sqlc = "1.31"
+# Helm for charts/solobill. cve-notifier (this organisation's only other chart) pinned "3.22.0"
+# on the reasoning that helm-unittest, its verification plugin, targeted Helm 3's plugin API.
+# That reasoning is stale: helm-unittest v1.2.0 added "Full helm 4 support" to the plugin
+# itself. Helm 4's own plugin installer is a separate matter, unrelated to that plugin-side
+# support; see the helm-unittest entry at the end of this file for how this repository installs
+# the plugin without hitting it. Pinned to the current latest stable, not cve-notifier's older
+# line.
+helm = "4.3.1"
+# Latest minor on the mise registry; no coupling to helm's own version the way golangci-lint is
+# coupled to go above, since kubeconform only ever consumes a chart's already-rendered YAML.
+kubeconform = "0.8.0"
+
+# helm-unittest (charts/solobill's own verification plugin) is a Helm plugin, not a
+# conventional CLI, but it still comes from mise, never from "helm plugin install <url>":
+# under Helm 4 that command always fails with "plugin source does not support verification",
+# because a VCS or HTTP plugin source carries no provenance Helm can check, and the only way
+# past it is --verify=false, which this baseline forbids regardless of the error. A local
+# filesystem source skips that check entirely instead of failing it, so this entry has mise
+# download and checksum the one release asset built for the current OS and architecture
+# (plugin.yaml plus the already-built binary, nothing fetched over the network at plugin
+# install time, the same guarantee every other tool in this file gets), and "postinstall" then
+# copies that directory straight into Helm's own plugin folder, never through Helm's installer
+# at all, so there is nothing left for Helm to ask to verify. The per-platform "rename_exe"
+# undoes mise's own default of stripping the OS/arch suffix off a single-binary download,
+# which plugin.yaml needs kept to find the right binary by name. Verified locally end to end
+# against a scratch HELM_DATA_HOME, with the plugin never installed any other way: "helm
+# unittest charts/solobill" passes.
+[tools."github:helm-unittest/helm-unittest"]
+version = "1.2.1"
+depends = ["helm"]
+postinstall = "rm -rf \"$(helm env HELM_PLUGINS)/helm-unittest\" && mkdir -p \"$(helm env HELM_PLUGINS)\" && cp -r \"$MISE_TOOL_INSTALL_PATH\" \"$(helm env HELM_PLUGINS)/helm-unittest\""
+
+[tools."github:helm-unittest/helm-unittest".platforms]
+linux-x64 = { rename_exe = "untt-linux-amd64" }
+macos-arm64 = { rename_exe = "untt-macos-arm64" }

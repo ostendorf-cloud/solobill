@@ -1,0 +1,216 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "solobill",
+  "type": "object",
+  "required": ["image", "service", "config", "existingSecret"],
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1,
+      "description": "cmd/solobill's session store is in-memory (govue's session.NewMemoryStore); it is correct for exactly one replica. A second replica would keep its own, separate set of sessions, so a request load-balanced to the other pod would see its caller as logged out."
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "annotations": { "type": "object" },
+        "name": { "type": "string" }
+      }
+    },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "podSecurityContext": {
+      "type": "object",
+      "required": ["runAsNonRoot"],
+      "properties": {
+        "runAsNonRoot": { "const": true },
+        "runAsUser": { "type": "integer" },
+        "runAsGroup": { "type": "integer" },
+        "fsGroup": { "type": "integer" },
+        "seccompProfile": { "type": "object" }
+      }
+    },
+    "securityContext": {
+      "type": "object",
+      "required": ["readOnlyRootFilesystem", "allowPrivilegeEscalation", "capabilities"],
+      "properties": {
+        "readOnlyRootFilesystem": { "const": true },
+        "allowPrivilegeEscalation": { "const": false },
+        "capabilities": {
+          "type": "object",
+          "required": ["drop"],
+          "properties": {
+            "drop": { "type": "array", "contains": { "const": "ALL" } }
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["type", "port"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "type": "object" },
+        "hosts": { "type": "array" },
+        "tls": { "type": "array" }
+      }
+    },
+    "resources": { "type": "object" },
+    "startupProbe": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "livenessProbe": {
+      "type": "object",
+      "properties": {
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "readinessProbe": {
+      "type": "object",
+      "properties": {
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "config": {
+      "type": "object",
+      "required": ["listenAddr", "databaseUrl", "databaseUser"],
+      "properties": {
+        "listenAddr": { "type": "string", "minLength": 1 },
+        "logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"]
+        },
+        "databaseUrl": {
+          "type": "string",
+          "description": "Credential-free Postgres connection URL (scheme, host, port, database, query parameters only). Required: templates/deployment.yaml fails the render with a readable message when this is empty, rather than this schema rejecting it with a cryptic minLength error. The role named by databaseUser MUST be NOSUPERUSER and NOBYPASSRLS: db/migrations relies on FORCE ROW LEVEL SECURITY for tenant isolation, which a superuser or BYPASSRLS role bypasses regardless of FORCE."
+        },
+        "databaseUser": {
+          "type": "string",
+          "description": "Postgres role solobill connects as. Required; see databaseUrl's own description for why this is enforced by a template fail guard, not minLength. MUST be NOSUPERUSER and NOBYPASSRLS, provisioned that way by the cluster operator: a superuser or BYPASSRLS role bypasses every row-level-security policy this application depends on for tenant isolation, silently and regardless of FORCE ROW LEVEL SECURITY."
+        },
+        "sessionAllowPlainHttp": { "type": "boolean" },
+        "allowedOrigins": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "trustedProxies": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "rateLimitBurst": { "type": "integer", "minimum": 1 },
+        "rateLimitPer": { "type": "string", "minLength": 1 },
+        "inviteDefaultTtl": { "type": "string", "minLength": 1 },
+        "oidc": {
+          "type": "object",
+          "properties": {
+            "issuerUrl": { "type": "string" },
+            "clientId": { "type": "string" },
+            "redirectUrl": { "type": "string" },
+            "scopes": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "defaultTenantSlug": { "type": "string" }
+          }
+        }
+      }
+    },
+    "existingSecret": {
+      "type": "object",
+      "required": [
+        "name",
+        "databasePasswordKey",
+        "sessionCodecKeyKey",
+        "csrfKeyKey"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the existing Secret, created by the cluster's own secret manager operator, carrying every key below. This chart never creates this Secret from plaintext values. Required: templates/deployment.yaml fails the render with a readable message when this is empty, rather than this schema rejecting it with a cryptic minLength error."
+        },
+        "databasePasswordKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Key for DATABASE_PASSWORD. Required. The role this password authenticates MUST be NOSUPERUSER and NOBYPASSRLS; see config.databaseUser's own description."
+        },
+        "sessionCodecKeyKey": { "type": "string", "minLength": 1 },
+        "csrfKeyKey": { "type": "string", "minLength": 1 },
+        "oidcClientSecretKey": { "type": "string" },
+        "migrationDatabasePasswordKey": {
+          "type": "string",
+          "description": "Password key for migrationJob.databaseUser, in this same Secret. Left empty, falls back to databasePasswordKey."
+        }
+      }
+    },
+    "migrationJob": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "databaseUser": {
+          "type": "string",
+          "description": "Optional separate role that owns and migrates accounts/invites, distinct from config.databaseUser. Left empty, falls back to config.databaseUser; see values.yaml's own comment and README.md's 'One role, or two' section."
+        },
+        "image": {
+          "type": "object",
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string", "minLength": 1 }
+          }
+        },
+        "annotations": { "type": "object" },
+        "resources": { "type": "object" }
+      }
+    }
+  }
+}
