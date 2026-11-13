@@ -153,15 +153,40 @@ CREATE POLICY document_lines_tenant_isolation ON document_lines
 -- because it was draft and is being deleted" apart from "the document
 -- is gone because it is issued", because the second case can never
 -- reach a DELETE on documents at all.
+--
+-- FOR SHARE on that SELECT, not a plain read: under READ COMMITTED, a
+-- plain SELECT reads its own transaction's snapshot, so a transaction
+-- inserting a line could read 'draft' from a snapshot taken just before
+-- a concurrent Issue commits 'issued', and both would then commit,
+-- leaving an issued document with a line that landed after it was
+-- issued and that documents.frozen_payload never accounts for. FOR
+-- SHARE closes that: IssueDocument's own UPDATE (queries/documents.sql)
+-- takes a FOR NO KEY UPDATE lock on the documents row it writes (an
+-- ordinary UPDATE that touches no key column), which conflicts with FOR
+-- SHARE, so this lookup blocks until that UPDATE's transaction commits
+-- or rolls back and only then reads the row for itself, serialising the
+-- two. It does not serialise two concurrent line inserts on the same
+-- still-draft document against each other: FOR SHARE held by one does
+-- not conflict with FOR SHARE held by another, so both proceed. It also
+-- cannot deadlock against the issuing transaction's own lock order:
+-- every method in this package that locks a documents row (Update,
+-- Issue) does so before it ever touches document_lines in the same
+-- transaction, so no transaction ever waits for a document_lines-driven
+-- lock on documents while already holding a lock document_lines itself
+-- needs, and no transaction here ever holds a lock on more than one
+-- documents row at a time, which rules out the AB-BA cycle a deadlock
+-- would need.
 CREATE FUNCTION document_lines_block_issued_document_mutation() RETURNS trigger
-    LANGUAGE plpgsql AS $$
+    LANGUAGE plpgsql
+    SET search_path = pg_catalog, public
+    AS $$
 DECLARE
     parent_state text;
     target_document_id uuid;
 BEGIN
     target_document_id := COALESCE(NEW.document_id, OLD.document_id);
 
-    SELECT state INTO parent_state FROM documents WHERE id = target_document_id;
+    SELECT state INTO parent_state FROM documents WHERE id = target_document_id FOR SHARE;
 
     IF parent_state = 'issued' THEN
         RAISE EXCEPTION 'document % is issued; its lines are immutable', target_document_id
@@ -180,6 +205,12 @@ CREATE TRIGGER document_lines_block_issued_document_mutation
     BEFORE INSERT OR UPDATE OR DELETE ON document_lines
     FOR EACH ROW
     EXECUTE FUNCTION document_lines_block_issued_document_mutation();
+
+-- Same reasoning as the documents migration's own ENABLE ALWAYS: a
+-- plain ENABLE trigger is skipped under session_replication_role =
+-- 'replica', which requires superuser and so is not reachable by
+-- solobill_app, but setting this costs nothing.
+ALTER TABLE document_lines ENABLE ALWAYS TRIGGER document_lines_block_issued_document_mutation;
 
 -- migrate:down
 
