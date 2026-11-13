@@ -11,8 +11,9 @@ import (
 // document's own discount, per docs/concepts/solobill.md's Rounding
 // section. It returns an error for an illegal input (a negative price,
 // a discount that is both a percentage and an amount, a VAT rate
-// outside [0, 10000]); it never substitutes a default for one.
-func Calculate(lines []Line, documentDiscount Discount) (Result, error) {
+// outside [0, 10000], a non-zero VAT rate under regime
+// VATRegimeKleinunternehmer); it never substitutes a default for one.
+func Calculate(lines []Line, documentDiscount Discount, regime VATRegime) (Result, error) {
 	if len(lines) == 0 {
 		return Result{}, errors.New("at least one line is required")
 	}
@@ -38,6 +39,18 @@ func Calculate(lines []Line, documentDiscount Discount) (Result, error) {
 
 		if line.VATRatePermyriad < 0 || line.VATRatePermyriad > 10000 {
 			return Result{}, fmt.Errorf("line %d: vat rate %d permyriad out of range [0, 10000]", i, line.VATRatePermyriad)
+		}
+
+		// Section 19 UStG: a Kleinunternehmer charges no VAT at all, so
+		// every line's own rate must be exactly 0. Refused here, not
+		// silently zeroed: a non-zero rate on a line under this regime
+		// is a caller bug (a catalogue item's own standard rate carried
+		// through unchanged, most likely), and freezing VAT onto a
+		// document that is not allowed to charge it is a tax error this
+		// package's own frozen-payload contract would otherwise make
+		// permanent, correctable only by issuing a correction document.
+		if regime == VATRegimeKleinunternehmer && line.VATRatePermyriad != 0 {
+			return Result{}, fmt.Errorf("line %d: vat rate must be 0 under the kleinunternehmer regime, got %d permyriad", i, line.VATRatePermyriad)
 		}
 
 		net, err := roundLineNet(line)
@@ -248,6 +261,17 @@ func calculateVAT(lines []Line, lineNets, lineShares []Cents, documentDiscount D
 
 // allocateAmountAcrossBuckets is calculateVAT's multi-rate, amount-discount
 // case: see that function's own doc comment for why and when this runs.
+//
+// Its tie-break is by ascending VAT rate, not by line order: rates comes
+// from distinctSortedRates, and allocateLargestRemainder assigns a tied
+// remainder's leftover cents to exactShares' earlier indices first, so a
+// tie always resolves toward the lower-rate bucket. docs/concepts/solobill.md's
+// own stated tie-break ("by line order") is for the line-level
+// percentage-discount allocation resolveLineShares performs; it has
+// nothing to say about this, bucket-level, amount-discount case, which
+// is this package's own reasoned extension (see calculateVAT's doc
+// comment above), so this function picks its own tie-break rather than
+// inheriting one the doc never specified here.
 func allocateAmountAcrossBuckets(rates []Permyriad, bucketNetBefore map[Permyriad]Cents, netTotal, documentDiscountCents Cents, bucketShare map[Permyriad]Cents) {
 	if netTotal == 0 {
 		// Every bucket's own net is 0 too; there is no meaningful

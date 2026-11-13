@@ -13,7 +13,12 @@
 // never a float, the same "no column is ever a float" rule
 // docs/concepts/solobill.md states for persisted amounts, extended here
 // to every calculation step in between two persisted or displayed
-// figures.
+// figures. This package imports nothing from internal/storage or
+// internal/storage/postgres; VATRegime below duplicates the two values
+// internal/storage.VATRegime already defines rather than importing that
+// package, keeping the dependency the one direction AGENTS.md describes
+// (internal/storage/postgres and a later rendering step call into this
+// package, never the reverse).
 package money
 
 import (
@@ -38,6 +43,26 @@ type Permyriad int32
 // quantity (hours, days) without a float; see db/migrations'
 // document_lines migration.
 type Thousandths int64
+
+// VATRegime is the tax treatment Calculate is asked to apply, mirroring
+// internal/storage.VATRegime's own two values (duplicated here, not
+// imported: see this package's own doc comment for why internal/money
+// never imports internal/storage, only the other way around). Under
+// VATRegimeKleinunternehmer, section 19 UStG requires every line to
+// carry a VAT rate of 0; Calculate refuses a line that does not, the
+// same "refuse, never clamp or silently ignore" rule it already applies
+// to an oversized discount.
+type VATRegime string
+
+const (
+	// VATRegimeStandard charges VAT normally, per line, at that line's
+	// own VATRatePermyriad: Calculate places no extra constraint on the
+	// rate in this regime.
+	VATRegimeStandard VATRegime = "standard"
+	// VATRegimeKleinunternehmer is section 19 UStG: no VAT is charged,
+	// so every line's VATRatePermyriad must be 0.
+	VATRegimeKleinunternehmer VATRegime = "kleinunternehmer"
+)
 
 // Discount is a percentage or an absolute amount, never both. The zero
 // value is "no discount at all".
