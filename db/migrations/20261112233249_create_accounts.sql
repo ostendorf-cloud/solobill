@@ -17,8 +17,28 @@ CREATE TABLE accounts (
     -- the otpauth URI convention), not raw bytes: it saves the adapter a
     -- bytea<->base32 round trip on every single login check, the common
     -- case, at the cost of one on enrollment, the rare case. Generating and
-    -- verifying TOTP codes is internal/auth's job, not this one's.
+    -- verifying TOTP codes is internal/auth's job, not this one's. The
+    -- length check is defense in depth: the only writer is always a
+    -- server-generated value (auth.GenerateTOTPSecret, 20 bytes base32,
+    -- no padding, which is always 32 characters), never anything a client
+    -- supplies directly.
     totp_secret text,
+    -- Nullable: set once a login succeeds with a valid TOTP code, to the
+    -- RFC 6238 counter that code matched, so a later login can refuse a
+    -- replay of the exact same code (internal/auth.LocalAuthenticator.Login
+    -- and InviteManager.AcceptInvite both update this). RFC 6238 Section
+    -- 5.2 requires a verifier to reject a second use of an already
+    -- consumed OTP.
+    totp_last_counter bigint,
+    -- Nullable: set when this account is provisioned for an OIDC login,
+    -- to the identity provider's stable subject claim (never the email or
+    -- username, both of which can be reassigned to somebody else; see
+    -- govue's oidc.Identity doc comment). internal/auth.ResolveOIDCIdentity
+    -- matches on this, not on email. Provisioning it onto an account is a
+    -- later step's job (see internal/auth's oidc.go); every local account
+    -- has it NULL.
+    oidc_subject text,
+    CONSTRAINT accounts_totp_secret_length CHECK (totp_secret IS NULL OR length(totp_secret) = 32),
     -- Deliberately not constrained to a fixed set yet: the full role model
     -- belongs to internal/auth (a later step). 'owner' and 'member' are the
     -- two roles the invite flow already needs: an owner can invite, a
@@ -27,7 +47,14 @@ CREATE TABLE accounts (
     status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'disabled')),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT accounts_email_not_empty CHECK (email <> '')
+    CONSTRAINT accounts_email_not_empty CHECK (email <> ''),
+    -- id alone already is a unique primary key, so this constraint adds no
+    -- new uniqueness; it exists only so that (tenant_id, id) together is a
+    -- valid foreign key target. invites.created_by, two migrations down,
+    -- references accounts through exactly that composite, tenant_id
+    -- included, so the foreign key itself cannot point at an account in a
+    -- different tenant than the invite row doing the pointing.
+    CONSTRAINT accounts_tenant_id_id_unique UNIQUE (tenant_id, id)
 );
 
 -- Email uniqueness is scoped per tenant, not global: two different tenants
@@ -38,6 +65,14 @@ CREATE TABLE accounts (
 -- systems. A plain UNIQUE table constraint cannot express the lower()
 -- expression, so this is a unique index instead.
 CREATE UNIQUE INDEX accounts_tenant_id_email_lower_idx ON accounts (tenant_id, lower(email));
+
+-- An OIDC subject is only ever unique within one identity provider's
+-- namespace, which this schema models as "within one tenant", the same
+-- scoping accounts_tenant_id_email_lower_idx already uses. Partial (WHERE
+-- oidc_subject IS NOT NULL) because most accounts, every local one, have
+-- it NULL, and NULL <> NULL under a plain unique index would not collide
+-- anyway, so the predicate only keeps the index itself smaller.
+CREATE UNIQUE INDEX accounts_tenant_id_oidc_subject_idx ON accounts (tenant_id, oidc_subject) WHERE oidc_subject IS NOT NULL;
 
 -- Row level security is the actual multi-tenancy guarantee: every query
 -- against this table, no matter how it is written, is filtered by the

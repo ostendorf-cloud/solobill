@@ -102,16 +102,42 @@ func (r *inviteRepository) MarkUsed(ctx context.Context, id uuid.UUID, usedAt ti
 	return inviteFromRow(row), nil
 }
 
+// SetTOTPSecret implements storage.InviteRepository. The underlying query
+// is guarded the same way MarkInviteUsed's is ("WHERE ... AND used_at IS
+// NULL"): a zero-row RETURNING, meaning the invite is already used, maps
+// to storage.ErrConflict the same way.
+func (r *inviteRepository) SetTOTPSecret(ctx context.Context, id uuid.UUID, secret string) (storage.Invite, error) {
+	tx, err := txFromContext(ctx)
+	if err != nil {
+		return storage.Invite{}, err
+	}
+
+	row, err := sqlcgen.New(tx).SetInviteTOTPSecret(ctx, sqlcgen.SetInviteTOTPSecretParams{
+		ID:         id,
+		TotpSecret: ptrToText(&secret),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return storage.Invite{}, storage.ErrConflict
+		}
+
+		return storage.Invite{}, mapWriteError(err)
+	}
+
+	return inviteFromRow(row), nil
+}
+
 func inviteFromRow(row sqlcgen.Invite) storage.Invite {
 	return storage.Invite{
-		ID:        row.ID,
-		TenantID:  row.TenantID,
-		Email:     row.Email,
-		Role:      storage.AccountRole(row.Role),
-		TokenHash: row.TokenHash,
-		ExpiresAt: timeFromTimestamptz(row.ExpiresAt),
-		UsedAt:    timeToPtr(row.UsedAt),
-		CreatedBy: uuidToPtr(row.CreatedBy),
-		CreatedAt: timeFromTimestamptz(row.CreatedAt),
+		ID:         row.ID,
+		TenantID:   row.TenantID,
+		Email:      row.Email,
+		Role:       storage.AccountRole(row.Role),
+		TokenHash:  row.TokenHash,
+		ExpiresAt:  timeFromTimestamptz(row.ExpiresAt),
+		UsedAt:     timeToPtr(row.UsedAt),
+		CreatedBy:  uuidToPtr(row.CreatedBy),
+		CreatedAt:  timeFromTimestamptz(row.CreatedAt),
+		TOTPSecret: textToPtr(row.TotpSecret),
 	}
 }

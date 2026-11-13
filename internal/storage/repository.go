@@ -39,6 +39,11 @@ type AccountRepository interface {
 	Create(ctx context.Context, account Account) (Account, error)
 	FindByID(ctx context.Context, id uuid.UUID) (Account, error)
 	FindByEmail(ctx context.Context, email string) (Account, error)
+	// FindByOIDCSubject looks an account up by the identity provider's
+	// stable subject claim, the only lookup internal/auth.ResolveOIDCIdentity
+	// performs for an OIDC login: never by email, which can be reassigned
+	// to somebody else.
+	FindByOIDCSubject(ctx context.Context, subject string) (Account, error)
 	List(ctx context.Context) ([]Account, error)
 	Update(ctx context.Context, account Account) (Account, error)
 }
@@ -69,4 +74,13 @@ type InviteRepository interface {
 	// same TenantScope.WithTenant closure, which already shares one
 	// transaction; MarkUsed itself opens no transaction of its own.
 	MarkUsed(ctx context.Context, id uuid.UUID, usedAt time.Time) (Invite, error)
+
+	// SetTOTPSecret attaches a freshly generated TOTP secret to the
+	// invite, for its enrolment step
+	// (internal/auth.InviteManager.IssueTOTPSecret). Guarded the same way
+	// MarkUsed is ("WHERE id = $1 AND used_at IS NULL"): an implementation
+	// must fail with ErrConflict, not silently succeed, when the invite
+	// is already redeemed by the time the write takes effect, so a secret
+	// can never be attached to, or swapped under, an already-used invite.
+	SetTOTPSecret(ctx context.Context, id uuid.UUID, secret string) (Invite, error)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 	"github.com/ostendorf-cloud/solobill/internal/storage/postgres/sqlcgen"
@@ -22,12 +23,14 @@ func (r *accountRepository) Create(ctx context.Context, account storage.Account)
 	}
 
 	row, err := sqlcgen.New(tx).CreateAccount(ctx, sqlcgen.CreateAccountParams{
-		TenantID:     account.TenantID,
-		Email:        account.Email,
-		PasswordHash: ptrToText(account.PasswordHash),
-		TotpSecret:   ptrToText(account.TOTPSecret),
-		Role:         string(account.Role),
-		Status:       string(account.Status),
+		TenantID:        account.TenantID,
+		Email:           account.Email,
+		PasswordHash:    ptrToText(account.PasswordHash),
+		TotpSecret:      ptrToText(account.TOTPSecret),
+		TotpLastCounter: ptrToInt8(account.TOTPLastCounter),
+		OidcSubject:     ptrToText(account.OIDCSubject),
+		Role:            string(account.Role),
+		Status:          string(account.Status),
 	})
 	if err != nil {
 		return storage.Account{}, mapWriteError(err)
@@ -66,6 +69,21 @@ func (r *accountRepository) FindByEmail(ctx context.Context, email string) (stor
 	return accountFromRow(row), nil
 }
 
+// FindByOIDCSubject implements storage.AccountRepository.
+func (r *accountRepository) FindByOIDCSubject(ctx context.Context, subject string) (storage.Account, error) {
+	tx, err := txFromContext(ctx)
+	if err != nil {
+		return storage.Account{}, err
+	}
+
+	row, err := sqlcgen.New(tx).GetAccountByOIDCSubject(ctx, pgtype.Text{String: subject, Valid: true})
+	if err != nil {
+		return storage.Account{}, mapReadError(err)
+	}
+
+	return accountFromRow(row), nil
+}
+
 // List implements storage.AccountRepository.
 func (r *accountRepository) List(ctx context.Context) ([]storage.Account, error) {
 	tx, err := txFromContext(ctx)
@@ -94,11 +112,13 @@ func (r *accountRepository) Update(ctx context.Context, account storage.Account)
 	}
 
 	row, err := sqlcgen.New(tx).UpdateAccount(ctx, sqlcgen.UpdateAccountParams{
-		ID:           account.ID,
-		PasswordHash: ptrToText(account.PasswordHash),
-		TotpSecret:   ptrToText(account.TOTPSecret),
-		Role:         string(account.Role),
-		Status:       string(account.Status),
+		ID:              account.ID,
+		PasswordHash:    ptrToText(account.PasswordHash),
+		TotpSecret:      ptrToText(account.TOTPSecret),
+		TotpLastCounter: ptrToInt8(account.TOTPLastCounter),
+		OidcSubject:     ptrToText(account.OIDCSubject),
+		Role:            string(account.Role),
+		Status:          string(account.Status),
 	})
 	if err != nil {
 		return storage.Account{}, mapWriteError(err)
@@ -109,14 +129,16 @@ func (r *accountRepository) Update(ctx context.Context, account storage.Account)
 
 func accountFromRow(row sqlcgen.Account) storage.Account {
 	return storage.Account{
-		ID:           row.ID,
-		TenantID:     row.TenantID,
-		Email:        row.Email,
-		PasswordHash: textToPtr(row.PasswordHash),
-		TOTPSecret:   textToPtr(row.TotpSecret),
-		Role:         storage.AccountRole(row.Role),
-		Status:       storage.AccountStatus(row.Status),
-		CreatedAt:    timeFromTimestamptz(row.CreatedAt),
-		UpdatedAt:    timeFromTimestamptz(row.UpdatedAt),
+		ID:              row.ID,
+		TenantID:        row.TenantID,
+		Email:           row.Email,
+		PasswordHash:    textToPtr(row.PasswordHash),
+		TOTPSecret:      textToPtr(row.TotpSecret),
+		TOTPLastCounter: int8ToPtr(row.TotpLastCounter),
+		OIDCSubject:     textToPtr(row.OidcSubject),
+		Role:            storage.AccountRole(row.Role),
+		Status:          storage.AccountStatus(row.Status),
+		CreatedAt:       timeFromTimestamptz(row.CreatedAt),
+		UpdatedAt:       timeFromTimestamptz(row.UpdatedAt),
 	}
 }

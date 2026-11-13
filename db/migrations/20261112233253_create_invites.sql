@@ -18,10 +18,38 @@ CREATE TABLE invites (
     -- NULL until redeemed; set exactly once, enforcing single use.
     used_at timestamptz,
     -- Nullable: a bootstrap or imported invite may have no inviting
-    -- account on record.
-    created_by uuid REFERENCES accounts (id),
+    -- account on record. References accounts through the composite
+    -- (tenant_id, created_by), not through id alone, and the FOREIGN KEY
+    -- constraint below carries that: a plain `REFERENCES accounts (id)`
+    -- would let this column name an account id without naming its tenant,
+    -- and Postgres checks a foreign key's referential integrity as the
+    -- table owner, bypassing row level security entirely (the same
+    -- exemption CREATE POLICY's own documentation describes), so an insert
+    -- against such a column would succeed or fail depending on whether the
+    -- id exists in *any* tenant's accounts, not just this invite's own.
+    -- That turns the column into an oracle for probing account ids across
+    -- tenant boundaries, even though nothing today ever lets a caller
+    -- choose this value (internal/httpapi always sets it from the
+    -- authenticated session). Scoping the foreign key itself by tenant_id
+    -- closes that off at the one place it can actually be closed: the
+    -- referential-integrity check that skips row level security.
+    created_by uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT invites_email_not_empty CHECK (email <> '')
+    -- Nullable until the invitee's enrolment step (internal/auth's
+    -- InviteManager.IssueTOTPSecret) generates one. The server owns this
+    -- value end to end: it is generated here, never accepted from the
+    -- client, and copied onto the new account's own totp_secret only once
+    -- AcceptInvite confirms a code against it. Same shape and the same
+    -- length check as accounts.totp_secret: see that migration.
+    totp_secret text,
+    CONSTRAINT invites_totp_secret_length CHECK (totp_secret IS NULL OR length(totp_secret) = 32),
+    CONSTRAINT invites_email_not_empty CHECK (email <> ''),
+    -- Composite, not a plain `created_by uuid REFERENCES accounts (id)`:
+    -- see the doc comment on created_by above for why a single-column
+    -- reference would be a cross-tenant existence oracle. Requires
+    -- accounts.accounts_tenant_id_id_unique, the matching composite unique
+    -- constraint added in that migration for exactly this purpose.
+    CONSTRAINT invites_tenant_id_created_by_fkey FOREIGN KEY (tenant_id, created_by) REFERENCES accounts (tenant_id, id)
 );
 
 -- A token is drawn from a cryptographically random source (internal/auth's
