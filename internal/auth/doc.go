@@ -26,10 +26,12 @@
 // given OIDC subject appears, because a sole trader's single tenant was
 // never spelled out for the multi-login-path case. The call this package
 // makes: an OIDC login requires the same admission gate a local login
-// does, an existing accounts row, looked up by (tenant, lower(email)) once
+// does, an existing accounts row, looked up by (tenant, oidc_subject) once
 // the tenant is resolved from the login request (slug or subdomain, a
-// step 5 concern), with Status == "active". There is no implicit
-// account creation on first OIDC login.
+// step 5 concern), with Status == "active". Matching is on the identity
+// provider's stable subject claim, never on email or username, both of
+// which can be reassigned to somebody else; see [ResolveOIDCIdentity].
+// There is no implicit account creation on first OIDC login.
 //
 // The alternative, creating an accounts row the first time any subject
 // the identity provider vouches for shows up, was rejected: it would let
@@ -45,8 +47,24 @@
 // invitee redeems a single-use token and sets a password and a TOTP
 // secret in the same step, see [InviteManager] for why both at once. An
 // OIDC member has no password or TOTP of their own to set, Keycloak
-// already verified them, so their row is provisioned directly by whoever
-// is onboarding them (an owner, through a later step's admin action) with
-// Status already "active" and PasswordHash and TOTPSecret left nil; see
-// [ResolveOIDCIdentity].
+// already verified them, so they are admitted through
+// [InviteManager.AcceptInviteOIDC] instead: the same single-use token an
+// owner already created and delivered out of band, redeemed the moment
+// the identity provider vouches for a subject, which is bound to the new
+// account as OIDCSubject in the same transaction that marks the invite
+// used. The email the account is created under is always the invite's
+// own, never anything the identity provider's token claims: that claim
+// is a hint an administrator already acted on when they created the
+// invite for that address, not an authorization check performed again
+// here. [NewOIDCHandlers] wires the OIDC callback to take this path when
+// the request carries a pending-invite cookie (see
+// [StartOIDCInviteAccept]) and [ResolveOIDCIdentity]'s ordinary lookup
+// otherwise.
+//
+// The one case neither an invite nor a login can start from is the very
+// first account in a brand new tenant: there is no owner yet to create an
+// invite. cmd/solobill's own startup seeding covers that one case
+// directly, from configuration the person deploying the instance
+// controls, the same way it already seeds the first tenant; see its
+// seedOwnerAccount.
 package auth

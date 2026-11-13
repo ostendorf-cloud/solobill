@@ -137,10 +137,39 @@ func (a *LocalAuthenticator) Login(ctx context.Context, tenantSlug, email, passw
 	// Both checks run unconditionally, whether or not an account was
 	// found, and neither short-circuits the other: see the method doc.
 	passwordOK, _ := VerifyPassword(passwordHash, password)
-	totpOK := VerifyTOTPCode(totpSecret, totpCode, a.now())
+	totpCounter, totpOK := VerifyTOTPCode(totpSecret, totpCode, a.now())
+
+	// A code that otherwise matches is still refused if it is not newer
+	// than the last one this account already consumed: RFC 6238 Section
+	// 5.2 requires a verifier to reject a second use of an already
+	// validated OTP, so the exact same code (observed over someone's
+	// shoulder, or via a compromised link) cannot be replayed for the
+	// rest of its up-to-90-second skew window. This check is gated on
+	// accountFound, which the function already branches on above, so it
+	// adds no new timing signal beyond what already distinguishes a real
+	// account from a nonexistent one.
+	if accountFound && totpOK && account.TOTPLastCounter != nil && totpCounter <= uint64(*account.TOTPLastCounter) {
+		totpOK = false
+	}
 
 	if !accountFound || !passwordOK || !totpOK {
 		return Identity{}, ErrInvalidCredentials
+	}
+
+	matchedCounter := int64(totpCounter)
+	account.TOTPLastCounter = &matchedCounter
+
+	if err := a.store.WithTenant(ctx, account.TenantID, func(ctx context.Context) error {
+		updated, err := a.store.Accounts().Update(ctx, account)
+		if err != nil {
+			return err
+		}
+
+		account = updated
+
+		return nil
+	}); err != nil {
+		return Identity{}, fmt.Errorf("auth: persist totp counter: %w", err)
 	}
 
 	return IdentityFromAccount(account, "", nil), nil

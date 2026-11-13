@@ -87,8 +87,12 @@ func TestGenerateThenVerifyTOTPCodeRoundTrips(t *testing.T) {
 		t.Errorf("GenerateTOTPCode returned %q, want %d digits", code, totpDigits)
 	}
 
-	if !VerifyTOTPCode(secret, code, at) {
+	counter, ok := VerifyTOTPCode(secret, code, at)
+	if !ok {
 		t.Error("VerifyTOTPCode(secret, GenerateTOTPCode(secret, at), at) = false, want true")
+	}
+	if counter != counterAt(at, 0) {
+		t.Errorf("VerifyTOTPCode counter = %d, want %d", counter, counterAt(at, 0))
 	}
 }
 
@@ -122,7 +126,7 @@ func TestVerifyTOTPCodeAcceptsAdjacentStepsAndRejectsFurtherDrift(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := VerifyTOTPCode(secret, code, tt.at)
+			_, got := VerifyTOTPCode(secret, code, tt.at)
 			if got != tt.want {
 				t.Errorf("VerifyTOTPCode at %s = %v, want %v", tt.name, got, tt.want)
 			}
@@ -149,7 +153,7 @@ func TestVerifyTOTPCodeRejectsAWrongCode(t *testing.T) {
 		wrong = "111111"
 	}
 
-	if VerifyTOTPCode(secret, wrong, at) {
+	if _, ok := VerifyTOTPCode(secret, wrong, at); ok {
 		t.Error("VerifyTOTPCode with a wrong code = true, want false")
 	}
 }
@@ -157,7 +161,7 @@ func TestVerifyTOTPCodeRejectsAWrongCode(t *testing.T) {
 func TestVerifyTOTPCodeRejectsAMalformedSecret(t *testing.T) {
 	t.Parallel()
 
-	if VerifyTOTPCode("not valid base32!!", "123456", time.Now()) {
+	if _, ok := VerifyTOTPCode("not valid base32!!", "123456", time.Now()); ok {
 		t.Error("VerifyTOTPCode with a malformed secret = true, want false")
 	}
 }
