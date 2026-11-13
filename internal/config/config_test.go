@@ -183,6 +183,32 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	// A whitespace only direct value is treated as unset, so the file wins
+	// rather than the pair being rejected. The local helper this replaced
+	// trimmed only trailing newlines and called that both set. Pinned here
+	// because it is a deliberate consequence of adopting govue's contract,
+	// not an accident, and a future change back would be a surprise.
+	t.Run("whitespace only password alongside a file reads the file", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "password")
+		writeFile(t, path, "file-password\n")
+
+		getenv := validEnv(t, map[string]string{
+			"DATABASE_PASSWORD":      "   ",
+			"DATABASE_PASSWORD_FILE": path,
+		})
+
+		cfg, err := Load(getenv)
+		if err != nil {
+			t.Fatalf("Load() error = %v, want the file to be read", err)
+		}
+		if cfg.DatabasePassword != "file-password" {
+			t.Errorf("DatabasePassword = %q, want the file's content", cfg.DatabasePassword)
+		}
+	})
+
 	t.Run("database password file resolving empty is an error", func(t *testing.T) {
 		t.Parallel()
 
