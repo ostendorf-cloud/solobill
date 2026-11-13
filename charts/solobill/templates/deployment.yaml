@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "solobill.fullname" . }}
+  labels:
+    {{- include "solobill.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "solobill.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "solobill.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "solobill.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: LISTEN_ADDR
+              value: {{ .Values.config.listenAddr | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: DATABASE_URL
+              value: {{ .Values.config.databaseUrl | quote }}
+            - name: DATABASE_USER
+              value: {{ .Values.config.databaseUser | quote }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.databasePasswordKey }}
+            - name: SESSION_CODEC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.sessionCodecKeyKey }}
+            - name: CSRF_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.csrfKeyKey }}
+            - name: SESSION_ALLOW_PLAIN_HTTP
+              value: {{ .Values.config.sessionAllowPlainHttp | quote }}
+            {{- if .Values.config.oidc.issuerUrl }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.config.oidc.issuerUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.config.oidc.clientId | quote }}
+            - name: OIDC_REDIRECT_URL
+              value: {{ .Values.config.oidc.redirectUrl | quote }}
+            - name: OIDC_DEFAULT_TENANT_SLUG
+              value: {{ .Values.config.oidc.defaultTenantSlug | quote }}
+            {{- if .Values.config.oidc.scopes }}
+            - name: OIDC_SCOPES
+              value: {{ join "," .Values.config.oidc.scopes | quote }}
+            {{- end }}
+            {{- if .Values.existingSecret.oidcClientSecretKey }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ .Values.existingSecret.oidcClientSecretKey }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.config.allowedOrigins }}
+            - name: ALLOWED_ORIGINS
+              value: {{ join "," .Values.config.allowedOrigins | quote }}
+            {{- end }}
+            {{- if .Values.config.trustedProxies }}
+            - name: TRUSTED_PROXIES
+              value: {{ join "," .Values.config.trustedProxies | quote }}
+            {{- end }}
+            - name: RATE_LIMIT_BURST
+              value: {{ .Values.config.rateLimitBurst | quote }}
+            - name: RATE_LIMIT_PER
+              value: {{ .Values.config.rateLimitPer | quote }}
+            - name: INVITE_DEFAULT_TTL
+              value: {{ .Values.config.inviteDefaultTtl | quote }}
+          {{- if .Values.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

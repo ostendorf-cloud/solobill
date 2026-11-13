@@ -1,0 +1,106 @@
+suite: deployment with oidc login configured
+templates:
+  - templates/deployment.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+    oidcClientSecretKey: OIDC_CLIENT_SECRET
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+    oidc:
+      issuerUrl: https://idp.example.com
+      clientId: solobill
+      redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+      defaultTenantSlug: acme
+      scopes:
+        - roles
+tests:
+  - it: wires OIDC_ISSUER_URL, OIDC_CLIENT_ID, OIDC_REDIRECT_URL and OIDC_DEFAULT_TENANT_SLUG as plain env vars
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_ISSUER_URL
+            value: "https://idp.example.com"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_CLIENT_ID
+            value: "solobill"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_REDIRECT_URL
+            value: "https://solobill.example.com/api/v1/auth/oidc/callback"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_DEFAULT_TENANT_SLUG
+            value: "acme"
+
+  - it: joins OIDC_SCOPES as a comma-separated plain value
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_SCOPES
+            value: "roles"
+
+  - it: wires OIDC_CLIENT_SECRET from the existing secret, not as a plain value
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: OIDC_CLIENT_SECRET
+
+  - it: omits every OIDC env var when oidc.issuerUrl is left unset
+    set:
+      existingSecret:
+        name: solobill-secrets
+      config:
+        databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+        databaseUser: solobill_app
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_ISSUER_URL
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_CLIENT_ID
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_CLIENT_SECRET
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_REDIRECT_URL
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_DEFAULT_TENANT_SLUG
+
+  - it: omits OIDC_CLIENT_SECRET when oidc is otherwise configured but no secret key is named
+    set:
+      existingSecret:
+        name: solobill-secrets
+      config:
+        databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+        databaseUser: solobill_app
+        oidc:
+          issuerUrl: https://idp.example.com
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_CLIENT_SECRET

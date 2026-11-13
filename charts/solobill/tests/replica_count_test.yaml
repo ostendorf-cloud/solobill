@@ -1,0 +1,27 @@
+suite: replicaCount above one
+templates:
+  - templates/deployment.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  replicaCount: 3
+tests:
+  - it: renders the configured replica count
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: keeps selector labels stable regardless of replica count
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: solobill
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+      - notExists:
+          path: spec.selector.matchLabels["app.kubernetes.io/version"]

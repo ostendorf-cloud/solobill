@@ -1,0 +1,281 @@
+suite: deployment with default values
+templates:
+  - templates/deployment.yaml
+  - templates/service.yaml
+  - templates/serviceaccount.yaml
+  - templates/ingress.yaml
+  - templates/migration-job.yaml
+  - templates/migration-configmap.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+tests:
+  - it: renders exactly one replica
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: wires the required secret-backed env vars with no fallback
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: DATABASE_PASSWORD
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SESSION_CODEC_KEY
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: SESSION_CODEC_KEY
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: CSRF_KEY
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: CSRF_KEY
+
+  - it: wires the plain, credential-free database env vars with no secretKeyRef
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_URL
+            value: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            value: solobill_app
+
+  - it: wires the remaining plain env vars with their documented defaults
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LISTEN_ADDR
+            value: ":8080"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOG_LEVEL
+            value: "info"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: RATE_LIMIT_BURST
+            value: "10"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: RATE_LIMIT_PER
+            value: "1m"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INVITE_DEFAULT_TTL
+            value: "168h"
+
+  - it: defaults SESSION_ALLOW_PLAIN_HTTP to false, not compose's local-dev true
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SESSION_ALLOW_PLAIN_HTTP
+            value: "false"
+
+  - it: omits every optional env var when not configured
+    template: templates/deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_ISSUER_URL
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_CLIENT_ID
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_CLIENT_SECRET
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_REDIRECT_URL
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_DEFAULT_TENANT_SLUG
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OIDC_SCOPES
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALLOWED_ORIGINS
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+
+  - it: never creates a Secret from plaintext values
+    template: templates/deployment.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - notEqual:
+          path: kind
+          value: Secret
+
+  - it: runs as the distroless nonroot uid/gid with a read-only root filesystem
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 65532
+      - equal:
+          path: spec.template.spec.securityContext.runAsGroup
+          value: 65532
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop[0]
+          value: ALL
+
+  - it: probes healthz for liveness and readyz for readiness, with no startup probe
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /healthz
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /readyz
+      - isNull:
+          path: spec.template.spec.containers[0].startupProbe
+
+  - it: always sets resource requests
+    template: templates/deployment.yaml
+    asserts:
+      - isNotNull:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+      - isNotNull:
+          path: spec.template.spec.containers[0].resources.requests.memory
+
+  - it: sets the standard app.kubernetes.io labels including version and chart version
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: solobill
+      - equal:
+          path: metadata.labels["app.kubernetes.io/version"]
+          value: "0.1.0"
+      - equal:
+          path: metadata.labels["helm.sh/chart"]
+          value: solobill-0.1.0
+      - equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+
+  - it: renders a ClusterIP Service by default
+    template: templates/service.yaml
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+      - equal:
+          path: spec.ports[0].port
+          value: 8080
+
+  - it: creates a ServiceAccount with no RBAC by default
+    template: templates/serviceaccount.yaml
+    asserts:
+      - isKind:
+          of: ServiceAccount
+
+  - it: renders no Ingress when disabled
+    template: templates/ingress.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the migration Job as a pre-install,pre-upgrade hook authenticating as the same role
+    template: templates/migration-job.yaml
+    asserts:
+      - isKind:
+          of: Job
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: pre-install,pre-upgrade
+      - equal:
+          path: metadata.annotations["helm.sh/hook-delete-policy"]
+          value: before-hook-creation,hook-succeeded
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            value: solobill_app
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: DATABASE_PASSWORD
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          value: /db/migrations
+      - equal:
+          path: spec.template.spec.restartPolicy
+          value: Never
+
+  - it: embeds db/migrations as a pre-install,pre-upgrade ConfigMap created before the Job
+    template: templates/migration-configmap.yaml
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.annotations["helm.sh/hook"]
+          value: pre-install,pre-upgrade
+      - exists:
+          path: data["20261112233244_create_tenants.sql"]
+      - exists:
+          path: data["20261112233249_create_accounts.sql"]
+      - exists:
+          path: data["20261112233253_create_invites.sql"]
+
+  - it: never creates a Secret for the migration Job either
+    template: templates/migration-job.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - notEqual:
+          path: kind
+          value: Secret
