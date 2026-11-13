@@ -149,11 +149,18 @@ type CatalogueItem struct {
 	// units. Never negative; see db/migrations' catalogue_items
 	// migration.
 	UnitPriceCents int64
-	// Unit is never empty once read back: the column is NOT NULL. The
-	// storage layer defaults it to "piece" on Create and Update when the
-	// caller leaves it as the Go zero value, mirroring the database's
-	// own DEFAULT so both paths agree; see db/migrations' catalogue_items
-	// migration for the full set and reasoning.
+	// Unit is never empty once read back: the column is NOT NULL. Create
+	// and Update treat the Go zero value differently, deliberately:
+	// Create defaults it to "piece" when the caller leaves it unset,
+	// mirroring the column's own DEFAULT, for a genuinely new item not
+	// yet given a unit. Update is a full-column replace, the same
+	// contract Description and SKU already carry, so it does not
+	// default an empty Unit; the caller must supply the item's current
+	// Unit, and leaving it empty fails against the column's CHECK
+	// constraint instead of silently rewriting the item to "piece". See
+	// db/migrations' catalogue_items migration for the full set and
+	// reasoning, and postgres.catalogueItemRepository.Update for why the
+	// two methods disagree on purpose.
 	Unit string
 	// DeletedAt is nil for an active item, set once soft deleted. A
 	// catalogue item is never hard deleted: see db/migrations'
