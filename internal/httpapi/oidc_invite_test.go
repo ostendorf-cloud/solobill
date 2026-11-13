@@ -77,7 +77,7 @@ func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
 	healthRegistry := health.New()
 	healthRegistry.Add("fixture", 0, func(context.Context) error { return nil })
 
-	handler, err := httpapi.NewHandler(httpapi.Deps{
+	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:           logging.New(io.Discard, slog.LevelError),
 		Store:            store,
 		Sessions:         sessions,
@@ -97,7 +97,7 @@ func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)
 	}
 
-	return testApp{handler: handler, store: store, csrfKey: fixedKey(t, 3)}, invites
+	return testApp{handler: handlers.Public, adminHandler: handlers.Admin, store: store, csrfKey: fixedKey(t, 3)}, invites
 }
 
 // TestInviteOIDCStart covers handleInviteOIDCStart: a valid, pending

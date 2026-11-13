@@ -63,12 +63,44 @@ tests:
           path: spec.rules[0].host
           value: solobill.example.org
 
-  - it: points the backend at the chart's own Service and port
+  - it: points the backend at the public Service port, not the admin one, even when both are set to non-default values
     template: templates/ingress.yaml
+    set:
+      service:
+        port: 9090
+      adminPort: 9091
+    asserts:
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.number
+          value: 9090
+      - equal:
+          path: spec.rules[0].http.paths[0].pathType
+          value: Prefix
+
+  - it: never routes to the admin port, regardless of how many hosts or paths are configured
+    template: templates/ingress.yaml
+    set:
+      ingress:
+        enabled: true
+        className: nginx
+        hosts:
+          - host: solobill.example.org
+            paths:
+              - path: /
+                pathType: Prefix
+          - host: solobill-admin.example.org
+            paths:
+              - path: /metrics
+                pathType: Exact
+              - path: /healthz
+                pathType: Exact
     asserts:
       - equal:
           path: spec.rules[0].http.paths[0].backend.service.port.number
           value: 8080
       - equal:
-          path: spec.rules[0].http.paths[0].pathType
-          value: Prefix
+          path: spec.rules[1].http.paths[0].backend.service.port.number
+          value: 8080
+      - equal:
+          path: spec.rules[1].http.paths[1].backend.service.port.number
+          value: 8080

@@ -48,9 +48,25 @@ securityContext:
 
 service:
   type: ClusterIP
-  # Also used as the container port and for the probes: must match the port
-  # encoded in config.listenAddr (default ":8080" for both).
+  # Also used as the container port: must match the port encoded in
+  # config.listenAddr (default ":8080" for both). No probe targets this
+  # port any more; see adminPort below and templates/deployment.yaml.
   port: 8080
+
+# The second, administrative container port cmd/solobill listens on
+# through govue's httpserver.RunAdmin: /metrics, /healthz and /readyz live
+# here, nowhere on service.port. Must match the port encoded in
+# config.adminListenAddr (default ":8081" for both).
+#
+# Exposed on the Service as its own named port; see templates/service.yaml's
+# own comment and README.md's "Metrics and probes live on their own port"
+# section for why. templates/ingress.yaml still only ever
+# references service.port, never this one, so an external caller still
+# cannot reach it through the Ingress. A pod IP is routable from anywhere in
+# the cluster regardless of whether this port sits on the Service, so
+# leaving it off the Service narrowed one convenient path, not the actual
+# one; closing that off for real is a NetworkPolicy, tracked separately.
+adminPort: 8081
 
 ingress:
   enabled: false
@@ -121,18 +137,23 @@ resources:
 # migrationJob (a pre-install/pre-upgrade hook, see below) before this
 # Deployment's pods are ever created or updated, so cmd/solobill's own
 # startup never waits on a migration. Enable this only for a deployment that
-# adds its own slow startup work in front of config.Load.
+# adds its own slow startup work in front of config.Load. Targets adminPort
+# (/healthz) when enabled, the same as livenessProbe below.
 startupProbe:
   enabled: false
   initialDelaySeconds: 0
   periodSeconds: 5
   failureThreshold: 30
 
+# Targets adminPort (/healthz), not service.port: see adminPort's own
+# comment above for why these two probes, like the Prometheus scrape, live
+# on the administrative listener instead.
 livenessProbe:
   initialDelaySeconds: 5
   periodSeconds: 10
   failureThreshold: 3
 
+# Targets adminPort (/readyz); see livenessProbe's own comment above.
 readinessProbe:
   initialDelaySeconds: 5
   periodSeconds: 10
@@ -147,6 +168,10 @@ affinity: {}
 # README.md's values table for what each one does.
 config:
   listenAddr: ":8080"
+  # ADMIN_LISTEN_ADDR: the second listener /metrics, /healthz and /readyz
+  # move to; see adminPort above for why it is not exposed on the Service.
+  # Must match adminPort.
+  adminListenAddr: ":8081"
   logLevel: "info"
 
   # --------------------------------------------------------------------

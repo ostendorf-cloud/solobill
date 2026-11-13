@@ -74,6 +74,11 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
+            name: ADMIN_LISTEN_ADDR
+            value: ":8081"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
             name: LOG_LEVEL
             value: "info"
       - contains:
@@ -168,15 +173,37 @@ tests:
           path: spec.template.spec.containers[0].securityContext.capabilities.drop[0]
           value: ALL
 
-  - it: probes healthz for liveness and readyz for readiness, with no startup probe
+  - it: exposes the public and admin container ports, the admin one not named "http"
+    template: templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 8080
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: admin
+            containerPort: 8081
+            protocol: TCP
+
+  - it: probes healthz for liveness and readyz for readiness on the admin port, with no startup probe
     template: templates/deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.httpGet.path
           value: /healthz
       - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
+          value: admin
+      - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.port
+          value: admin
       - isNull:
           path: spec.template.spec.containers[0].startupProbe
 
@@ -204,15 +231,29 @@ tests:
           path: metadata.labels["app.kubernetes.io/managed-by"]
           value: Helm
 
-  - it: renders a ClusterIP Service by default
+  - it: renders a ClusterIP Service exposing both the public and the admin port, named
     template: templates/service.yaml
     asserts:
       - equal:
           path: spec.type
           value: ClusterIP
-      - equal:
-          path: spec.ports[0].port
-          value: 8080
+      - lengthEqual:
+          path: spec.ports
+          count: 2
+      - contains:
+          path: spec.ports
+          content:
+            name: http
+            port: 8080
+            targetPort: http
+            protocol: TCP
+      - contains:
+          path: spec.ports
+          content:
+            name: admin
+            port: 8081
+            targetPort: admin
+            protocol: TCP
 
   - it: creates a ServiceAccount with no RBAC by default
     template: templates/serviceaccount.yaml
