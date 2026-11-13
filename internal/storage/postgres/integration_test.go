@@ -13,11 +13,13 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ostendorf-cloud/solobill/internal/storage"
@@ -935,7 +937,14 @@ func TestRowLevelSecurity(t *testing.T) {
 
 	t.Run("an INSERT of a document scoped to tenant B with tenant_id set to tenant A is rejected", func(t *testing.T) {
 		// The WITH CHECK half of the policy, exercised on INSERT,
-		// bypassing DocumentRepository entirely.
+		// bypassing DocumentRepository entirely. Asserting the SQLSTATE
+		// and message, not merely err != nil: a foreign key violation, a
+		// CHECK violation or a type error would all satisfy "an error
+		// occurred" without the policy itself ever having refused
+		// anything, the same reason
+		// document_immutability_integration_test.go pins its own
+		// rejections to a specific class and message rather than just
+		// checking for an error.
 		tx, err := restrictedPool.Begin(ctx)
 		if err != nil {
 			t.Fatalf("begin: %v", err)
@@ -952,18 +961,33 @@ func TestRowLevelSecurity(t *testing.T) {
 		if err == nil {
 			t.Fatal("INSERT with tenant_id = tenant A while scoped to tenant B succeeded, want it rejected by WITH CHECK")
 		}
+
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) {
+			t.Fatalf("err = %v, want a *pgconn.PgError", err)
+		}
+
+		if pgErr.Code != pgInsufficientPrivilegeClass {
+			t.Fatalf("pgErr.Code = %q, want %q (row level security's own WITH CHECK rejection class)", pgErr.Code, pgInsufficientPrivilegeClass)
+		}
+
+		if !strings.Contains(pgErr.Message, "row-level security") {
+			t.Fatalf("pgErr.Message = %q, want it to name row-level security: this must be the policy's own rejection, not some other error", pgErr.Message)
+		}
 	})
 
 	t.Run("tenant A's document_numbers counter is invisible and unaffected while scoped to tenant B", func(t *testing.T) {
 		// Allocating under tenant A, then reading the same (type, year)
-		// key while scoped to tenant B, proves document_numbers' own
-		// policy the same way every other table's does: a counter is
-		// not just a number, it is itself tenant-scoped data, and a
-		// connection scoped to the wrong tenant must not see tenant A's
-		// count, even indirectly through Current answering 0 (which, if
-		// RLS were broken, could instead mean "tenant B already shares
-		// tenant A's counter", exactly the bug this isolation exists to
-		// prevent).
+		// key while scoped to tenant B through DocumentNumbers().Current,
+		// proves at most that Current's own SQL predicate works: that
+		// query (queries/document_numbers.sql's GetDocumentNumber)
+		// already names "AND tenant_id = NULLIF(current_setting(...),
+		// '')::uuid" in its own WHERE clause, so it would answer this
+		// same 0 even against document_numbers' row level security
+		// policy replaced outright by USING (true) WITH CHECK (true):
+		// the repository's own filter, not the policy, would be doing
+		// all the work. It is still worth keeping as a contract test for
+		// Current itself.
 		const year = 2031 // far from any other test's own year, avoiding collision
 
 		if err := store.WithTenant(ctx, tenantA.ID, func(ctx context.Context) error {
@@ -987,6 +1011,35 @@ func TestRowLevelSecurity(t *testing.T) {
 
 		if currentForB != 0 {
 			t.Fatalf("tenant B's view of the invoice/%d counter = %d, want 0 (tenant A's own allocation must be invisible)", year, currentForB)
+		}
+
+		// The actual proof of document_numbers' own policy: a raw,
+		// unscoped read under the restricted role, scoped to tenant B,
+		// naming tenant A's row explicitly in its own WHERE clause (the
+		// same pattern the document_lines subtest above uses). If the
+		// policy were the widened USING (true) WITH CHECK (true) that
+		// would defeat the read above, this one would still find the
+		// row and fail.
+		tx, err := restrictedPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		var count int
+
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM document_numbers WHERE tenant_id = $1 AND type = 'invoice' AND number_year = $2`,
+			tenantA.ID, year).Scan(&count); err != nil {
+			t.Fatalf("count document_numbers for tenant A's own key while scoped to tenant B: %v", err)
+		}
+
+		if count != 0 {
+			t.Fatalf("count = %d, want 0: tenant A's document_numbers row is visible while scoped to tenant B", count)
 		}
 	})
 
