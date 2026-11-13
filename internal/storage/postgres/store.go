@@ -118,3 +118,16 @@ func (s *Store) Customers() storage.CustomerRepository {
 func (s *Store) CatalogueItems() storage.CatalogueItemRepository {
 	return &catalogueItemRepository{}
 }
+
+// Documents returns the document repository. Every method on it
+// requires a context WithTenant produced; see storage.DocumentRepository.
+func (s *Store) Documents() storage.DocumentRepository {
+	return &documentRepository{}
+}
+
+// DocumentNumbers returns the document numbering repository. Every
+// method on it requires a context WithTenant produced; see
+// storage.DocumentNumberRepository.
+func (s *Store) DocumentNumbers() storage.DocumentNumberRepository {
+	return &documentNumberRepository{}
+}
