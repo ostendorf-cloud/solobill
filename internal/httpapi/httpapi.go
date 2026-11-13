@@ -9,20 +9,41 @@
 // session store and no OIDC provider of its own. See Deps for the full
 // list.
 //
+// # Two handlers, two listeners
+//
+// NewHandler builds two handlers, not one: Public, which cmd/solobill runs
+// through govue's httpserver.Config on the listener its Ingress routes to,
+// and Admin, which it runs through httpserver.AdminConfig on a second
+// listener reached only inside the cluster. /healthz, /readyz and
+// /metrics live on Admin and nowhere on Public: anything that can reach
+// this application over its Ingress could otherwise scrape its metrics or
+// poll its probes, which is the vulnerability this split closes. See
+// govue's own example/app.go (adminHandler) and docs/concepts/govue.md
+// for the shape this reproduces, and cmd/solobill's main for how the two
+// listeners are run and drained together.
+//
 // # The middleware shape
 //
-// Two chains, not one, the same shape govue's own example application
-// documents and that internal/httpapi's task description reproduces
-// verbatim: an outer chain wrapping the whole mux (Recover, RequestID, the
-// security headers, the HTTP metrics, the access log) and one per-route
-// chain applied to every handler the mux dispatches to (CORS when
-// configured, the rate limiter, then the CSRF protector, in that order:
-// see govue's example/app.go's own handler method). Every route goes
-// through the same chain; there is no second, tighter bucket, since every
-// route shares one rateLimit.Limiter instance regardless. Health and
-// metrics are mounted bare, through neither chain: a load balancer
-// polling /healthz must never be rate limited or refused for a missing
-// CSRF token, and a scrape must never wait behind either.
+// Public gets two chains, not one, the same shape govue's own example
+// application documents and that internal/httpapi's task description
+// reproduces verbatim: an outer chain wrapping the whole mux (Recover,
+// RequestID, the security headers, the HTTP metrics, the access log) and
+// one per-route chain applied to every handler the mux dispatches to
+// (CORS when configured, the rate limiter, then the CSRF protector, in
+// that order: see govue's example/app.go's own handler method). Every
+// route goes through the same chain; there is no second, tighter bucket,
+// since every route shares one rateLimit.Limiter instance regardless.
+//
+// Admin gets a deliberately short chain instead, matching govue's own
+// adminHandler: Recover and RequestID only. A probe or a scrape is not
+// browser traffic, so the security headers and CORS have nothing to
+// protect; it is not a request a user can forge, so the CSRF protector
+// has nothing to check; and a scraper or kubelet polling this listener
+// every few seconds must not be throttled by the rate limiter or fill the
+// access log the way a public request would. The HTTP metrics middleware
+// is absent too, deliberately: instrumenting a scrape of the metrics
+// endpoint itself would feed Prometheus a metric about scraping
+// Prometheus, which is not a loop worth closing.
 //
 // # Tenant resolution for local login and invite accept
 //
@@ -112,7 +133,8 @@ type Deps struct {
 	OIDCHandlers *oidc.Handlers
 
 	// HealthRegistry already carries every readiness check main wants
-	// (the database ping); this package only mounts it.
+	// (the database ping); this package only mounts it, on Admin, never
+	// on Public.
 	HealthRegistry *health.Registry
 
 	AllowedOrigins []string
@@ -142,10 +164,19 @@ type Deps struct {
 	Now func() time.Time
 }
 
-// NewHandler builds the complete HTTP handler, returning every construction
-// problem at once rather than stopping at the first one, the same pattern
-// config.Load and govue's own example application both use.
-func NewHandler(d Deps) (http.Handler, error) {
+// Handlers is what NewHandler builds: Public, served on the listener the
+// application's Ingress routes to, and Admin, served on govue's second,
+// administrative listener. See the package doc's "Two handlers, two
+// listeners" section for why these are never the same handler.
+type Handlers struct {
+	Public http.Handler
+	Admin  http.Handler
+}
+
+// NewHandler builds both handlers, returning every construction problem at
+// once rather than stopping at the first one, the same pattern config.Load
+// and govue's own example application both use.
+func NewHandler(d Deps) (Handlers, error) {
 	var problems []error
 	fail := func(err error) {
 		if err != nil {
@@ -236,7 +267,7 @@ func NewHandler(d Deps) (http.Handler, error) {
 	}
 
 	if err := errors.Join(problems...); err != nil {
-		return nil, fmt.Errorf("httpapi: build handler: %w", err)
+		return Handlers{}, fmt.Errorf("httpapi: build handler: %w", err)
 	}
 
 	inviteTTL := d.DefaultInviteTTL
@@ -273,9 +304,6 @@ func NewHandler(d Deps) (http.Handler, error) {
 
 	mux := http.NewServeMux()
 
-	d.HealthRegistry.Handle(mux)
-	mux.Handle("GET /metrics", metricsHandler)
-
 	mux.Handle("POST /api/v1/auth/login", route(api.Handle(a.handleLogin)))
 	mux.Handle("POST /api/v1/auth/logout", route(api.Handle(a.handleLogout)))
 	mux.Handle("GET /api/v1/me", route(api.Handle(a.handleMe)))
@@ -289,6 +317,17 @@ func NewHandler(d Deps) (http.Handler, error) {
 		mux.Handle("POST /api/v1/invites/oidc/start", route(api.Handle(a.handleInviteOIDCStart)))
 	}
 
+	// /metrics, /healthz and /readyz are deliberately registered here as
+	// a 404, not left to fall through to the SPA catch-all below: Admin
+	// serves the real answers instead (see the package doc's "Two
+	// handlers, two listeners" section), and the SPA fallback answers
+	// every unrecognised path outside /api/ with its own shell and a 200,
+	// which would otherwise hide the fact that nothing real is behind
+	// these three paths on this listener.
+	for _, path := range [...]string{"/metrics", "/healthz", "/readyz"} {
+		mux.Handle("GET "+path, route(api.NotFoundHandler()))
+	}
+
 	// The SPA fallback. It answers an unmatched /api/ path with the same
 	// JSON error shape every other endpoint uses, and everything else
 	// with the built Vue app, for client-side routing to take over.
@@ -299,13 +338,32 @@ func NewHandler(d Deps) (http.Handler, error) {
 	// (*http.Request).WithContext, which both httpMetrics and accessLog
 	// need to not have happened yet, since they read r.Pattern off the
 	// exact request value http.ServeMux matched against.
-	return middleware.Chain(mux,
+	public := middleware.Chain(mux,
 		middleware.Recover(d.Logger),
 		middleware.RequestID(d.Logger),
 		security.Middleware,
 		httpMetrics.Middleware,
 		accessLog.Middleware,
-	), nil
+	)
+
+	// adminMux carries /healthz, /readyz and /metrics, and nothing else:
+	// see the package doc's "Two handlers, two listeners" section for why
+	// these never reach Public. metricsHandler reads from the same
+	// metricsRegistry httpMetrics.Middleware above records into, so a
+	// scrape here reports the traffic Public actually served.
+	adminMux := http.NewServeMux()
+	d.HealthRegistry.Handle(adminMux)
+	adminMux.Handle("GET /metrics", metricsHandler)
+
+	// The admin chain, deliberately short: see the package doc's
+	// "The middleware shape" section for why only Recover and RequestID
+	// belong here.
+	admin := middleware.Chain(adminMux,
+		middleware.Recover(d.Logger),
+		middleware.RequestID(d.Logger),
+	)
+
+	return Handlers{Public: public, Admin: admin}, nil
 }
 
 // corsMiddleware returns cors.Middleware as a one element slice, or an

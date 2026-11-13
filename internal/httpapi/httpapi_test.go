@@ -24,12 +24,14 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
-// testApp is what buildTestApp hands every test: the handler under test
-// plus the pieces a test needs to build a fixture or check a session.
+// testApp is what buildTestApp hands every test: the public handler under
+// test, its admin counterpart (see httpapi.Handlers), plus the pieces a
+// test needs to build a fixture or check a session.
 type testApp struct {
-	handler http.Handler
-	store   *fakeStore
-	csrfKey []byte
+	handler      http.Handler
+	adminHandler http.Handler
+	store        *fakeStore
+	csrfKey      []byte
 }
 
 // buildTestApp builds a real internal/httpapi handler over a fakeStore, so
@@ -59,7 +61,7 @@ func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 	healthRegistry := health.New()
 	healthRegistry.Add("fixture", 0, func(context.Context) error { return nil })
 
-	handler, err := httpapi.NewHandler(httpapi.Deps{
+	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:           logging.New(io.Discard, slog.LevelError),
 		Store:            store,
 		Sessions:         sessions,
@@ -76,7 +78,7 @@ func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)
 	}
 
-	return testApp{handler: handler, store: store, csrfKey: csrfKey}
+	return testApp{handler: handlers.Public, adminHandler: handlers.Admin, store: store, csrfKey: csrfKey}
 }
 
 // fixedKey returns a deterministic 32 byte key, seed changing only the
@@ -133,7 +135,37 @@ func sessionCookie(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
 	return cookies[0]
 }
 
-func TestHealthAndMetricsEndpoints(t *testing.T) {
+// TestPublicHandlerServesNoAdminEndpoint is this issue's own acceptance
+// criterion, proven by a test rather than by inspection: anything that can
+// reach the application's own Ingress-routed listener must get a plain
+// 404 for /metrics, /healthz and /readyz, never the real answer. The
+// catch-all SPA route (mux.Handle("/", route(spaHandler))) is what
+// actually answers here: http.ServeMux routes an unregistered pattern to
+// it, the same as any other unknown path, see TestSPAFallback's "unknown
+// api route" case for /api/, and newSPAHandler itself for the plain path
+// case these three happen to fall under.
+func TestPublicHandlerServesNoAdminEndpoint(t *testing.T) {
+	t.Parallel()
+
+	app := buildTestApp(t, 100)
+
+	for _, path := range []string{"/metrics", "/healthz", "/readyz"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+
+			rec := doJSON(t, app.handler, http.MethodGet, path, nil, nil, "")
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("GET %s on the public handler status = %d, want %d", path, rec.Code, http.StatusNotFound)
+			}
+		})
+	}
+}
+
+// TestAdminHandlerServesHealthAndMetrics is the other half of this issue's
+// acceptance criteria: the administrative handler, which cmd/solobill
+// serves on its own listener through govue's httpserver.AdminConfig,
+// answers all three.
+func TestAdminHandlerServesHealthAndMetrics(t *testing.T) {
 	t.Parallel()
 
 	app := buildTestApp(t, 100)
@@ -152,11 +184,32 @@ func TestHealthAndMetricsEndpoints(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rec := doJSON(t, app.handler, http.MethodGet, tt.path, nil, nil, "")
+			rec := doJSON(t, app.adminHandler, http.MethodGet, tt.path, nil, nil, "")
 			if rec.Code != tt.wantStatus {
 				t.Errorf("GET %s status = %d, want %d", tt.path, rec.Code, tt.wantStatus)
 			}
 		})
+	}
+}
+
+// TestAdminHandlerReportsPublicTraffic proves the admin handler's /metrics
+// and the public handler's own httpMetrics.Middleware share one registry:
+// a request the public handler actually served shows up once /metrics is
+// scraped on the admin handler, the same series a Prometheus scrape of a
+// single-listener deployment would have seen before this split.
+func TestAdminHandlerReportsPublicTraffic(t *testing.T) {
+	t.Parallel()
+
+	app := buildTestApp(t, 100)
+
+	doJSON(t, app.handler, http.MethodGet, "/", nil, nil, "")
+
+	rec := doJSON(t, app.adminHandler, http.MethodGet, "/metrics", nil, nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /metrics status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "http_requests_total") {
+		t.Errorf("metrics body does not contain http_requests_total: %s", rec.Body.String())
 	}
 }
 
@@ -167,7 +220,7 @@ func TestReadinessFailsWhenACheckFails(t *testing.T) {
 	healthRegistry := health.New()
 	healthRegistry.Add("database", 0, func(context.Context) error { return errors.New("connection refused") })
 
-	handler, err := httpapi.NewHandler(httpapi.Deps{
+	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:    logging.New(io.Discard, slog.LevelError),
 		Store:     store,
 		Sessions:  mustSessions(t),
@@ -185,7 +238,7 @@ func TestReadinessFailsWhenACheckFails(t *testing.T) {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)
 	}
 
-	rec := doJSON(t, handler, http.MethodGet, "/readyz", nil, nil, "")
+	rec := doJSON(t, handlers.Admin, http.MethodGet, "/readyz", nil, nil, "")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("GET /readyz status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
@@ -217,7 +270,7 @@ func TestSessionStoreFailureIsExposedAsAStaticMessage(t *testing.T) {
 		t.Fatalf("session.New() error = %v", err)
 	}
 
-	handler, err := httpapi.NewHandler(httpapi.Deps{
+	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:           logging.New(io.Discard, slog.LevelError),
 		Store:            store,
 		Sessions:         sessions,
@@ -235,7 +288,7 @@ func TestSessionStoreFailureIsExposedAsAStaticMessage(t *testing.T) {
 	}
 
 	cookie := &http.Cookie{Name: sessions.CookieName(), Value: "whatever-the-store-will-refuse"}
-	rec := doJSON(t, handler, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{cookie}, "")
+	rec := doJSON(t, handlers.Public, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{cookie}, "")
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
