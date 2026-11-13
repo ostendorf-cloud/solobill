@@ -192,6 +192,13 @@ type DocumentRepository interface {
 	// this tenant (already issued, or raced by a concurrent Issue
 	// call): see internal/storage/postgres/queries/documents.sql's
 	// IssueDocument for why that case is a conflict, not a not-found.
+	//
+	// payloadHash must be the lowercase hex-encoded SHA-256 of payload's
+	// own bytes, exactly as the caller is about to freeze them: this is
+	// a precondition on the caller, not something this method derives
+	// on its own, and db/migrations' documents_frozen_payload_sha256_matches
+	// CHECK (see 20261113160000_create_documents.sql) refuses the write
+	// outright when the two disagree.
 	Issue(ctx context.Context, id uuid.UUID, docType DocumentType, year int, issuedAt time.Time, payload []byte, payloadHash string) (Document, error)
 }
 

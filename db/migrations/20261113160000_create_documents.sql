@@ -154,6 +154,28 @@ CREATE TABLE documents (
     -- for free and would make a hash of the stored form alone nearly
     -- vacuous): bytea above is what makes "hash these bytes and compare"
     -- true rather than aspirational.
+    --
+    -- Nothing in this step's own scope (storage and calculation only, no
+    -- HTTP, no rendering) actually renders a document, so nothing here
+    -- computes this column yet: the caller of
+    -- internal/storage.DocumentRepository.Issue passes both
+    -- frozen_payload and this column already computed, and that caller
+    -- does not exist until a later milestone builds the rendering step.
+    -- Leaving the two columns free to disagree until then would make the
+    -- guarantee this column exists for only as strong as that
+    -- not-yet-written caller, and a problem only discoverable once real
+    -- rows exist, at which point fixing it is a migration over live data
+    -- rather than a line in a migration nothing has run yet.
+    -- documents_frozen_payload_sha256_matches below closes that: it is
+    -- cheaper to make the relationship structural now, with Postgres'
+    -- own built-in sha256(bytea) (core since Postgres 14, no extension),
+    -- than to add it once this table is no longer empty. It is deliberately
+    -- a statement about internal consistency only ("this hash is the one
+    -- this payload actually hashes to"), not about where the hash comes
+    -- from: the rendering step that eventually calls Issue still has to
+    -- compute it from the exact bytes it is about to freeze, this CHECK
+    -- only stops that step (or anything else running as solobill_app)
+    -- from ever getting it wrong undetected.
     frozen_payload_sha256 text,
     issued_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -194,6 +216,18 @@ CREATE TABLE documents (
         discount_amount_cents IS NULL OR discount_amount_cents >= 0
     ),
     CONSTRAINT documents_number_nonneg CHECK (number IS NULL OR number > 0),
+    -- frozen_payload_sha256's own comment above explains why this is
+    -- structural rather than left to a caller's own discipline: a NULL
+    -- frozen_payload (every draft) trivially passes, and
+    -- documents_issued_fields_consistent above already guarantees that
+    -- whenever frozen_payload is set, frozen_payload_sha256 is too, so
+    -- this never compares a hash against a NULL. encode(..., 'hex')
+    -- lower-cases, matching this column's own documented lowercase
+    -- convention.
+    CONSTRAINT documents_frozen_payload_sha256_matches CHECK (
+        frozen_payload IS NULL
+        OR frozen_payload_sha256 = encode(sha256(frozen_payload), 'hex')
+    ),
     -- Same purpose as customers_tenant_id_id_unique and
     -- catalogue_items_tenant_id_id_unique: lets document_lines and this
     -- same table's own corrects_document_id reference (tenant_id, id) as

@@ -8,6 +8,8 @@ package postgres_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -74,6 +76,20 @@ func createDocumentTestCustomer(ctx context.Context, t *testing.T, store *postgr
 // nanosecond-level precision Postgres never stores.
 func nowForTest() time.Time {
 	return time.Now().UTC().Truncate(time.Microsecond)
+}
+
+// testFrozenPayload returns a fixed payload and the hex-encoded SHA-256
+// of its own bytes, computed here rather than hardcoded, so the two can
+// never drift from each other. Every Issue call in this package's tests
+// uses this rather than its own literal pair: db/migrations'
+// documents_frozen_payload_sha256_matches CHECK (see
+// 20261113160000_create_documents.sql) now rejects any payload and hash
+// that do not actually match.
+func testFrozenPayload() ([]byte, string) {
+	payload := []byte(`{"total":1190}`)
+	sum := sha256.Sum256(payload)
+
+	return payload, hex.EncodeToString(sum[:])
 }
 
 // TestDocumentNumbering_ConcurrentIssueIsGapless is issue #15's own
@@ -166,7 +182,9 @@ func TestDocumentNumbering_ConcurrentIssueIsGapless(t *testing.T) {
 					return err
 				}
 
-				issued, err := store.Documents().Issue(ctx, document.ID, storage.DocumentTypeInvoice, year, nowForTest(), []byte(`{"total":1190}`), "deadbeef")
+				payload, payloadHash := testFrozenPayload()
+
+				issued, err := store.Documents().Issue(ctx, document.ID, storage.DocumentTypeInvoice, year, nowForTest(), payload, payloadHash)
 				if err != nil {
 					return err
 				}
