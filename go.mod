@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
-	github.com/ostendorf-cloud/govue v0.2.0
+	github.com/ostendorf-cloud/govue v0.3.1
 	golang.org/x/crypto v0.58.0
 )
 
