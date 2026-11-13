@@ -1,0 +1,31 @@
+# sqlc generates the typed query code under internal/storage/postgres/sqlcgen
+# from the .sql files in internal/storage/postgres/queries. The schema it
+# type-checks those queries against is db/migrations itself, not a
+# dbmate-produced db/schema.sql dump: a dump only exists after "dbmate up" has
+# actually run against a reachable Postgres, while sqlc parses the migration
+# files' own SQL statements statically, with no database connection at all
+# (verified locally: "sqlc generate" against a migrations directory shaped
+# like dbmate's, including the "-- migrate:down" section, succeeds and
+# produces types reflecting only the "-- migrate:up" statements). That is
+# what "task generate:check" needs: it runs as part of "task check", which
+# must work with no network and no port binding.
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "internal/storage/postgres/queries"
+    schema: "db/migrations"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "internal/storage/postgres/sqlcgen"
+        sql_package: "pgx/v5"
+        emit_json_tags: false
+        emit_result_struct_pointers: false
+        overrides:
+          # Generated code stays inside internal/storage/postgres; nothing
+          # here crosses the internal/storage interface boundary, but
+          # mapping uuid straight to google/uuid.UUID (the type the domain
+          # structs use) avoids a pgtype.UUID<->uuid.UUID conversion on
+          # every single field of every single query.
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"

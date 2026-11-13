@@ -1,0 +1,21 @@
+apiVersion: v2
+name: solobill
+description: Accounting for a sole trader.
+type: application
+# No dependencies: Postgres already runs in the cluster this chart installs into, so this
+# chart never bundles a Postgres subchart. See README.md's "Prerequisites" for what the
+# cluster operator must provision instead.
+#
+# version and appVersion are stamped by release-me on every release; see release-me.yaml.
+version: 0.1.0
+appVersion: 0.1.0
+home: https://github.com/ostendorf-cloud/solobill
+sources:
+  - https://github.com/ostendorf-cloud/solobill
+maintainers:
+  - name: Simon Ostendorf
+    email: github@simon-ostendorf.de
+keywords:
+  - accounting
+  - sole-trader
+  - solobill

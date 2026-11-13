@@ -1,0 +1,17 @@
+suite: migration job disabled
+templates:
+  - templates/migration-job.yaml
+  - templates/migration-configmap.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  migrationJob:
+    enabled: false
+tests:
+  - it: renders neither the Job nor its ConfigMap, leaving nothing orphaned
+    asserts:
+      - hasDocuments:
+          count: 0

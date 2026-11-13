@@ -1,0 +1,130 @@
+{{/*
+Runs db/migrations as a pre-install,pre-upgrade hook: the new or changed
+schema must exist before this chart's Deployment is created or updated
+with it, an upgrade included, not only a fresh install. dbmate's own "up"
+command is idempotent (it tracks applied migrations in its own
+schema_migrations table), so re-running it on every upgrade against an
+already-migrated database is safe.
+
+One role, or two: left empty, the default, migrationJob.databaseUser
+falls back to config.databaseUser, so this Job authenticates as the exact
+same role the Deployment itself uses. That role is still fully bound by
+FORCE ROW LEVEL SECURITY for every ordinary application query (ownership
+is irrelevant to FORCE), but PostgreSQL's own ALTER TABLE reference makes
+ownership, not FORCE, what ALTER TABLE itself checks - so that same role,
+because it owns the tables db/migrations creates, can also run
+ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or drop the policy outright.
+Setting migrationJob.databaseUser to a separate role the application
+itself never authenticates as closes that gap, mirroring
+docker-compose.yaml's own bootstrap-superuser-for-migrations-only split.
+See README.md's "One role, or two" section for the full reasoning, and
+values.yaml's own comment on config.databaseUser for the operator-facing
+requirement (NOSUPERUSER NOBYPASSRLS) this chart cannot enforce from here
+either way.
+
+The official dbmate image has a shell (unlike solobill's own distroless
+runtime image), used here only to assemble the full connection URL dbmate
+needs (DATABASE_URL, with credentials embedded) from config.databaseUrl's
+own credential-free URL plus the migration user and password: the inverse
+of internal/config.Config.DatabaseDSN, which cmd/solobill itself runs in
+Go. Assembled with plain shell parameter expansion, never sed/echo, so the
+password is never written to a pattern buffer or stdout. This only works
+correctly when the password contains no character that needs percent
+encoding in a URL; this organisation's own secret-generation convention
+("openssl rand -hex ...", see .env.example and docker-compose.yaml) already
+produces hex-only passwords, which have none, so this is a documented
+requirement (see values.yaml's existingSecret.databasePasswordKey comment
+and README.md), not a limitation this Job works around silently.
+*/}}
+{{- if .Values.migrationJob.enabled -}}
+{{- $migrationUser := .Values.migrationJob.databaseUser | default .Values.config.databaseUser -}}
+{{- $migrationSecretKey := .Values.existingSecret.migrationDatabasePasswordKey | default .Values.existingSecret.databasePasswordKey -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "solobill.migration.fullname" . }}
+  labels:
+    {{- include "solobill.migration.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- with .Values.migrationJob.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "solobill.migration.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "solobill.serviceAccountName" . }}
+      # This Job needs the ServiceAccount named above to EXIST (Kubernetes
+      # rejects a pod naming one that does not), but needs no token
+      # mounted from it: it never calls the Kubernetes API.
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: "{{ .Values.migrationJob.image.repository }}:{{ .Values.migrationJob.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Overrides the image's own ENTRYPOINT (["/usr/local/bin/dbmate"])
+          # to assemble DATABASE_URL first; see this file's own doc comment
+          # above for why that assembly happens here in shell rather than
+          # being a plain value.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              prefix="${DATABASE_URL_BASE%%://*}"
+              rest="${DATABASE_URL_BASE#*://}"
+              export DATABASE_URL="${prefix}://${DATABASE_USER}:${DATABASE_PASSWORD}@${rest}"
+              exec dbmate up
+          env:
+            - name: DATABASE_URL_BASE
+              value: {{ .Values.config.databaseUrl | quote }}
+            - name: DATABASE_USER
+              value: {{ $migrationUser | quote }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name }}
+                  key: {{ $migrationSecretKey }}
+            # dbmate's own schema.sql dump is turned off: the migrations
+            # volume below is mounted read-only, and nothing in this chart
+            # or in solobill's own repository commits or reads a schema.sql,
+            # matching docker-compose.yaml's own "migrate" service.
+            - name: DBMATE_NO_DUMP_SCHEMA
+              value: "true"
+            # Explicit, not relying on dbmate's own cwd-derived default:
+            # matches where the ConfigMap below is mounted.
+            - name: DBMATE_MIGRATIONS_DIR
+              value: /db/migrations
+          volumeMounts:
+            - name: migrations
+              mountPath: /db/migrations
+              readOnly: true
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrationJob.resources | nindent 12 }}
+      volumes:
+        - name: migrations
+          configMap:
+            name: {{ include "solobill.migration.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end -}}
