@@ -869,6 +869,107 @@ func TestRowLevelSecurity(t *testing.T) {
 	})
 }
 
+// TestCatalogueItemRepository_Update exercises Update's own contract on
+// the unit column, as opposed to tenant isolation (TestRowLevelSecurity
+// above already covers that for every column, unit included). Update is
+// a full-column replace: a caller that leaves Unit as the Go zero value
+// is supplying an incomplete item, which must fail loudly against the
+// column's NOT NULL and CHECK constraints rather than being silently
+// coerced to "piece", the mistake this test reproduces and then pins
+// against a regression.
+func TestCatalogueItemRepository_Update(t *testing.T) {
+	adminURL := os.Getenv("DATABASE_URL")
+	if adminURL == "" {
+		t.Skip("DATABASE_URL not set; skipping the Postgres-backed catalogue item update test")
+	}
+
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatalf("open admin pool: %v", err)
+	}
+	t.Cleanup(adminPool.Close)
+
+	restrictedURL := setUpTestAppRole(ctx, t, adminPool, adminURL)
+
+	restrictedPool, err := postgres.NewPool(ctx, restrictedURL)
+	if err != nil {
+		t.Fatalf("open restricted pool as %s: %v", testAppRole, err)
+	}
+	t.Cleanup(restrictedPool.Close)
+
+	store := postgres.NewStore(restrictedPool)
+
+	tenant, err := store.Tenants().Create(ctx, storage.Tenant{Slug: "tenant-update-unit-" + uuid.NewString(), Name: "Tenant Update Unit"})
+	if err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+
+	var dayRateItem storage.CatalogueItem
+
+	if err := store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
+		var err error
+		dayRateItem, err = store.CatalogueItems().Create(ctx, storage.CatalogueItem{
+			TenantID:       tenant.ID,
+			Name:           "Day-Rate Hire",
+			UnitPriceCents: 50000,
+			Unit:           "day",
+		})
+
+		return err
+	}); err != nil {
+		t.Fatalf("create day-rate catalogue item: %v", err)
+	}
+
+	if dayRateItem.Unit != "day" {
+		t.Fatalf("created item Unit = %q, want %q", dayRateItem.Unit, "day")
+	}
+
+	t.Run("Update without a Unit is rejected, not silently coerced to piece", func(t *testing.T) {
+		err := store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
+			_, err := store.CatalogueItems().Update(ctx, storage.CatalogueItem{
+				ID:             dayRateItem.ID,
+				TenantID:       tenant.ID,
+				Name:           "Day-Rate Hire, renamed",
+				UnitPriceCents: 60000,
+				// Unit deliberately left as the Go zero value: the
+				// caller forgot to carry it forward, the exact mistake
+				// this test exists to catch.
+			})
+
+			return err
+		})
+		if err == nil {
+			t.Fatal("Update with an empty Unit succeeded, want it rejected by the unit CHECK constraint")
+		}
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrConflict) {
+			t.Fatalf("Update with an empty Unit failed with %v, want a plain CHECK-violation error, not a storage sentinel that implies the row itself was the problem", err)
+		}
+
+		// The failed Update must not have taken effect at all: refetch
+		// the row under its own, successful transaction and confirm
+		// Unit is still "day", not silently rewritten to "piece".
+		var reread storage.CatalogueItem
+
+		if err := store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
+			var err error
+			reread, err = store.CatalogueItems().FindByID(ctx, dayRateItem.ID)
+
+			return err
+		}); err != nil {
+			t.Fatalf("FindByID after the rejected update: %v", err)
+		}
+
+		if reread.Unit != "day" {
+			t.Fatalf("Unit after the rejected update = %q, want %q (unchanged)", reread.Unit, "day")
+		}
+		if reread.Name != "Day-Rate Hire" {
+			t.Fatalf("Name after the rejected update = %q, want %q (unchanged, same full-row rejection)", reread.Name, "Day-Rate Hire")
+		}
+	})
+}
+
 // testOwnerRole and testOwnerPassword name a second disposable test role,
 // alongside testAppRole: NOSUPERUSER NOBYPASSRLS like testAppRole, but
 // this one is temporarily made the owner of a table (see
