@@ -132,9 +132,9 @@ CREATE TABLE documents (
     -- The cost is that this table cannot query into the payload's own
     -- fields with a jsonb operator; nothing in this schema or in
     -- internal/storage/postgres does that today, the payload's shape is
-    -- a Go-side concern (internal/storage.DocumentPayload, a later
-    -- rendering step's contract, not this migration's), and a later
-    -- feature that genuinely needs to query into it can add its own
+    -- a Go-side concern a later rendering step's contract will define
+    -- (not yet built, and not this migration's), and a later feature
+    -- that genuinely needs to query into it can add its own
     -- derived jsonb column then, decided and reviewed against an actual
     -- query, rather than this migration keeping jsonb speculatively and
     -- giving up the one guarantee that matters more. Set exactly once,
@@ -147,13 +147,19 @@ CREATE TABLE documents (
     -- verifying it later (docs/concepts/solobill.md: "every figure in a
     -- report can be traced back to the documents it came from") is
     -- "hash these bytes and compare", with no second encoding step that
-    -- could itself drift from what was actually persisted. This is the
-    -- guarantee that the issued document matches what was actually
-    -- submitted at issue time, not merely that the row has not changed
-    -- since it was written (immutability, below, already gives that one
-    -- for free and would make a hash of the stored form alone nearly
-    -- vacuous): bytea above is what makes "hash these bytes and compare"
-    -- true rather than aspirational.
+    -- could itself drift from what was actually persisted. With
+    -- documents_frozen_payload_sha256_matches below in place, this is
+    -- deliberately a statement about internal consistency only: a pure
+    -- function of frozen_payload's own stored bytes, so it proves this
+    -- hash is the one this payload actually hashes to, never that the
+    -- payload itself is what was actually submitted at issue time (a
+    -- caller that freezes and hashes the wrong bytes satisfies this
+    -- column pair and nothing here would ever detect it). bytea above is
+    -- still what makes "hash these bytes and compare" possible at all,
+    -- rather than impossible the way jsonb's own re-encoding would make
+    -- it; see documents_frozen_payload_sha256_matches's own comment for
+    -- why internal consistency, not provenance, is as far as a CHECK can
+    -- reach.
     --
     -- Nothing in this step's own scope (storage and calculation only, no
     -- HTTP, no rendering) actually renders a document, so nothing here
@@ -283,16 +289,30 @@ CREATE POLICY documents_tenant_isolation ON documents
 -- (without it, the table owner is exempt from the policy; with it, the
 -- owner is scoped by the policy too), and a trigger is a wholly
 -- separate mechanism a policy cannot touch either way. What actually
--- keeps this trigger from being sidestepped is that solobill_app (the
--- role docker-compose.yaml's "solobill" service and
--- charts/solobill/README.md's deployment both connect as) is not this
--- table's owner and is NOSUPERUSER: disabling a trigger
--- (ALTER TABLE ... DISABLE TRIGGER) or skipping it
+-- keeps this trigger from being sidestepped is that the role running
+-- application traffic is not this table's owner and is NOSUPERUSER:
+-- disabling a trigger (ALTER TABLE ... DISABLE TRIGGER) or skipping it
 -- (SET session_replication_role = 'replica') both require owning the
--- table or being a superuser, neither of which solobill_app ever is.
--- The migration role that creates and owns this table (solobill_super
--- in docker-compose.yaml) could do either, but that role only ever
--- runs db/migrations itself, never application traffic.
+-- table or being a superuser, neither of which that role may ever be.
+--
+-- That holds under docker-compose.yaml's own local-dev setup, where
+-- solobill_app (the "solobill" service's role) never runs db/migrations
+-- and so never owns tenants, accounts, invites, documents or
+-- document_lines; solobill_super, the role that does own them, only
+-- ever runs db/migrations itself, never application traffic.
+--
+-- It does NOT hold under charts/solobill/README.md's own default
+-- deployment shape: by default, the chart's migration Job and its
+-- Deployment authenticate as the exact same role (config.databaseUser),
+-- which therefore owns every table db/migrations creates, this one
+-- included, and so CAN run ALTER TABLE documents DISABLE TRIGGER
+-- documents_block_issued_mutation and then mutate or delete an issued
+-- invoice outright. See README.md's "One role, or two" section for the
+-- two-role split (migrationJob.databaseUser set to a role distinct from
+-- config.databaseUser) that restores the guarantee this comment
+-- describes, and for why provisioning that split is the operator's own
+-- responsibility, not something this migration or that chart can
+-- enforce from here.
 --
 -- Deliberately blocks every UPDATE and DELETE once OLD.state = 'issued',
 -- with no column-by-column exception: nothing in this step's scope (no

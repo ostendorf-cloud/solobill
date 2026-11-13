@@ -53,20 +53,43 @@ exact same role, configured once by `config.databaseUser` and
 `existingSecret.databasePasswordKey`. A correctly-provisioned `NOSUPERUSER NOBYPASSRLS` role
 is still fully bound by `FORCE ROW LEVEL SECURITY` for every ordinary application query:
 ownership is irrelevant to `FORCE`, only a superuser or a `BYPASSRLS` role bypasses it. But
-that same role, because it is the one that ran `db/migrations` and therefore OWNS `tenants`,
-`accounts` and `invites`, can also run `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY` or drop
-the policy outright: PostgreSQL's own `ALTER TABLE` reference documents ownership, not
-`FORCE`, as what that command checks. A single role that both migrates and serves the
-application therefore accepts a weaker boundary than `docker-compose.yaml`'s own two-role
-split: a compromised or buggy application process could not just read another tenant's rows
-through a live connection, but could also switch the protection off for every tenant at once,
-by virtue of owning the tables.
+that same role, because it is the one that ran `db/migrations` and therefore OWNS every table
+it creates, can also run `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY` or drop the policy
+outright: PostgreSQL's own `ALTER TABLE` reference documents ownership, not `FORCE`, as what
+that command checks. A single role that both migrates and serves the application therefore
+accepts a weaker boundary than `docker-compose.yaml`'s own two-role split: a compromised or
+buggy application process could not just read another tenant's rows through a live
+connection, but could also switch the protection off for every tenant at once, by virtue of
+owning the tables.
+
+The same ownership also reaches further than row level security. `documents` and
+`document_lines` each carry a `BEFORE UPDATE OR DELETE`/`BEFORE INSERT OR UPDATE OR DELETE`
+trigger (`documents_block_issued_mutation`, `document_lines_block_issued_document_mutation`)
+that is the actual mechanism keeping an issued invoice from ever being changed again; see
+`db/migrations`' own comments on both for the full reasoning. Disabling a trigger
+(`ALTER TABLE ... DISABLE TRIGGER`) needs the same thing bypassing row level security's
+`FORCE` does: table ownership or superuser. Under this chart's single-role default, the role
+owns `documents` and `document_lines` too, so it can disable either trigger and then mutate
+or delete an issued invoice outright, the tax document this application exists to never let
+anyone touch again once issued. This is a strictly worse failure mode than the row-level-
+security one above: a buggy or compromised application process does not even need a second
+step (switching a policy off first) to reach it, one `ALTER TABLE ... DISABLE TRIGGER` and one
+ordinary `UPDATE` do it directly.
 
 Set `migrationJob.databaseUser` (and, if its password lives under a different key in the same
 Secret, `existingSecret.migrationDatabasePasswordKey`) to a separate role the application
 itself never authenticates as, to get the stronger, two-role boundary instead, mirroring
 `docker-compose.yaml`'s own bootstrap-superuser-for-migrations-only split. Left empty, the
-default, this chart keeps the single-role behaviour above.
+default, this chart keeps the single-role behaviour above, for both row level security and
+the two immutability triggers.
+
+This chart has no way to provision that second role itself, the same reason the
+"Prerequisites" section above cannot enforce `config.databaseUser`'s own `NOSUPERUSER
+NOBYPASSRLS` requirement from here: creating the role, granting it exactly what
+`db/migrations`'s own grants document, and keeping `config.databaseUser` from ever being made
+its owner are all the cluster operator's responsibility. Setting `migrationJob.databaseUser`
+only tells this chart's own templates which role to run the migration Job as; it is not itself
+the guarantee, provisioning the role correctly is.
 
 ## Migrations
 
