@@ -182,25 +182,86 @@ func TestLoad(t *testing.T) {
 			t.Errorf("RateLimitPer = %s, want %s", cfg.RateLimitPer, defaultRateLimitPer)
 		}
 	})
-}
 
-func TestConfigDatabaseDSN(t *testing.T) {
-	t.Parallel()
+	t.Run("seed owner both empty is a noop by default", func(t *testing.T) {
+		t.Parallel()
 
-	cfg := Config{
-		DatabaseURL:      "postgres://localhost:5432/solobill?sslmode=disable",
-		DatabaseUser:     "solobill",
-		DatabasePassword: "s3cret",
-	}
+		getenv := validEnv(t, nil)
 
-	dsn, err := cfg.DatabaseDSN()
-	if err != nil {
-		t.Fatalf("DatabaseDSN() error = %v", err)
-	}
-	want := "postgres://solobill:s3cret@localhost:5432/solobill?sslmode=disable"
-	if dsn != want {
-		t.Errorf("DatabaseDSN() = %q, want %q", dsn, want)
-	}
+		cfg, err := Load(getenv)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.SeedOwnerEmail != "" || cfg.SeedOwnerOIDCSubject != "" {
+			t.Error("SeedOwnerEmail or SeedOwnerOIDCSubject is set despite neither being configured")
+		}
+	})
+
+	t.Run("seed owner subject without email is an error", func(t *testing.T) {
+		t.Parallel()
+
+		getenv := validEnv(t, map[string]string{
+			"SEED_TENANT_SLUG":        "acme",
+			"SEED_TENANT_NAME":        "Acme",
+			"SEED_OWNER_OIDC_SUBJECT": "f:realm:owner-subject",
+		})
+
+		_, err := Load(getenv)
+		if err == nil {
+			t.Fatal("Load() error = nil, want an error for SEED_OWNER_OIDC_SUBJECT without SEED_OWNER_EMAIL")
+		}
+	})
+
+	t.Run("seed owner email without subject is an error", func(t *testing.T) {
+		t.Parallel()
+
+		getenv := validEnv(t, map[string]string{
+			"SEED_TENANT_SLUG": "acme",
+			"SEED_TENANT_NAME": "Acme",
+			"SEED_OWNER_EMAIL": "owner@acme.example",
+		})
+
+		_, err := Load(getenv)
+		if err == nil {
+			t.Fatal("Load() error = nil, want an error for SEED_OWNER_EMAIL without SEED_OWNER_OIDC_SUBJECT")
+		}
+	})
+
+	t.Run("seed owner subject without a seed tenant is an error", func(t *testing.T) {
+		t.Parallel()
+
+		getenv := validEnv(t, map[string]string{
+			"SEED_OWNER_EMAIL":        "owner@acme.example",
+			"SEED_OWNER_OIDC_SUBJECT": "f:realm:owner-subject",
+		})
+
+		_, err := Load(getenv)
+		if err == nil {
+			t.Fatal("Load() error = nil, want an error for SEED_OWNER_OIDC_SUBJECT with no SEED_TENANT_SLUG")
+		}
+	})
+
+	t.Run("seed owner with every field set", func(t *testing.T) {
+		t.Parallel()
+
+		getenv := validEnv(t, map[string]string{
+			"SEED_TENANT_SLUG":        "acme",
+			"SEED_TENANT_NAME":        "Acme",
+			"SEED_OWNER_EMAIL":        "owner@acme.example",
+			"SEED_OWNER_OIDC_SUBJECT": "f:realm:owner-subject",
+		})
+
+		cfg, err := Load(getenv)
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.SeedOwnerEmail != "owner@acme.example" {
+			t.Errorf("SeedOwnerEmail = %q", cfg.SeedOwnerEmail)
+		}
+		if cfg.SeedOwnerOIDCSubject != "f:realm:owner-subject" {
+			t.Errorf("SeedOwnerOIDCSubject = %q", cfg.SeedOwnerOIDCSubject)
+		}
+	})
 }
 
 func TestSecretValue(t *testing.T) {
@@ -227,6 +288,16 @@ func TestSecretValue(t *testing.T) {
 			env:     map[string]string{"SECRET": "direct-value", "SECRET_FILE": "placeholder"},
 			wantErr: true,
 		},
+		{
+			// The direct value and a file's content must be trimmed
+			// identically: strings.TrimRight(value, "\r\n") only, never
+			// strings.TrimSpace, regardless of which source it came
+			// from. A direct value differs from a file's content only
+			// in where it is read from, not in how it is trimmed.
+			name: "direct value with a trailing CRLF is trimmed the same way a file's content would be",
+			env:  map[string]string{"SECRET": "direct-value\r\n"},
+			want: "direct-value",
+		},
 	}
 
 	for _, tt := range tests {
@@ -244,6 +315,35 @@ func TestSecretValue(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("whitespace-only direct value together with _FILE set is still both-set", func(t *testing.T) {
+		t.Parallel()
+
+		// A real, readable file: the old implementation, which decided
+		// "is the direct value set" from its trimmed value, would see
+		// direct == "" and fall through to reading this file
+		// successfully, answering its content with no error at all.
+		// Deciding "set" from the raw value instead, the fix here, must
+		// refuse this as both-set.
+		dir := t.TempDir()
+		path := filepath.Join(dir, "secret")
+		writeFile(t, path, "file-value")
+
+		getenv := func(key string) string {
+			switch key {
+			case "SECRET":
+				return "   "
+			case "SECRET_FILE":
+				return path
+			default:
+				return ""
+			}
+		}
+
+		if _, err := secretValue(getenv, "SECRET"); err == nil {
+			t.Fatal("secretValue() error = nil, want an error for a whitespace-only direct value together with _FILE set")
+		}
+	})
 
 	t.Run("file content trimmed", func(t *testing.T) {
 		t.Parallel()

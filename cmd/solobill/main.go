@@ -51,12 +51,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	dsn, err := cfg.DatabaseDSN()
-	if err != nil {
-		return fmt.Errorf("solobill: %w", err)
-	}
-
-	pool, err := postgres.NewPool(ctx, dsn)
+	pool, err := postgres.NewPoolWithCredentials(ctx, cfg.DatabaseURL, cfg.DatabaseUser, cfg.DatabasePassword)
 	if err != nil {
 		return fmt.Errorf("solobill: open database: %w", err)
 	}
@@ -65,6 +60,10 @@ func run() error {
 	store := postgres.NewStore(pool)
 
 	if err := seedTenant(ctx, store, cfg.SeedTenantSlug, cfg.SeedTenantName); err != nil {
+		return fmt.Errorf("solobill: %w", err)
+	}
+
+	if err := seedOwnerAccount(ctx, store, cfg.SeedTenantSlug, cfg.SeedOwnerEmail, cfg.SeedOwnerOIDCSubject); err != nil {
 		return fmt.Errorf("solobill: %w", err)
 	}
 
@@ -90,7 +89,7 @@ func run() error {
 	healthRegistry := health.New()
 	healthRegistry.Add("database", 0, pool.Ping)
 
-	oidcHandlers, err := buildOIDCHandlers(cfg, store, loginCodec, sessions)
+	oidcHandlers, err := buildOIDCHandlers(cfg, store, invites, loginCodec, sessions)
 	if err != nil {
 		return fmt.Errorf("solobill: %w", err)
 	}
@@ -145,6 +144,7 @@ func run() error {
 func buildOIDCHandlers(
 	cfg config.Config,
 	store auth.Store,
+	invites *auth.InviteManager,
 	loginCodec *session.Codec,
 	sessions *session.Manager,
 ) (*oidc.Handlers, error) {
@@ -172,7 +172,9 @@ func buildOIDCHandlers(
 		return tenant.ID, nil
 	}
 
-	handlers, err := auth.NewOIDCHandlers(provider, loginCodec, sessions, store, resolveTenant, auth.OIDCHandlerOptions{})
+	handlers, err := auth.NewOIDCHandlers(provider, loginCodec, sessions, store, invites, resolveTenant, auth.OIDCHandlerOptions{
+		AllowPlainHTTP: cfg.SessionAllowPlainHTTP,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("build oidc handlers: %w", err)
 	}
@@ -226,6 +228,88 @@ func seedTenant(ctx context.Context, store tenantSeeder, slug, name string) erro
 
 	if _, err := store.Tenants().Create(ctx, storage.Tenant{Slug: slug, Name: name}); err != nil {
 		return fmt.Errorf("seed tenant %q: %w", slug, err)
+	}
+
+	return nil
+}
+
+// ownerSeeder is what seedOwnerAccount needs from a storage backend: a
+// strict subset of internal/auth.Store, the same reasoning tenantSeeder
+// above gives for not reusing that interface wholesale. A test fake for
+// it needs no InviteRepository at all, since seedOwnerAccount never
+// touches one.
+type ownerSeeder interface {
+	storage.TenantScope
+
+	Tenants() storage.TenantRepository
+	Accounts() storage.AccountRepository
+}
+
+// seedOwnerAccount creates the first owner account for tenantSlug,
+// bound to subject, if subject is empty (the production default) or if
+// an account for this subject or this email already exists.
+//
+// internal/auth's own admission gate (see its package doc's "OIDC on a
+// first-time subject" section) requires an existing invite or an
+// already-provisioned account before any OIDC login succeeds, and both
+// of those in turn require an existing owner: an invite needs one to
+// create it, and there is no account to log in with yet either. A brand
+// new instance has neither, so this is the one exception, scoped to
+// solobill's own startup code and run by whoever deploys it, never
+// reachable over the network: it provisions the account directly from
+// SEED_OWNER_EMAIL/SEED_OWNER_OIDC_SUBJECT (see internal/config), the
+// same way seedTenant above already seeds the first tenant from its own
+// configuration.
+//
+// It never overwrites or rebinds an existing row: an account already
+// bound to subject is left alone (already provisioned, nothing to do),
+// and an account that already owns email but is bound to a different
+// subject, or to none, is also left alone rather than rebound to
+// subject here. That second case is a configuration mismatch (the
+// deployer's SEED_OWNER_OIDC_SUBJECT no longer matches what was seeded
+// last time) for a human to resolve, not something startup silently
+// fixes by rebinding an account's identity out from under it, exactly
+// the property the vulnerability this issue fixes is built around: see
+// internal/auth's package doc.
+func seedOwnerAccount(ctx context.Context, store ownerSeeder, tenantSlug, email, subject string) error {
+	if subject == "" {
+		return nil
+	}
+
+	tenant, err := store.Tenants().FindBySlug(ctx, tenantSlug)
+	if err != nil {
+		return fmt.Errorf("seed owner account: find tenant %q: %w", tenantSlug, err)
+	}
+
+	err = store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
+		if _, err := store.Accounts().FindByOIDCSubject(ctx, subject); err == nil {
+			return nil
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			return fmt.Errorf("look up account by oidc subject: %w", err)
+		}
+
+		if _, err := store.Accounts().FindByEmail(ctx, email); err == nil {
+			return nil
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			return fmt.Errorf("look up account by email: %w", err)
+		}
+
+		ownerSubject := subject
+
+		if _, err := store.Accounts().Create(ctx, storage.Account{
+			TenantID:    tenant.ID,
+			Email:       email,
+			OIDCSubject: &ownerSubject,
+			Role:        storage.AccountRoleOwner,
+			Status:      storage.AccountStatusActive,
+		}); err != nil {
+			return fmt.Errorf("create account: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("seed owner account %q: %w", email, err)
 	}
 
 	return nil

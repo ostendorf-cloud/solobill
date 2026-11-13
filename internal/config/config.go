@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -141,6 +140,21 @@ type Config struct {
 	// create one through the API without a tenant to belong to.
 	SeedTenantSlug string
 	SeedTenantName string
+
+	// SeedOwnerEmail and SeedOwnerOIDCSubject name the first owner account
+	// cmd/solobill creates for SeedTenantSlug on startup if neither an
+	// account for this subject nor one for this email already exists (see
+	// cmd/solobill's seedOwnerAccount). internal/auth's OIDC admission
+	// gate requires an existing invite or an already-provisioned account
+	// before any OIDC login succeeds, and a brand new instance has
+	// neither: there is no owner yet to create an invite, this is the
+	// exception that gets one. Both empty, the default, is a no-op.
+	// Setting one without the other, or setting SeedOwnerOIDCSubject
+	// without SeedTenantSlug, is an error: seeding an owner with no
+	// tenant to belong to is a configuration mistake, not a request this
+	// accepts.
+	SeedOwnerEmail       string
+	SeedOwnerOIDCSubject string
 }
 
 // Load reads every setting through getenv, collecting every problem into
@@ -239,6 +253,15 @@ func Load(getenv func(string) string) (Config, error) {
 		fail(errors.New("SEED_TENANT_NAME: is required when SEED_TENANT_SLUG is set"))
 	}
 
+	cfg.SeedOwnerEmail = l.String("SEED_OWNER_EMAIL", "")
+	cfg.SeedOwnerOIDCSubject = l.String("SEED_OWNER_OIDC_SUBJECT", "")
+	if (cfg.SeedOwnerEmail == "") != (cfg.SeedOwnerOIDCSubject == "") {
+		fail(errors.New("SEED_OWNER_EMAIL and SEED_OWNER_OIDC_SUBJECT must either both be set or both be empty"))
+	}
+	if cfg.SeedOwnerOIDCSubject != "" && cfg.SeedTenantSlug == "" {
+		fail(errors.New("SEED_TENANT_SLUG: is required when SEED_OWNER_OIDC_SUBJECT is set"))
+	}
+
 	if err := errors.Join(append(problems, l.Err())...); err != nil {
 		return Config{}, fmt.Errorf("config: load: %w", err)
 	}
@@ -246,36 +269,30 @@ func Load(getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
-// DatabaseDSN assembles the single connection string pgx needs from
-// DatabaseURL, DatabaseUser and DatabasePassword: the three separate
-// configuration inputs the issue's own framing describes ("the chart takes
-// a connection URL, user and password as configuration"), inserted into the
-// URL by this application rather than carried as three different spellings
-// of one DSN from the outside.
-func (c Config) DatabaseDSN() (string, error) {
-	u, err := url.Parse(c.DatabaseURL)
-	if err != nil {
-		return "", fmt.Errorf("config: database url: %w", err)
-	}
-
-	u.User = url.UserPassword(c.DatabaseUser, c.DatabasePassword)
-
-	return u.String(), nil
-}
-
-// secretValue resolves one configuration value that may be a secret: either
-// name's own value, or the trimmed content of the file name+"_FILE" points
-// at. Reproduced exactly from ostendorf.tech's own secretValue; see the
-// package doc for why this, and not envconf.Loader.Secret, is used for
-// every secret field here.
+// secretValue resolves one configuration value that may be a secret:
+// either name's own value, or the content of the file name+"_FILE"
+// points at. Based on ostendorf.tech's own secretValue; see the package
+// doc for why this, and not envconf.Loader.Secret, is used for every
+// secret field here.
+//
+// Whether a source counts as "set" is decided from its raw, untrimmed
+// value, so a whitespace-only direct value still counts as set for the
+// both-set-is-an-error check below, rather than silently losing to its
+// _FILE twin. The file path itself is trimmed with strings.TrimSpace
+// before it is opened (a path is not a secret, trimming it is expected);
+// the secret value itself, whichever source it came from, is trimmed
+// identically, with strings.TrimRight(value, "\r\n") only, so the same
+// secret resolves to the same value regardless of which path carried it.
 func secretValue(resolved func(string) string, name string) (string, error) {
-	direct := strings.TrimSpace(resolved(name))
-	filePath := strings.TrimSpace(resolved(name + "_FILE"))
+	directRaw := resolved(name)
+	filePathRaw := resolved(name + "_FILE")
 
 	switch {
-	case direct != "" && filePath != "":
+	case directRaw != "" && filePathRaw != "":
 		return "", fmt.Errorf("%s and %s_FILE are both set, set only one", name, name)
-	case filePath != "":
+	case filePathRaw != "":
+		filePath := strings.TrimSpace(filePathRaw)
+
 		raw, err := os.ReadFile(filePath)
 		if err != nil {
 			return "", fmt.Errorf("%s_FILE: read %s: %w", name, filePath, err)
@@ -283,7 +300,7 @@ func secretValue(resolved func(string) string, name string) (string, error) {
 
 		return strings.TrimRight(string(raw), "\r\n"), nil
 	default:
-		return direct, nil
+		return strings.TrimRight(directRaw, "\r\n"), nil
 	}
 }
 

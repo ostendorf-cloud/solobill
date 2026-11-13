@@ -14,13 +14,15 @@
 // Two chains, not one, the same shape govue's own example application
 // documents and that internal/httpapi's task description reproduces
 // verbatim: an outer chain wrapping the whole mux (Recover, RequestID, the
-// security headers, the HTTP metrics, the access log) and a per-route chain
-// applied to every handler the mux dispatches to (CORS when configured,
-// the rate limiter on the two brute-force-sensitive routes, the CSRF
-// protector on every route that is not a GET-only one). Health and metrics
-// are mounted bare, through neither chain: a load balancer polling /healthz
-// must never be rate limited or refused for a missing CSRF token, and a
-// scrape must never wait behind either.
+// security headers, the HTTP metrics, the access log) and one per-route
+// chain applied to every handler the mux dispatches to (CORS when
+// configured, the rate limiter, then the CSRF protector, in that order:
+// see govue's example/app.go's own handler method). Every route goes
+// through the same chain; there is no second, tighter bucket, since every
+// route shares one rateLimit.Limiter instance regardless. Health and
+// metrics are mounted bare, through neither chain: a load balancer
+// polling /healthz must never be rate limited or refused for a missing
+// CSRF token, and a scrape must never wait behind either.
 //
 // # Tenant resolution for local login and invite accept
 //
@@ -37,6 +39,13 @@
 // internal/config's package doc and internal/auth's package doc for why a
 // tenant slug carried on the callback request itself is not an option this
 // milestone has.
+//
+// POST /api/v1/invites/oidc/start is the one exception: it takes a tenant
+// slug and an invite token in its body, the same as acceptInviteRequest,
+// and signs them into a short lived cookie (auth.StartOIDCInviteAccept)
+// the OIDC callback reads back once the browser returns from the
+// identity provider; see handleInviteOIDCStart and
+// auth.NewOIDCHandlers's own doc for the rest of that flow.
 package httpapi
 
 import (
@@ -243,24 +252,19 @@ func NewHandler(d Deps) (http.Handler, error) {
 		local:            d.LocalAuth,
 		invites:          d.Invites,
 		defaultInviteTTL: inviteTTL,
+		loginCodec:       d.LoginCodec,
+		allowPlainHTTP:   d.AllowPlainHTTP,
 	}
 
-	// route is the per-handler chain, outermost first: CORS (when
-	// configured) then the CSRF protector. limited additionally runs the
-	// rate limiter, between the two, for the brute-force-sensitive routes.
-	// Both must run on the handler the mux dispatches to, not in the outer
-	// chain: a refusal answered ahead of the mux would be logged and
-	// counted against "unmatched" instead of the real route. See
-	// middleware.RateLimit's and metrics.HTTP.Middleware's own doc
-	// comments, and govue's example/ for the canonical order this
-	// reproduces.
+	// route is the one per-handler chain, outermost first: CORS (when
+	// configured), the rate limiter, then the CSRF protector, applied to
+	// every route alike. It must run on the handler the mux dispatches
+	// to, not in the outer chain: a refusal answered ahead of the mux
+	// would be logged and counted against "unmatched" instead of the
+	// real route. See middleware.RateLimit's and metrics.HTTP.Middleware's
+	// own doc comments, and govue's example/app.go for the canonical
+	// order this reproduces.
 	route := func(h http.Handler) http.Handler {
-		mws := corsMiddleware(cors)
-		mws = append(mws, protector.Middleware)
-
-		return middleware.Chain(h, mws...)
-	}
-	limited := func(h http.Handler) http.Handler {
 		mws := corsMiddleware(cors)
 		mws = append(mws, rateLimit.Middleware, protector.Middleware)
 
@@ -272,16 +276,17 @@ func NewHandler(d Deps) (http.Handler, error) {
 	d.HealthRegistry.Handle(mux)
 	mux.Handle("GET /metrics", metricsHandler)
 
-	mux.Handle("POST /api/v1/auth/login", limited(api.Handle(a.handleLogin)))
+	mux.Handle("POST /api/v1/auth/login", route(api.Handle(a.handleLogin)))
 	mux.Handle("POST /api/v1/auth/logout", route(api.Handle(a.handleLogout)))
 	mux.Handle("GET /api/v1/me", route(api.Handle(a.handleMe)))
 	mux.Handle("POST /api/v1/invites", route(api.Handle(a.handleCreateInvite)))
-	mux.Handle("GET /api/v1/invites/totp-secret", route(api.Handle(a.handleInviteTOTPSecret)))
-	mux.Handle("POST /api/v1/invites/accept", limited(api.Handle(a.handleAcceptInvite)))
+	mux.Handle("POST /api/v1/invites/totp-secret", route(api.Handle(a.handleInviteTOTPSecret)))
+	mux.Handle("POST /api/v1/invites/accept", route(api.Handle(a.handleAcceptInvite)))
 
 	if d.OIDCHandlers != nil {
 		mux.Handle("GET "+oidcLoginPath, route(d.OIDCHandlers.Login()))
 		mux.Handle("GET "+oidcCallbackPath, route(d.OIDCHandlers.Callback()))
+		mux.Handle("POST /api/v1/invites/oidc/start", route(api.Handle(a.handleInviteOIDCStart)))
 	}
 
 	// The SPA fallback. It answers an unmatched /api/ path with the same
@@ -327,4 +332,11 @@ type app struct {
 	invites *auth.InviteManager
 
 	defaultInviteTTL time.Duration
+
+	// loginCodec and allowPlainHTTP back handleInviteOIDCStart's pending-
+	// invite cookie (auth.StartOIDCInviteAccept): nil loginCodec, exactly
+	// like Deps.LoginCodec itself, means OIDC is disabled, and that
+	// handler is not mounted in that case either.
+	loginCodec     *session.Codec
+	allowPlainHTTP bool
 }

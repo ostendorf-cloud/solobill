@@ -221,55 +221,89 @@ func (a *app) handleCreateInvite(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
-// inviteTOTPSecretResponse is what GET /api/v1/invites/totp-secret answers.
+// inviteTOTPSecretRequest is handleInviteTOTPSecret's body: the same two
+// fields acceptInviteRequest already carries, resolved the same way.
+type inviteTOTPSecretRequest struct {
+	TenantSlug string `json:"tenant_slug"`
+	Token      string `json:"token"`
+}
+
+// inviteTOTPSecretResponse is what POST /api/v1/invites/totp-secret answers.
 type inviteTOTPSecretResponse struct {
 	Secret          string `json:"secret"`
 	ProvisioningURI string `json:"provisioning_uri"`
 }
 
-// inviteTOTPIssuer names this application in the QR code an authenticator
-// app shows next to the enrolled entry.
-const inviteTOTPIssuer = "solobill"
-
-// handleInviteTOTPSecret generates a fresh TOTP secret and its provisioning
-// URI, for an invitee enrolling a second factor before accepting their
-// invite.
+// handleInviteTOTPSecret generates a fresh TOTP secret for the invite the
+// request names, persists it on that invite's own row
+// (auth.InviteManager.IssueTOTPSecret), and returns it along with its
+// provisioning URI, for an invitee enrolling a second factor before
+// accepting their invite.
 //
-// This is the simpler of the two flows the issue's plan leaves open (see
-// its own text on the invite-accept endpoint): nothing is persisted here,
-// so this endpoint needs no authentication and no tenant at all. The
-// secret this call hands back is only real once the invitee's authenticator
-// app and this same value both reach handleAcceptInvite together: that call
-// is what confirms totp_code against totp_secret and, only on a match,
-// creates the account. An invitee who never finishes enrolling has created
-// nothing and leaked nothing by having requested a secret.
+// This call now has a real side effect, unlike the version it replaces:
+// it persists a secret rather than only generating one, which is why it
+// is a POST, not a GET, and why it needs the invite's own tenant and
+// token to know which invite to attach the secret to; handleAcceptInvite
+// later verifies totp_code against that same, server-held secret, never
+// against anything the client supplies. An invitee who never finishes
+// enrolling has created no account and leaked nothing by having
+// requested a secret; calling this again before accepting simply
+// reissues and overwrites it, which is safe if the invitee reloads the
+// enrolment page.
 func (a *app) handleInviteTOTPSecret(w http.ResponseWriter, r *http.Request) error {
-	secret, err := auth.GenerateTOTPSecret()
+	var body inviteTOTPSecretRequest
+	if err := api.Decode(r, &body); err != nil {
+		return err
+	}
+	if body.TenantSlug == "" {
+		return api.Invalid("tenant_slug must not be empty")
+	}
+
+	tenant, err := a.store.Tenants().FindBySlug(r.Context(), body.TenantSlug)
 	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return api.NotFound("unknown tenant")
+		}
+
 		return api.Internal(err)
 	}
 
-	accountName := r.URL.Query().Get("email")
-	if accountName == "" {
-		accountName = "invitee"
+	secret, provisioningURI, err := a.invites.IssueTOTPSecret(r.Context(), tenant.ID, body.Token)
+	if err != nil {
+		if errors.Is(err, auth.ErrInviteInvalid) {
+			return api.Invalid("invite token is invalid, expired or already used")
+		}
+
+		return api.Internal(err)
 	}
 
 	return api.Write(w, http.StatusOK, inviteTOTPSecretResponse{
 		Secret:          secret,
-		ProvisioningURI: auth.TOTPProvisioningURI(secret, accountName, inviteTOTPIssuer),
+		ProvisioningURI: provisioningURI,
 	})
 }
 
+// minInvitePasswordLength and maxInvitePasswordLength bound the password
+// an invite-accept request may set. The minimum, 12, is a sensible
+// default for an owner or member account created through an invite,
+// stronger than NIST SP 800-63B's bare minimum of 8. The maximum, 128, is
+// generous for a real passphrase and bounds the argon2id hashing cost
+// this otherwise unauthenticated route can be made to pay per request.
+const (
+	minInvitePasswordLength = 12
+	maxInvitePasswordLength = 128
+)
+
 // acceptInviteRequest is handleAcceptInvite's body. TenantSlug is this
 // request's own tenant resolution, the same call loginRequest makes: see
-// the package doc. TOTPSecret is the value a prior call to
-// handleInviteTOTPSecret already handed the invitee; TOTPCode is what their
+// the package doc. There is no totp_secret field: the secret is
+// server-owned, issued by a prior call to handleInviteTOTPSecret and
+// stored on the invite itself; TOTPCode is only what the invitee's
 // authenticator app now computes from it.
 type acceptInviteRequest struct {
 	TenantSlug string `json:"tenant_slug"`
 	Token      string `json:"token"`
 	Password   string `json:"password"`
-	TOTPSecret string `json:"totp_secret"`
 	TOTPCode   string `json:"totp_code"`
 }
 
@@ -291,6 +325,13 @@ func (a *app) handleAcceptInvite(w http.ResponseWriter, r *http.Request) error {
 		return api.Invalid("tenant_slug must not be empty")
 	}
 
+	if len(body.Password) < minInvitePasswordLength {
+		return api.Invalid(fmt.Sprintf("password must be at least %d characters", minInvitePasswordLength))
+	}
+	if len(body.Password) > maxInvitePasswordLength {
+		return api.Invalid(fmt.Sprintf("password must be at most %d characters", maxInvitePasswordLength))
+	}
+
 	tenant, err := a.store.Tenants().FindBySlug(r.Context(), body.TenantSlug)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
@@ -301,11 +342,10 @@ func (a *app) handleAcceptInvite(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	account, err := a.invites.AcceptInvite(r.Context(), auth.AcceptInviteParams{
-		TenantID:   tenant.ID,
-		RawToken:   body.Token,
-		Password:   body.Password,
-		TOTPSecret: body.TOTPSecret,
-		TOTPCode:   body.TOTPCode,
+		TenantID: tenant.ID,
+		RawToken: body.Token,
+		Password: body.Password,
+		TOTPCode: body.TOTPCode,
 	})
 	if err != nil {
 		switch {
@@ -321,6 +361,65 @@ func (a *app) handleAcceptInvite(w http.ResponseWriter, r *http.Request) error {
 	identity := auth.IdentityFromAccount(account, "", nil)
 	if _, err := a.sessions.Start(r.Context(), w, identity.Session()); err != nil {
 		return api.Internal(fmt.Errorf("httpapi: start session: %w", err))
+	}
+
+	api.NoContent(w)
+
+	return nil
+}
+
+// inviteOIDCStartRequest is handleInviteOIDCStart's body: the same two
+// fields inviteTOTPSecretRequest and acceptInviteRequest already carry,
+// resolved the same way.
+type inviteOIDCStartRequest struct {
+	TenantSlug string `json:"tenant_slug"`
+	Token      string `json:"token"`
+}
+
+// handleInviteOIDCStart checks that the invite the request names is
+// worth sending a browser to the identity provider for
+// (auth.InviteManager.PeekInvite, advisory only) and, if so, signs it
+// into the pending-invite cookie (auth.StartOIDCInviteAccept). The real
+// redemption happens later, atomically, inside the OIDC callback
+// (auth.NewOIDCHandlers's StartSession), once the provider has actually
+// vouched for a subject; nothing here marks the invite used.
+//
+// A successful response does not itself redirect anywhere: the caller
+// (the invite-accept page) follows it with a browser navigation to GET
+// /auth/oidc/login, which an XHR/fetch response cannot trigger on its
+// own.
+func (a *app) handleInviteOIDCStart(w http.ResponseWriter, r *http.Request) error {
+	if a.loginCodec == nil {
+		return api.NotFound("oidc is not configured")
+	}
+
+	var body inviteOIDCStartRequest
+	if err := api.Decode(r, &body); err != nil {
+		return err
+	}
+	if body.TenantSlug == "" {
+		return api.Invalid("tenant_slug must not be empty")
+	}
+
+	tenant, err := a.store.Tenants().FindBySlug(r.Context(), body.TenantSlug)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return api.NotFound("unknown tenant")
+		}
+
+		return api.Internal(err)
+	}
+
+	if err := a.invites.PeekInvite(r.Context(), tenant.ID, body.Token); err != nil {
+		if errors.Is(err, auth.ErrInviteInvalid) {
+			return api.Invalid("invite token is invalid, expired or already used")
+		}
+
+		return api.Internal(err)
+	}
+
+	if err := auth.StartOIDCInviteAccept(w, a.loginCodec, a.allowPlainHTTP, tenant.ID, body.Token); err != nil {
+		return api.Internal(err)
 	}
 
 	api.NoContent(w)

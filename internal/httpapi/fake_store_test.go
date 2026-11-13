@@ -145,6 +145,19 @@ func (r *fakeAccountRepository) FindByEmail(_ context.Context, email string) (st
 	return storage.Account{}, storage.ErrNotFound
 }
 
+func (r *fakeAccountRepository) FindByOIDCSubject(_ context.Context, subject string) (storage.Account, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+
+	for _, a := range r.s.accounts {
+		if a.OIDCSubject != nil && *a.OIDCSubject == subject {
+			return a, nil
+		}
+	}
+
+	return storage.Account{}, storage.ErrNotFound
+}
+
 func (r *fakeAccountRepository) List(_ context.Context) ([]storage.Account, error) {
 	r.s.mu.Lock()
 	defer r.s.mu.Unlock()
@@ -168,6 +181,8 @@ func (r *fakeAccountRepository) Update(_ context.Context, account storage.Accoun
 
 	existing.PasswordHash = account.PasswordHash
 	existing.TOTPSecret = account.TOTPSecret
+	existing.TOTPLastCounter = account.TOTPLastCounter
+	existing.OIDCSubject = account.OIDCSubject
 	existing.Role = account.Role
 	existing.Status = account.Status
 	existing.UpdatedAt = time.Now()
@@ -229,6 +244,28 @@ func (r *fakeInviteRepository) MarkUsed(_ context.Context, id uuid.UUID, usedAt 
 
 	used := usedAt
 	inv.UsedAt = &used
+	r.s.invites[id] = inv
+
+	return inv, nil
+}
+
+// SetTOTPSecret mirrors the real postgres repository's "WHERE used_at IS
+// NULL" guard, the same way MarkUsed does: already used fails with
+// storage.ErrConflict.
+func (r *fakeInviteRepository) SetTOTPSecret(_ context.Context, id uuid.UUID, secret string) (storage.Invite, error) {
+	r.s.mu.Lock()
+	defer r.s.mu.Unlock()
+
+	inv, ok := r.s.invites[id]
+	if !ok {
+		return storage.Invite{}, storage.ErrNotFound
+	}
+	if inv.UsedAt != nil {
+		return storage.Invite{}, storage.ErrConflict
+	}
+
+	value := secret
+	inv.TOTPSecret = &value
 	r.s.invites[id] = inv
 
 	return inv, nil
