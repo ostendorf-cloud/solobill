@@ -29,10 +29,34 @@ CREATE TABLE catalogue_items (
     -- EUR cents; a currency column would be a dimension this schema does
     -- not need yet. Per-line and per-document discounts, and per-rate
     -- VAT rounding, are a later migration's (document_lines) concern,
-    -- not this table's: this table only has to hold a precise price for
-    -- the current item, nothing about how that price is applied on a
-    -- document.
+    -- not this table's: the rounding and discount-allocation rules
+    -- themselves are now decided, in docs/concepts/solobill.md's
+    -- Rounding section, so that later migration implements a written
+    -- rule rather than inventing one on the spot. This table only has
+    -- to hold a precise price for the current item, nothing about how
+    -- that price is applied on a document.
     unit_price_cents bigint NOT NULL CHECK (unit_price_cents >= 0),
+    -- A controlled, small set rather than free text: a unit is rendered
+    -- directly on a tax-relevant document line ("3 x <unit>"), so
+    -- consistency matters the same way the SKU column's
+    -- case-insensitive uniqueness mattered for lookup consistency above;
+    -- free text invites drift ("Stk" vs "piece" vs "pieces") that a
+    -- later renderer would otherwise have to normalize itself. The three
+    -- values cover every case this catalogue has today: "piece" is the
+    -- common default for goods and flat-fee services, roughly 200
+    -- existing catalogue items being imported among them; "hour" and
+    -- "day" cover time-based billing, with "day" specifically what
+    -- eventory's day-rate hire needs (see the table comment above).
+    -- NOT NULL DEFAULT 'piece', not nullable: every existing or imported
+    -- item then defaults sensibly with zero data loss, and a raw-SQL
+    -- test INSERT that only cares about some other column can omit this
+    -- one entirely without tripping an unrelated NOT NULL violation.
+    -- Extending the CHECK's set later, should a fourth unit value turn
+    -- out to be needed, is a one-line ALTER TABLE ... DROP CONSTRAINT
+    -- ... ADD CONSTRAINT migration, the same cheap, additive class of
+    -- change adding this column itself is, unlike a missing column,
+    -- which would need a guess at backfilling roughly 200 rows.
+    unit text NOT NULL DEFAULT 'piece' CHECK (unit IN ('piece', 'hour', 'day')),
     -- Soft delete only, same reasoning as customers.deleted_at: a
     -- catalogue item is never hard deleted, because an issued document's
     -- frozen payload will eventually reference one by id (the documents
@@ -76,7 +100,11 @@ CREATE TABLE catalogue_items (
 -- accounts_tenant_id_email_lower_idx are: two SKUs differing only by
 -- case would be indistinguishable to the human typing them in. A plain
 -- UNIQUE table constraint cannot express the lower() expression or the
--- WHERE predicate, so this is a unique index instead.
+-- WHERE predicate, so this is a unique index instead. There is no
+-- restore path today (nothing clears deleted_at); if one is ever added,
+-- restoring a row whose SKU was since reused by a newer item will hit
+-- this index's unique violation (23505) and correctly fail rather than
+-- silently create a duplicate SKU.
 CREATE UNIQUE INDEX catalogue_items_tenant_id_sku_lower_idx ON catalogue_items (tenant_id, lower(sku)) WHERE sku IS NOT NULL AND deleted_at IS NULL;
 
 -- Row level security is the actual multi-tenancy guarantee: every query
