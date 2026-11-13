@@ -31,3 +31,30 @@ func TestNewPool_InvalidConnString(t *testing.T) {
 		})
 	}
 }
+
+// TestNewPoolWithCredentials_InvalidConnString mirrors
+// TestNewPool_InvalidConnString, for NewPoolWithCredentials: a malformed
+// database URL fails at pgxpool.ParseConfig, with no network attempt
+// needed, the same shape as the existing test above.
+func TestNewPoolWithCredentials_InvalidConnString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		databaseURL string
+	}{
+		{name: "not a connection string", databaseURL: "not a connection string"},
+		{name: "invalid port", databaseURL: "postgres://example.invalid:not-a-port/db"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewPoolWithCredentials(context.Background(), tt.databaseURL, "user", "password")
+			if err == nil {
+				t.Fatalf("NewPoolWithCredentials(%q) error = nil, want an error", tt.databaseURL)
+			}
+		})
+	}
+}

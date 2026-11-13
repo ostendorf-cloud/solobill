@@ -58,10 +58,20 @@ type Account struct {
 	Email        string
 	PasswordHash *string
 	TOTPSecret   *string
-	Role         AccountRole
-	Status       AccountStatus
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// TOTPLastCounter is the RFC 6238 counter the most recently accepted
+	// TOTP code matched, nil until a first successful login or invite
+	// acceptance. internal/auth.VerifyTOTPCode's caller refuses a code
+	// whose counter is not strictly greater than this, so the exact same
+	// code cannot be replayed.
+	TOTPLastCounter *int64
+	// OIDCSubject is the identity provider's stable subject claim this
+	// account is provisioned for, nil for a local-only account.
+	// internal/auth.ResolveOIDCIdentity matches on this, never on email.
+	OIDCSubject *string
+	Role        AccountRole
+	Status      AccountStatus
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Invite is a single-use, time-limited invitation to create an Account
@@ -79,4 +89,9 @@ type Invite struct {
 	UsedAt    *time.Time
 	CreatedBy *uuid.UUID
 	CreatedAt time.Time
+	// TOTPSecret is the server-generated TOTP secret this invite's
+	// enrolment step (internal/auth.InviteManager.IssueTOTPSecret) issued,
+	// nil until that step runs. AcceptInvite verifies the submitted code
+	// against this value, never against anything the client supplies.
+	TOTPSecret *string
 }

@@ -16,7 +16,7 @@ const createInvite = `-- name: CreateInvite :one
 
 INSERT INTO invites (tenant_id, email, role, token_hash, expires_at, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at
+RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret
 `
 
 type CreateInviteParams struct {
@@ -28,9 +28,12 @@ type CreateInviteParams struct {
 	CreatedBy pgtype.UUID
 }
 
-// Same reasoning as accounts.sql: every query here relies on the row
-// level security policy for its tenant isolation, not on a WHERE clause
-// repeating the tenant id.
+// Same reasoning as accounts.sql: tenant isolation here is two independent
+// layers, matching docs/concepts/solobill.md. Every query below names
+// tenant_id in its own WHERE clause (or, for CreateInvite, as a column
+// value) as the first, defense-in-depth layer; row level security (see
+// db/migrations) is the independent second layer, enforcing the same
+// scope below these queries regardless of what they ask for.
 func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Invite, error) {
 	row := q.db.QueryRow(ctx, createInvite,
 		arg.TenantID,
@@ -51,14 +54,15 @@ func (q *Queries) CreateInvite(ctx context.Context, arg CreateInviteParams) (Inv
 		&i.UsedAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.TotpSecret,
 	)
 	return i, err
 }
 
 const getInviteByID = `-- name: GetInviteByID :one
-SELECT id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at
+SELECT id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret
 FROM invites
-WHERE id = $1
+WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 `
 
 func (q *Queries) GetInviteByID(ctx context.Context, id uuid.UUID) (Invite, error) {
@@ -74,14 +78,15 @@ func (q *Queries) GetInviteByID(ctx context.Context, id uuid.UUID) (Invite, erro
 		&i.UsedAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.TotpSecret,
 	)
 	return i, err
 }
 
 const getInviteByTokenHash = `-- name: GetInviteByTokenHash :one
-SELECT id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at
+SELECT id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret
 FROM invites
-WHERE token_hash = $1
+WHERE token_hash = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 `
 
 func (q *Queries) GetInviteByTokenHash(ctx context.Context, tokenHash string) (Invite, error) {
@@ -97,6 +102,7 @@ func (q *Queries) GetInviteByTokenHash(ctx context.Context, tokenHash string) (I
 		&i.UsedAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.TotpSecret,
 	)
 	return i, err
 }
@@ -104,8 +110,8 @@ func (q *Queries) GetInviteByTokenHash(ctx context.Context, tokenHash string) (I
 const markInviteUsed = `-- name: MarkInviteUsed :one
 UPDATE invites
 SET used_at = $2
-WHERE id = $1 AND used_at IS NULL
-RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at
+WHERE id = $1 AND used_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret
 `
 
 type MarkInviteUsedParams struct {
@@ -134,6 +140,41 @@ func (q *Queries) MarkInviteUsed(ctx context.Context, arg MarkInviteUsedParams) 
 		&i.UsedAt,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.TotpSecret,
+	)
+	return i, err
+}
+
+const setInviteTOTPSecret = `-- name: SetInviteTOTPSecret :one
+UPDATE invites
+SET totp_secret = $2
+WHERE id = $1 AND used_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret
+`
+
+type SetInviteTOTPSecretParams struct {
+	ID         uuid.UUID
+	TotpSecret pgtype.Text
+}
+
+// SetInviteTOTPSecret is guarded by "AND used_at IS NULL", the same way
+// MarkInviteUsed is: a secret can never be attached to an invite that has
+// already been redeemed. internal/storage/postgres maps a zero-row
+// RETURNING here to storage.ErrConflict too, exactly like MarkUsed.
+func (q *Queries) SetInviteTOTPSecret(ctx context.Context, arg SetInviteTOTPSecretParams) (Invite, error) {
+	row := q.db.QueryRow(ctx, setInviteTOTPSecret, arg.ID, arg.TotpSecret)
+	var i Invite
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Email,
+		&i.Role,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.TotpSecret,
 	)
 	return i, err
 }

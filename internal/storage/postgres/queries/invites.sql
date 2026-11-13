@@ -1,21 +1,24 @@
--- Same reasoning as accounts.sql: every query here relies on the row
--- level security policy for its tenant isolation, not on a WHERE clause
--- repeating the tenant id.
+-- Same reasoning as accounts.sql: tenant isolation here is two independent
+-- layers, matching docs/concepts/solobill.md. Every query below names
+-- tenant_id in its own WHERE clause (or, for CreateInvite, as a column
+-- value) as the first, defense-in-depth layer; row level security (see
+-- db/migrations) is the independent second layer, enforcing the same
+-- scope below these queries regardless of what they ask for.
 
 -- name: CreateInvite :one
 INSERT INTO invites (tenant_id, email, role, token_hash, expires_at, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at;
+RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret;
 
 -- name: GetInviteByID :one
-SELECT id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at
+SELECT id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret
 FROM invites
-WHERE id = $1;
+WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid;
 
 -- name: GetInviteByTokenHash :one
-SELECT id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at
+SELECT id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret
 FROM invites
-WHERE token_hash = $1;
+WHERE token_hash = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid;
 
 -- MarkInviteUsed is guarded by "AND used_at IS NULL" so that two concurrent
 -- accept attempts for the same invite cannot both succeed: Postgres takes
@@ -29,5 +32,16 @@ WHERE token_hash = $1;
 -- name: MarkInviteUsed :one
 UPDATE invites
 SET used_at = $2
-WHERE id = $1 AND used_at IS NULL
-RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at;
+WHERE id = $1 AND used_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret;
+
+-- SetInviteTOTPSecret is guarded by "AND used_at IS NULL", the same way
+-- MarkInviteUsed is: a secret can never be attached to an invite that has
+-- already been redeemed. internal/storage/postgres maps a zero-row
+-- RETURNING here to storage.ErrConflict too, exactly like MarkUsed.
+--
+-- name: SetInviteTOTPSecret :one
+UPDATE invites
+SET totp_secret = $2
+WHERE id = $1 AND used_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+RETURNING id, tenant_id, email, role, token_hash, expires_at, used_at, created_by, created_at, totp_secret;

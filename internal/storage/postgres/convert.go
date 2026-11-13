@@ -29,6 +29,27 @@ func ptrToText(s *string) pgtype.Text {
 	return pgtype.Text{String: *s, Valid: true}
 }
 
+// int8ToPtr and ptrToInt8 convert between a nullable Postgres bigint
+// column (for example accounts.totp_last_counter) and an *int64.
+
+func int8ToPtr(i pgtype.Int8) *int64 {
+	if !i.Valid {
+		return nil
+	}
+
+	v := i.Int64
+
+	return &v
+}
+
+func ptrToInt8(i *int64) pgtype.Int8 {
+	if i == nil {
+		return pgtype.Int8{}
+	}
+
+	return pgtype.Int8{Int64: *i, Valid: true}
+}
+
 // uuidToPtr and ptrToUUID convert between a nullable Postgres uuid column
 // (for example invites.created_by) and a *uuid.UUID.
 

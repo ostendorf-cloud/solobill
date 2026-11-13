@@ -14,33 +14,41 @@ import (
 
 const createAccount = `-- name: CreateAccount :one
 
-INSERT INTO accounts (tenant_id, email, password_hash, totp_secret, role, status)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, tenant_id, email, password_hash, totp_secret, role, status, created_at, updated_at
+INSERT INTO accounts (tenant_id, email, password_hash, totp_secret, totp_last_counter, oidc_subject, role, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, tenant_id, email, password_hash, totp_secret, totp_last_counter, oidc_subject, role, status, created_at, updated_at
 `
 
 type CreateAccountParams struct {
-	TenantID     uuid.UUID
-	Email        string
-	PasswordHash pgtype.Text
-	TotpSecret   pgtype.Text
-	Role         string
-	Status       string
+	TenantID        uuid.UUID
+	Email           string
+	PasswordHash    pgtype.Text
+	TotpSecret      pgtype.Text
+	TotpLastCounter pgtype.Int8
+	OidcSubject     pgtype.Text
+	Role            string
+	Status          string
 }
 
-// Every query below runs inside a transaction a prior set_config call has
-// already scoped to one tenant (see postgres.Store.WithTenant). None of
-// them names tenant_id in a WHERE clause: that is deliberate, to prove
-// the point of this table's row level security policy rather than work
-// around it. A missing or wrong WHERE clause here cannot leak another
-// tenant's rows, because the database enforces the scope below these
-// queries regardless of what they ask for.
+// Tenant isolation here is two independent layers, matching
+// docs/concepts/solobill.md: every query below names tenant_id in its own
+// WHERE clause (or, for CreateAccount, as a column value), AND row level
+// security (see db/migrations) enforces the same scope below these
+// queries regardless of what they ask for. Neither layer is trusted alone:
+// a missing or wrong WHERE clause here is still caught by the database's
+// policy, and the policy itself is still a backstop, not the only check,
+// so a bug in it does not immediately leak another tenant's rows either.
+// The transaction these queries run in has already been scoped to one
+// tenant via set_config('app.tenant_id', ...) by postgres.Store.WithTenant;
+// current_setting(..., true)::uuid reads that same value back.
 func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error) {
 	row := q.db.QueryRow(ctx, createAccount,
 		arg.TenantID,
 		arg.Email,
 		arg.PasswordHash,
 		arg.TotpSecret,
+		arg.TotpLastCounter,
+		arg.OidcSubject,
 		arg.Role,
 		arg.Status,
 	)
@@ -51,6 +59,8 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.Email,
 		&i.PasswordHash,
 		&i.TotpSecret,
+		&i.TotpLastCounter,
+		&i.OidcSubject,
 		&i.Role,
 		&i.Status,
 		&i.CreatedAt,
@@ -60,9 +70,9 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 }
 
 const getAccountByEmail = `-- name: GetAccountByEmail :one
-SELECT id, tenant_id, email, password_hash, totp_secret, role, status, created_at, updated_at
+SELECT id, tenant_id, email, password_hash, totp_secret, totp_last_counter, oidc_subject, role, status, created_at, updated_at
 FROM accounts
-WHERE lower(email) = lower($1)
+WHERE lower(email) = lower($1) AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 `
 
 func (q *Queries) GetAccountByEmail(ctx context.Context, email string) (Account, error) {
@@ -74,6 +84,8 @@ func (q *Queries) GetAccountByEmail(ctx context.Context, email string) (Account,
 		&i.Email,
 		&i.PasswordHash,
 		&i.TotpSecret,
+		&i.TotpLastCounter,
+		&i.OidcSubject,
 		&i.Role,
 		&i.Status,
 		&i.CreatedAt,
@@ -83,9 +95,9 @@ func (q *Queries) GetAccountByEmail(ctx context.Context, email string) (Account,
 }
 
 const getAccountByID = `-- name: GetAccountByID :one
-SELECT id, tenant_id, email, password_hash, totp_secret, role, status, created_at, updated_at
+SELECT id, tenant_id, email, password_hash, totp_secret, totp_last_counter, oidc_subject, role, status, created_at, updated_at
 FROM accounts
-WHERE id = $1
+WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 `
 
 func (q *Queries) GetAccountByID(ctx context.Context, id uuid.UUID) (Account, error) {
@@ -97,6 +109,33 @@ func (q *Queries) GetAccountByID(ctx context.Context, id uuid.UUID) (Account, er
 		&i.Email,
 		&i.PasswordHash,
 		&i.TotpSecret,
+		&i.TotpLastCounter,
+		&i.OidcSubject,
+		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getAccountByOIDCSubject = `-- name: GetAccountByOIDCSubject :one
+SELECT id, tenant_id, email, password_hash, totp_secret, totp_last_counter, oidc_subject, role, status, created_at, updated_at
+FROM accounts
+WHERE oidc_subject = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+`
+
+func (q *Queries) GetAccountByOIDCSubject(ctx context.Context, oidcSubject pgtype.Text) (Account, error) {
+	row := q.db.QueryRow(ctx, getAccountByOIDCSubject, oidcSubject)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.TotpSecret,
+		&i.TotpLastCounter,
+		&i.OidcSubject,
 		&i.Role,
 		&i.Status,
 		&i.CreatedAt,
@@ -106,8 +145,9 @@ func (q *Queries) GetAccountByID(ctx context.Context, id uuid.UUID) (Account, er
 }
 
 const listAccounts = `-- name: ListAccounts :many
-SELECT id, tenant_id, email, password_hash, totp_secret, role, status, created_at, updated_at
+SELECT id, tenant_id, email, password_hash, totp_secret, totp_last_counter, oidc_subject, role, status, created_at, updated_at
 FROM accounts
+WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 ORDER BY created_at
 `
 
@@ -126,6 +166,8 @@ func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
 			&i.Email,
 			&i.PasswordHash,
 			&i.TotpSecret,
+			&i.TotpLastCounter,
+			&i.OidcSubject,
 			&i.Role,
 			&i.Status,
 			&i.CreatedAt,
@@ -145,19 +187,23 @@ const updateAccount = `-- name: UpdateAccount :one
 UPDATE accounts
 SET password_hash = $2,
     totp_secret = $3,
-    role = $4,
-    status = $5,
+    totp_last_counter = $4,
+    oidc_subject = $5,
+    role = $6,
+    status = $7,
     updated_at = now()
-WHERE id = $1
-RETURNING id, tenant_id, email, password_hash, totp_secret, role, status, created_at, updated_at
+WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+RETURNING id, tenant_id, email, password_hash, totp_secret, totp_last_counter, oidc_subject, role, status, created_at, updated_at
 `
 
 type UpdateAccountParams struct {
-	ID           uuid.UUID
-	PasswordHash pgtype.Text
-	TotpSecret   pgtype.Text
-	Role         string
-	Status       string
+	ID              uuid.UUID
+	PasswordHash    pgtype.Text
+	TotpSecret      pgtype.Text
+	TotpLastCounter pgtype.Int8
+	OidcSubject     pgtype.Text
+	Role            string
+	Status          string
 }
 
 func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (Account, error) {
@@ -165,6 +211,8 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (A
 		arg.ID,
 		arg.PasswordHash,
 		arg.TotpSecret,
+		arg.TotpLastCounter,
+		arg.OidcSubject,
 		arg.Role,
 		arg.Status,
 	)
@@ -175,6 +223,8 @@ func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (A
 		&i.Email,
 		&i.PasswordHash,
 		&i.TotpSecret,
+		&i.TotpLastCounter,
+		&i.OidcSubject,
 		&i.Role,
 		&i.Status,
 		&i.CreatedAt,

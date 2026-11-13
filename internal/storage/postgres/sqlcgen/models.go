@@ -10,27 +10,30 @@ import (
 )
 
 type Account struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Email        string
-	PasswordHash pgtype.Text
-	TotpSecret   pgtype.Text
-	Role         string
-	Status       string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID              uuid.UUID
+	TenantID        uuid.UUID
+	Email           string
+	PasswordHash    pgtype.Text
+	TotpSecret      pgtype.Text
+	TotpLastCounter pgtype.Int8
+	OidcSubject     pgtype.Text
+	Role            string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type Invite struct {
-	ID        uuid.UUID
-	TenantID  uuid.UUID
-	Email     string
-	Role      string
-	TokenHash string
-	ExpiresAt pgtype.Timestamptz
-	UsedAt    pgtype.Timestamptz
-	CreatedBy pgtype.UUID
-	CreatedAt pgtype.Timestamptz
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	Email      string
+	Role       string
+	TokenHash  string
+	ExpiresAt  pgtype.Timestamptz
+	UsedAt     pgtype.Timestamptz
+	CreatedBy  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+	TotpSecret pgtype.Text
 }
 
 type Tenant struct {
