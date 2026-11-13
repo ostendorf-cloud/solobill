@@ -1,0 +1,21 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.go]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false
+
+# dbmate names each migration file *.sql and writes plain SQL statements; 2-space
+# indent matches every other file here rather than carrying a second convention.
+[*.sql]
+indent_style = space
+indent_size = 2

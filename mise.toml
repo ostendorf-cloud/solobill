@@ -1,0 +1,44 @@
+# Every tool this repository needs, pinned. CI installs from this same file through
+# mise-action, so local and CI run identical versions. Nothing is installed any other way.
+[tools]
+go = "1.27.0"
+task = "3"
+# The web/ package. pnpm is the package manager, so npm is never called directly, and the
+# lockfile is written by the major pinned here.
+node = "26"
+# ostendorf.tech pins pnpm's major at "10", but the registry's current latest stable major
+# is "12" (one newer release is held back by mise's own minimum release age); a brand-new
+# repository tracks the current major instead of copying that stale pin.
+pnpm = "12"
+# Pinned to the patch, not "2", and to the exact patch golangci-lint 2.15.0 was built with:
+# its release workflow builds its binaries with go1.27.0, and that binary can only read
+# export data up to format version 4. go1.27.3, the newest patch in the 1.27 line, writes
+# export data version 5, so "golangci-lint run" fails on every standard library import with
+# "export data version 5 is greater than maximum supported version 4" when go is newer than
+# 1.27.0; verified locally by running golangci-lint against both go versions. ostendorf.tech's
+# own mise.toml pins go to "1.27.3" alongside this same golangci-lint version, which the same
+# check would fail there; 1.27.0 is the version that is actually proven to work.
+golangci-lint = "2.15.0"
+actionlint = "1"
+# 0.24 is the latest minor on the mise registry (one newer release is held back by mise's
+# own minimum release age).
+markdownlint-cli2 = "0.24"
+yamllint = "1"
+gitleaks = "8"
+# dbmate and sqlc coordinate only through files on disk (db/migrations, sqlc.yaml), never
+# through each other's version, so a minor pin is enough; neither is coupled to the other's
+# patch the way golangci-lint is coupled to go above. 2.38 and 1.31 are each the latest minor
+# on the mise registry.
+dbmate = "2.38"
+sqlc = "1.31"
+# Helm for charts/solobill. cve-notifier (this organisation's only other chart) pinned "3.22.0"
+# on the reasoning that helm-unittest, its verification plugin, targeted Helm 3's plugin API.
+# That reasoning is stale: helm-unittest v1.2.0 added "Full helm 4 support", and v1.1.1 already
+# updated its own release process so the plugin installs under Helm 4 too. Verified locally by
+# installing helm-unittest v1.2.1 (the version pinned below) against this exact helm version and
+# running it against a scratch chart; both the plugin install and "helm unittest" succeeded.
+# Pinned to the current latest stable, not cve-notifier's older line.
+helm = "4.3.1"
+# Latest minor on the mise registry; no coupling to helm's own version the way golangci-lint is
+# coupled to go above, since kubeconform only ever consumes a chart's already-rendered YAML.
+kubeconform = "0.8.0"
