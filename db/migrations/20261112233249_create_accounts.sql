@@ -66,15 +66,30 @@ ALTER TABLE accounts FORCE ROW LEVEL SECURITY;
 -- other than the one currently scoped.
 --
 -- current_setting(..., true) (the second, "missing_ok" argument) returns
--- NULL instead of raising an error when app.tenant_id was never set at
--- all, for example a connection used outside of WithTenant. By ordinary
--- SQL three-valued logic, "tenant_id = NULL" evaluates to NULL, which a
--- USING/WITH CHECK clause treats as false, never as true: an unscoped
--- transaction sees zero rows and can write none, rather than either every
--- row or a hard error. That is the deliberately chosen safe default.
+-- NULL instead of raising an error when app.tenant_id has never been set
+-- in this session at all. That covers a fresh connection used outside of
+-- WithTenant, but not a reused one: set_config(..., true) makes a custom
+-- parameter transaction-local only in the sense that its *value* reverts
+-- at COMMIT or ROLLBACK, not in the sense that the parameter stops
+-- existing. The first set in a session turns app.tenant_id into a
+-- session-level placeholder GUC (text-typed, reset value ''), and a
+-- placeholder, once created, lives for the rest of the session; COMMIT
+-- and ROLLBACK both revert it to that reset value, the empty string, not
+-- to "unset" (postgresql.org/message-id/CA+Q86ij0KDCB0G45G509-8q0DNR611gcKG-sSM83GA1EBL7boA@mail.gmail.com).
+-- So on a connection that WithTenant already scoped once and then handed
+-- back to the pool, a later, unscoped transaction sees current_setting
+-- return '', not NULL, and ''::uuid raises 22P02 instead of denying
+-- access. NULLIF folds that reverted empty string back to NULL before
+-- the cast, so both "never set in this session" and "set earlier, now
+-- reverted" reach the same NULL, and by ordinary SQL three-valued logic
+-- "tenant_id = NULL" evaluates to NULL, which a USING/WITH CHECK clause
+-- treats as false, never as true: an unscoped transaction, fresh
+-- connection or reused, sees zero rows and can write none, rather than
+-- every row or a hard error. That is the deliberately chosen safe
+-- default.
 CREATE POLICY accounts_tenant_isolation ON accounts
-    USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
 -- migrate:down
 

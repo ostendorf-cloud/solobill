@@ -39,10 +39,11 @@ CREATE UNIQUE INDEX invites_token_hash_idx ON invites (token_hash);
 ALTER TABLE invites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invites FORCE ROW LEVEL SECURITY;
 
--- Same tenant-scoping mechanism as accounts: current_setting(..., true)
--- is NULL when no transaction-local app.tenant_id was ever set, and
--- "tenant_id = NULL" is never true, so an unscoped transaction sees and
--- can write zero rows here too.
+-- Same tenant-scoping mechanism as accounts, NULLIF included: see the
+-- accounts migration for why current_setting(..., true) alone is not
+-- enough on a connection set_config already scoped once this session.
+-- "tenant_id = NULL" is never true, so an unscoped transaction, fresh
+-- connection or reused, sees and can write zero rows here too.
 --
 -- An invite's token is only ever known to its recipient, not to whichever
 -- tenant the recipient's browser happens to be scoped to, so redeeming it
@@ -56,8 +57,8 @@ ALTER TABLE invites FORCE ROW LEVEL SECURITY;
 -- adds no policy exception for it, so there is no path, intentional or
 -- accidental, by which invites in other tenants become visible.
 CREATE POLICY invites_tenant_isolation ON invites
-    USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
 -- migrate:down
 
