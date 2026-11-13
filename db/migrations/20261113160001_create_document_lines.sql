@@ -143,18 +143,26 @@ CREATE POLICY document_lines_tenant_isolation ON document_lines
 -- the line being touched already belongs to the same tenant whose scope
 -- the transaction is set_config'd to. If this document is itself being
 -- deleted in the same statement (a draft's ON DELETE CASCADE above
--- removing its lines), the lookup runs after the document row is
--- already gone from this transaction's view, so it finds no row,
--- parent_state stays NULL, and "NULL = 'issued'" is never true: the
--- cascade is allowed to proceed. That is safe only because
--- documents_block_issued_mutation already refused the delete outright,
--- before the cascade ever starts, for any document that was actually
--- issued; this trigger here never has to tell "the document is gone
--- because it was draft and is being deleted" apart from "the document
--- is gone because it is issued", because the second case can never
--- reach a DELETE on documents at all.
+-- removing its lines), the DELETE arm's own lookup (old_document_id,
+-- below) runs after the document row is already gone from this
+-- transaction's view, so it finds no row, old_state stays NULL, and
+-- "NULL = 'issued'" is never true: the cascade is allowed to proceed.
+-- That is safe only because documents_block_issued_mutation already
+-- refused the delete outright, before the cascade ever starts, for any
+-- document that was actually issued; this trigger here never has to
+-- tell "the document is gone because it was draft and is being deleted"
+-- apart from "the document is gone because it is issued", because the
+-- second case can never reach a DELETE on documents at all.
 --
--- FOR SHARE on that SELECT, not a plain read: under READ COMMITTED, a
+-- On UPDATE, both the row's old and new parent are looked up and
+-- refused on, not only the new one: see the function body's own comment
+-- on old_document_id/new_document_id for the bug this closes (moving a
+-- line off an issued document by UPDATEing document_id used to check
+-- only the parent the line was moving onto). Two SELECTs, not one IN
+-- (...) query, so that an UPDATE leaving document_id unchanged still
+-- only ever takes one FOR SHARE lock, the same as before this fix.
+--
+-- FOR SHARE on each SELECT, not a plain read: under READ COMMITTED, a
 -- plain SELECT reads its own transaction's snapshot, so a transaction
 -- inserting a line could read 'draft' from a snapshot taken just before
 -- a concurrent Issue commits 'issued', and both would then commit,
@@ -185,16 +193,62 @@ CREATE FUNCTION document_lines_block_issued_document_mutation() RETURNS trigger
     SET search_path = pg_catalog, public
     AS $$
 DECLARE
-    parent_state text;
-    target_document_id uuid;
+    old_document_id uuid;
+    new_document_id uuid;
+    old_state text;
+    new_state text;
 BEGIN
-    target_document_id := COALESCE(NEW.document_id, OLD.document_id);
+    -- OLD and NEW are only ever assigned by Postgres for the operations
+    -- that actually carry them (OLD for UPDATE/DELETE, NEW for
+    -- INSERT/UPDATE); reading a field off the other one is a runtime
+    -- error in plpgsql, not simply NULL, so TG_OP gates every access
+    -- below instead of a COALESCE across both. A prior revision of this
+    -- function used target_document_id := COALESCE(NEW.document_id,
+    -- OLD.document_id), which, because document_id is NOT NULL, always
+    -- resolved to NEW.document_id on an UPDATE and never consulted
+    -- OLD.document_id at all: UPDATE document_lines SET document_id =
+    -- <a draft's id> WHERE id = <a line of an issued document> then
+    -- checked only the draft it was moving the line onto, found it not
+    -- issued, and let the move through, silently dropping a line from
+    -- an issued document with no complaint from either trigger (this
+    -- one is on a different table than documents_block_issued_mutation,
+    -- and the composite foreign key only requires the same tenant, not
+    -- the same state).
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        old_document_id := OLD.document_id;
+    END IF;
 
-    SELECT state INTO parent_state FROM documents WHERE id = target_document_id FOR SHARE;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        new_document_id := NEW.document_id;
+    END IF;
 
-    IF parent_state = 'issued' THEN
-        RAISE EXCEPTION 'document % is issued; its lines are immutable', target_document_id
-            USING ERRCODE = 'integrity_constraint_violation';
+    -- The row's new parent (its only parent for INSERT, its unchanged or
+    -- newly-assigned parent for UPDATE): refused if that document is
+    -- issued, exactly like the INSERT-onto-an-issued-document case this
+    -- trigger already covered.
+    IF new_document_id IS NOT NULL THEN
+        SELECT state INTO new_state FROM documents WHERE id = new_document_id FOR SHARE;
+
+        IF new_state = 'issued' THEN
+            RAISE EXCEPTION 'document % is issued; its lines are immutable', new_document_id
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
+    END IF;
+
+    -- The row's old parent (its only parent for DELETE; its parent
+    -- before the UPDATE when document_id actually changes): refused if
+    -- THAT document is issued too, which is the fix itself. Skipped when
+    -- old_document_id equals new_document_id (an ordinary UPDATE that
+    -- leaves document_id alone): the SELECT above already covered that
+    -- same row, and re-checking it would only take a second, redundant
+    -- FOR SHARE lock on it.
+    IF old_document_id IS NOT NULL AND old_document_id IS DISTINCT FROM new_document_id THEN
+        SELECT state INTO old_state FROM documents WHERE id = old_document_id FOR SHARE;
+
+        IF old_state = 'issued' THEN
+            RAISE EXCEPTION 'document % is issued; its lines are immutable', old_document_id
+                USING ERRCODE = 'integrity_constraint_violation';
+        END IF;
     END IF;
 
     IF TG_OP = 'DELETE' THEN
@@ -205,17 +259,29 @@ BEGIN
 END;
 $$;
 
--- This trigger's UPDATE arm is unreachable for solobill_app today:
--- docker-compose.yaml's "grant-app-role" grants document_lines only
--- SELECT, INSERT and DELETE, never UPDATE (no query ever updates a line
--- in place; see that grant's own comment), so a raw UPDATE is already
--- refused by the privilege check before this trigger ever runs, and the
--- test suite has no way to exercise this arm as a result (see
--- document_immutability_integration_test.go's own comment on why
--- asserting 42501 there is the only honest assertion available). That is
--- fine while the grant stays this narrow; if a later change ever widens
--- it to include UPDATE, nothing today would catch this arm regressing,
--- so that change should add the UPDATE subtest at the same time.
+-- This trigger's UPDATE arm is unreachable for solobill_app specifically
+-- under docker-compose.yaml's own local-dev setup and under this
+-- chart's two-role deployment (see charts/solobill/README.md's "One
+-- role, or two"): "grant-app-role" grants document_lines only SELECT,
+-- INSERT and DELETE, never UPDATE (no query ever updates a line in
+-- place; see that grant's own comment), so a raw UPDATE is already
+-- refused by the privilege check before this trigger ever runs there,
+-- and document_immutability_integration_test.go's own UPDATE subtest
+-- against the restricted test role asserts exactly that (42501, not
+-- this trigger's 23000).
+--
+-- It is NOT unreachable in general: charts/solobill/README.md's "One
+-- role, or two" documents the chart's own default as a single role that
+-- both runs db/migrations and serves the application, which therefore
+-- OWNS this table and so holds every privilege on it, UPDATE included,
+-- with no GRANT needed. Under that default, this is the live arm, and
+-- it is the one Blocker 1's own fix (see the function body above) landed
+-- in: a raw UPDATE moving a line between documents is exactly what an
+-- owning role can still do, and this trigger, not a grant, is the only
+-- thing left to refuse it. A second integration subtest, run as a role
+-- that owns this table (document_immutability_integration_test.go's
+-- "moving an issued document's line onto a draft" case), exercises that
+-- arm directly rather than leaving it uncovered.
 CREATE TRIGGER document_lines_block_issued_document_mutation
     BEFORE INSERT OR UPDATE OR DELETE ON document_lines
     FOR EACH ROW
