@@ -104,3 +104,16 @@ func (s *Store) Accounts() storage.AccountRepository {
 func (s *Store) Invites() storage.InviteRepository {
 	return &inviteRepository{}
 }
+
+// Customers returns the customer repository. Every method on it
+// requires a context WithTenant produced; see storage.CustomerRepository.
+func (s *Store) Customers() storage.CustomerRepository {
+	return &customerRepository{}
+}
+
+// CatalogueItems returns the catalogue item repository. Every method on
+// it requires a context WithTenant produced; see
+// storage.CatalogueItemRepository.
+func (s *Store) CatalogueItems() storage.CatalogueItemRepository {
+	return &catalogueItemRepository{}
+}
