@@ -97,39 +97,11 @@ CREATE TABLE customers (
 ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE customers FORCE ROW LEVEL SECURITY;
 
--- The tenant is read back from a transaction-local setting, set once per
--- transaction via set_config('app.tenant_id', $1, true) (the trailing
--- true makes it transaction-local: SET LOCAL semantics, reachable with a
--- bound parameter, which a literal "SET LOCAL app.tenant_id = $1" is not,
--- since SET does not accept query parameters). A single policy with no
--- FOR clause applies to every command (SELECT, INSERT, UPDATE, DELETE):
--- USING filters what an existing row must satisfy to be read, written to
--- or deleted; WITH CHECK filters what a new or changed row must satisfy
--- to be written at all, so a row can never be inserted or moved into a
--- tenant other than the one currently scoped.
---
--- current_setting(..., true) (the second, "missing_ok" argument) returns
--- NULL instead of raising an error when app.tenant_id has never been set
--- in this session at all. That covers a fresh connection used outside of
--- WithTenant, but not a reused one: set_config(..., true) makes a custom
--- parameter transaction-local only in the sense that its *value* reverts
--- at COMMIT or ROLLBACK, not in the sense that the parameter stops
--- existing. The first set in a session turns app.tenant_id into a
--- session-level placeholder GUC (text-typed, reset value ''), and a
--- placeholder, once created, lives for the rest of the session; COMMIT
--- and ROLLBACK both revert it to that reset value, the empty string, not
--- to "unset". So on a connection that WithTenant already scoped once and
--- then handed back to the pool, a later, unscoped transaction sees
--- current_setting return '', not NULL, and ''::uuid raises 22P02 instead
--- of denying access. NULLIF folds that reverted empty string back to
--- NULL before the cast, so both "never set in this session" and "set
--- earlier, now reverted" reach the same NULL, and by ordinary SQL
--- three-valued logic "tenant_id = NULL" evaluates to NULL, which a
--- USING/WITH CHECK clause treats as false, never as true: an unscoped
--- transaction, fresh connection or reused, sees zero rows and can write
--- none, rather than every row or a hard error. See the accounts migration
--- for the full reasoning behind this mechanism; it applies here
--- unchanged.
+-- Same tenant-scoping mechanism as accounts, NULLIF included: see the
+-- accounts migration for why current_setting(..., true) alone is not
+-- enough on a connection set_config already scoped once this session.
+-- "tenant_id = NULL" is never true, so an unscoped transaction, fresh
+-- connection or reused, sees and can write zero rows here too.
 CREATE POLICY customers_tenant_isolation ON customers
     USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
