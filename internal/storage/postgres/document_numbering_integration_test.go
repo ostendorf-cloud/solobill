@@ -69,13 +69,23 @@ func createDocumentTestCustomer(ctx context.Context, t *testing.T, store *postgr
 	return customer, err
 }
 
-// nowForTest returns the current time truncated to microsecond
-// precision, matching what a round trip through Postgres' own
-// timestamptz actually preserves: comparing a value read back against
-// one kept only in Go would otherwise risk a spurious mismatch on
-// nanosecond-level precision Postgres never stores.
-func nowForTest() time.Time {
-	return time.Now().UTC().Truncate(time.Microsecond)
+// issuedAtForTest returns a fixed, deterministic timestamp whose own
+// calendar year is year, truncated to microsecond precision, matching
+// what a round trip through Postgres' own timestamptz actually
+// preserves: comparing a value read back against one kept only in Go
+// would otherwise risk a spurious mismatch on nanosecond-level precision
+// Postgres never stores.
+//
+// Every Issue call in this package's tests picks year as an arbitrary,
+// far-future constant chosen only to avoid colliding with another
+// test's own (tenant, type, year) key, unrelated to the real wall-clock
+// date; documentRepository.Issue (internal/storage/postgres/documents.go)
+// refuses a year that does not match issuedAt's own calendar year, so
+// issuedAt has to be built for that specific year here rather than read
+// from time.Now(), which would only happen to agree with year in the
+// one calendar year this suite happened to run in.
+func issuedAtForTest(year int) time.Time {
+	return time.Date(year, time.March, 15, 12, 0, 0, 0, time.UTC).Truncate(time.Microsecond)
 }
 
 // testFrozenPayload returns a fixed payload and the hex-encoded SHA-256
@@ -184,7 +194,7 @@ func TestDocumentNumbering_ConcurrentIssueIsGapless(t *testing.T) {
 
 				payload, payloadHash := testFrozenPayload()
 
-				issued, err := store.Documents().Issue(ctx, document.ID, storage.DocumentTypeInvoice, year, nowForTest(), payload, payloadHash)
+				issued, err := store.Documents().Issue(ctx, document.ID, storage.DocumentTypeInvoice, year, issuedAtForTest(year), payload, payloadHash)
 				if err != nil {
 					return err
 				}
