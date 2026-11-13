@@ -39,20 +39,40 @@ describe('AcceptInviteView', () => {
   })
 
   it('requests a totp secret on mount and shows it next to its provisioning uri', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue(totpSecretResponse)
+    vi.mocked(apiClient.post).mockResolvedValue(totpSecretResponse)
 
     await renderAcceptInviteView()
 
     expect(await screen.findByText('SECRET123')).toBeVisible()
     expect(screen.getByText(totpSecretResponse.provisioning_uri)).toBeVisible()
-    expect(apiClient.get).toHaveBeenCalledWith('/invites/totp-secret', {
-      query: { email: undefined },
+    expect(apiClient.post).toHaveBeenCalledWith('/invites/totp-secret', {
+      tenant_slug: 'acme',
+      token: 'invite-token',
     })
   })
 
-  it('submits the tenant, token, password, totp secret and totp code to the accept endpoint', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue(totpSecretResponse)
-    vi.mocked(apiClient.post).mockResolvedValue(undefined)
+  it('shows an error and never requests a secret when the route carries no tenant or token', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'home', component: { template: '<div />' } },
+        { path: '/accept-invite', name: 'accept-invite', component: AcceptInviteView },
+      ],
+    })
+    await router.push('/accept-invite')
+    await router.isReady()
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+
+    render(AcceptInviteView, { global: { plugins: [router, i18n] } })
+
+    expect(await screen.findByRole('alert')).toBeVisible()
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('submits the tenant, token, password and totp code to the accept endpoint, without a secret', async () => {
+    vi.mocked(apiClient.post)
+      .mockResolvedValueOnce(totpSecretResponse)
+      .mockResolvedValueOnce(undefined)
     const user = userEvent.setup()
     const { router } = await renderAcceptInviteView()
 
@@ -65,7 +85,6 @@ describe('AcceptInviteView', () => {
       tenant_slug: 'acme',
       token: 'invite-token',
       password: 'new-password',
-      totp_secret: 'SECRET123',
       totp_code: '654321',
     })
     expect(router.currentRoute.value.name).toBe('home')

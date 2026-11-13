@@ -1,10 +1,12 @@
 <script setup lang="ts">
-// AcceptInviteView proves the invite flow's UI side: it reads the token an
-// invite link carries in its query string, requests a fresh TOTP secret
-// from GET /api/v1/invites/totp-secret (internal/httpapi's
-// handleInviteTOTPSecret, which needs no authentication, see its own doc
-// comment), and submits POST /api/v1/invites/accept with that secret plus
-// the code the invitee's authenticator app now computes from it.
+// AcceptInviteView proves the invite flow's UI side: it reads the tenant
+// slug and token an invite link carries in its query string, requests a
+// fresh, server-issued TOTP secret from POST /api/v1/invites/totp-secret
+// (internal/httpapi's handleInviteTOTPSecret, which persists the secret
+// on the invite itself), and submits POST /api/v1/invites/accept with
+// only the code the invitee's authenticator app now computes from it: the
+// secret itself never travels back from the client, the server already
+// holds it.
 import {
   GovueButton,
   GovueCard,
@@ -46,10 +48,19 @@ const totpSecretLoading = ref(true)
 const totpSecretError = ref('')
 
 onMounted(async () => {
+  const tenantSlug = queryString(route.query.tenant)
+  const token = queryString(route.query.token)
+
+  if (tenantSlug === '' || token === '') {
+    totpSecretError.value = t('acceptInvite.totpSecretError')
+    totpSecretLoading.value = false
+    return
+  }
+
   try {
-    const email = queryString(route.query.email) || undefined
-    const response = await apiClient.get<TotpSecretResponse>('/invites/totp-secret', {
-      query: { email },
+    const response = await apiClient.post<TotpSecretResponse>('/invites/totp-secret', {
+      tenant_slug: tenantSlug,
+      token,
     })
     totpSecret.value = response.secret
     provisioningUri.value = response.provisioning_uri
@@ -88,7 +99,6 @@ const form = useForm<AcceptFields>({
       tenant_slug: values.tenantSlug,
       token: values.token,
       password: values.password,
-      totp_secret: totpSecret.value,
       totp_code: values.totpCode,
     })
     await router.push({ name: 'home' })
