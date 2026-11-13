@@ -173,6 +173,15 @@ jobs:
       - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785  # v5.2.8
       - run: task test:helm
 
+  renovate-config:
+    # v0.2.1 - kept on its own line, not a trailing comment: this reusable workflow's
+    # file name is long enough that the uses: line below already exceeds yamllint's
+    # 120-character line-length limit on its own (the SHA alone is 40 characters),
+    # so that line also carries its own disable comment instead of a version one.
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate-config.yaml@52cffb7b98063f12833bf09ca1b0ab20293a483c  # yamllint disable-line rule:line-length
+    with:
+      runs-on-runner: blacksmith-2vcpu-ubuntu-2404
+
   integration:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
