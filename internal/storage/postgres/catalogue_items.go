@@ -88,9 +88,21 @@ func (r *catalogueItemRepository) List(ctx context.Context) ([]storage.Catalogue
 	return items, nil
 }
 
-// Update implements storage.CatalogueItemRepository. The underlying
-// query is guarded by "WHERE ... AND deleted_at IS NULL" (see
-// internal/storage/postgres/queries/catalogue_items.sql), so a call
+// Update implements storage.CatalogueItemRepository. Unlike Create, it
+// does not default a zero-value Unit to catalogueItemDefaultUnit: Update
+// is a full-column replace, the same contract Description and SKU
+// already carry (a nil pointer there becomes a literal NULL, never a
+// substituted value), so the caller is expected to supply the item's
+// complete, current state, Unit included. An empty Unit here is a
+// caller bug, not "no unit given yet" the way it legitimately can be on
+// Create, and it must fail loudly: passed through unchanged, it reaches
+// the unit CHECK constraint (see db/migrations' catalogue_items
+// migration) as the empty string, which is not one of the three allowed
+// values, so Postgres rejects the write outright rather than this layer
+// silently coercing an "hour" or "day" item back to "piece".
+//
+// The underlying query is guarded by "WHERE ... AND deleted_at IS NULL"
+// (see internal/storage/postgres/queries/catalogue_items.sql), so a call
 // against a row that does not exist, or is already soft deleted,
 // matches zero rows. A :one sqlc query with zero rows answers
 // pgx.ErrNoRows on Scan; that is checked for explicitly and mapped to
@@ -98,16 +110,12 @@ func (r *catalogueItemRepository) List(ctx context.Context) ([]storage.Catalogue
 // given on storage.CustomerRepository.Update: there is no
 // concurrent-redeem race, only "no such active row". Any other error,
 // including a unique violation on sku from a row that would otherwise
-// exist, still goes through mapWriteError.
+// exist, or the unit CHECK violation above, still goes through
+// mapWriteError.
 func (r *catalogueItemRepository) Update(ctx context.Context, item storage.CatalogueItem) (storage.CatalogueItem, error) {
 	tx, err := txFromContext(ctx)
 	if err != nil {
 		return storage.CatalogueItem{}, err
-	}
-
-	unit := item.Unit
-	if unit == "" {
-		unit = catalogueItemDefaultUnit
 	}
 
 	row, err := sqlcgen.New(tx).UpdateCatalogueItem(ctx, sqlcgen.UpdateCatalogueItemParams{
@@ -116,7 +124,7 @@ func (r *catalogueItemRepository) Update(ctx context.Context, item storage.Catal
 		Description:    ptrToText(item.Description),
 		Sku:            ptrToText(item.SKU),
 		UnitPriceCents: item.UnitPriceCents,
-		Unit:           unit,
+		Unit:           item.Unit,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
