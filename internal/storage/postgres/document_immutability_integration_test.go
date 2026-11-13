@@ -117,7 +117,7 @@ func TestDocumentImmutability_RawSQL(t *testing.T) {
 
 		payload, payloadHash := testFrozenPayload()
 
-		issued, err = store.Documents().Issue(ctx, draft.ID, storage.DocumentTypeInvoice, 2028, nowForTest(), payload, payloadHash)
+		issued, err = store.Documents().Issue(ctx, draft.ID, storage.DocumentTypeInvoice, 2028, issuedAtForTest(2028), payload, payloadHash)
 
 		return err
 	}); err != nil {
@@ -174,29 +174,63 @@ func TestDocumentImmutability_RawSQL(t *testing.T) {
 		assertBlockedByImmutabilityTrigger(t, err, "document_lines")
 	})
 
-	t.Run("the document and its line are unchanged after every rejected attempt above", func(t *testing.T) {
-		var reread storage.Document
+	t.Run("a raw UPDATE moving an issued document's line onto a draft is rejected by the trigger, checking both parents", func(t *testing.T) {
+		// solobill_app itself can never reach this path: document_lines'
+		// own grant withholds UPDATE entirely (see the subtest above), so
+		// this only matters for a role that owns document_lines (and
+		// documents, for the trigger's own lookup) outright, exactly the
+		// shape charts/solobill/README.md's "One role, or two" documents
+		// as this chart's own default deployment, where the role the
+		// Deployment connects as is also the role the migration Job ran
+		// as and therefore owns every table db/migrations creates.
+		// testOwnerRole, made the owner of both tables for this subtest's
+		// duration via makeTemporaryOwner, reproduces that shape: it
+		// holds every privilege ownership itself carries, UPDATE
+		// included, with no GRANT needed, so the trigger is the only
+		// thing left that can refuse this write.
+		//
+		// Before this fix, document_lines_block_issued_document_mutation
+		// resolved its target document via
+		// COALESCE(NEW.document_id, OLD.document_id), which, because
+		// document_id is NOT NULL, always took NEW.document_id on an
+		// UPDATE and never consulted OLD.document_id: moving a line onto
+		// a draft checked only the draft, found it not issued, and let
+		// the move through, silently dropping a line from an issued
+		// document. This subtest pins the fixed behaviour: the UPDATE
+		// must be refused because the line's OLD parent (the issued
+		// document) is issued, even though its NEW parent is a draft.
+		ownerURL := setUpTestOwnerRole(ctx, t, adminPool, adminURL)
+		makeTemporaryOwner(ctx, t, adminPool, "documents", testOwnerRole)
+		makeTemporaryOwner(ctx, t, adminPool, "document_lines", testOwnerRole)
+
+		ownerPool, err := postgres.NewPool(ctx, ownerURL)
+		if err != nil {
+			t.Fatalf("open pool as %s: %v", testOwnerRole, err)
+		}
+		defer ownerPool.Close()
+
+		var draft storage.Document
 
 		if err := store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
 			var err error
-			reread, err = store.Documents().FindByID(ctx, issued.ID)
+			draft, err = store.Documents().Create(ctx, storage.Document{
+				TenantID:   tenant.ID,
+				Type:       storage.DocumentTypeInvoice,
+				CustomerID: customer.ID,
+				VATRegime:  storage.VATRegimeStandard,
+			}, nil)
 
 			return err
 		}); err != nil {
-			t.Fatalf("FindByID after the rejected attempts: %v", err)
+			t.Fatalf("create a second draft to move the line onto: %v", err)
 		}
 
-		if reread.VATRegime != storage.VATRegimeStandard {
-			t.Errorf("VATRegime = %q, want unchanged %q", reread.VATRegime, storage.VATRegimeStandard)
-		}
+		tx := beginScoped(ctx, t, ownerPool, tenant.ID)
+		defer func() { _ = tx.Rollback(ctx) }()
 
-		if len(reread.Lines) != 1 {
-			t.Fatalf("len(Lines) = %d, want 1 (the sneaked-in INSERT must not have taken effect)", len(reread.Lines))
-		}
+		_, err = tx.Exec(ctx, `UPDATE document_lines SET document_id = $1 WHERE id = $2`, draft.ID, issuedLineID)
 
-		if reread.Lines[0].Description != "Line" {
-			t.Errorf("Lines[0].Description = %q, want unchanged %q", reread.Lines[0].Description, "Line")
-		}
+		assertBlockedByImmutabilityTrigger(t, err, "document_lines")
 	})
 
 	t.Run("a draft document's line can still be deleted and reinserted: the trigger only blocks an issued document", func(t *testing.T) {
