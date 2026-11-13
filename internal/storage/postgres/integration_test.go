@@ -199,6 +199,61 @@ func TestRowLevelSecurity(t *testing.T) {
 		}
 	})
 
+	t.Run("a tenant-scoped transaction that commits, then an unscoped transaction on the same connection, still sees zero rows", func(t *testing.T) {
+		// This is the case that actually failed against a real Postgres: a
+		// physical connection, not a fresh one, held onto across two
+		// transactions via a single pool.Acquire, exactly what a connection
+		// pool hands an unrelated later request once it gives this
+		// connection back. set_config(..., true) only reverts its *value*
+		// at COMMIT; the custom parameter it created keeps existing for
+		// the rest of the session, as an empty string, not as "unset". So
+		// the second, deliberately unscoped transaction below must still
+		// see zero rows and no error, not every row and not a cast
+		// failure on "".
+		conn, err := restrictedPool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire connection: %v", err)
+		}
+		defer conn.Release()
+
+		scoped, err := conn.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin scoped transaction: %v", err)
+		}
+
+		if _, err := scoped.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenantB.ID.String()); err != nil {
+			t.Fatalf("set_config: %v", err)
+		}
+
+		if _, err := scoped.Exec(ctx, `SELECT 1`); err != nil {
+			t.Fatalf("exercise the scoped transaction: %v", err)
+		}
+
+		if err := scoped.Commit(ctx); err != nil {
+			t.Fatalf("commit scoped transaction: %v", err)
+		}
+
+		unscoped, err := conn.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin unscoped transaction on the same connection: %v", err)
+		}
+		defer func() { _ = unscoped.Rollback(ctx) }()
+
+		// Deliberately no set_config call on this second transaction: the
+		// connection already carries app.tenant_id from the one above.
+
+		rows, err := unscoped.Query(ctx, `SELECT * FROM accounts`)
+		if err != nil {
+			t.Fatalf("SELECT * FROM accounts on a reused connection with no tenant set: %v", err)
+		}
+
+		ids := accountIDs(t, rows)
+
+		if len(ids) != 0 {
+			t.Fatalf("SELECT * FROM accounts on a reused connection with no tenant set = %v, want none", ids)
+		}
+	})
+
 	t.Run("the admin connection, a superuser that bypasses row level security, still sees both accounts", func(t *testing.T) {
 		rows, err := adminPool.Query(ctx, `SELECT * FROM accounts WHERE id = ANY($1)`, []uuid.UUID{accountA.ID, accountB.ID})
 		if err != nil {
