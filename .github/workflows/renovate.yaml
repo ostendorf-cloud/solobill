@@ -1,0 +1,41 @@
+name: renovate
+
+# This repository's own per-repository Renovate run, delegating to the
+# organisation's shared reusable workflow. Runs self-hosted Renovate for this
+# repository only, authenticated through the ostendorf-cloud-dependencies
+# GitHub App.
+#
+# The "issues"/"pull_request" "edited" triggers exist so that a human
+# checking a Renovate rebase checkbox reacts within this run's CI time,
+# instead of waiting for the next "schedule" tick: checking that checkbox
+# edits the Dependency Dashboard issue body or a Renovate pull request's own
+# body, both reported as an "edited" event on the repository the checkbox
+# lives in.
+#
+# Every trigger below calls "reusable-renovate.yaml" unconditionally. The
+# anti-loop guard against Renovate's own edits re-triggering this workflow is
+# centralized inside "reusable-renovate.yaml" itself, as its own job-level
+# "if:", not duplicated here.
+on:
+  # Deliberately staggered from ostendorf-cloud/workflows's own dogfooding
+  # cron (17 3 * * *) and from other repositories' Renovate schedules in this
+  # rollout.
+  schedule:
+    - cron: "42 4 * * *"
+  workflow_dispatch:
+  issues:
+    types: [edited]
+  pull_request:
+    types: [edited]
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    # v0.2.0 - kept on its own line, not a trailing comment: inline it would push this
+    # line past yamllint's 120-character line-length limit (the SHA alone is 40 characters).
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate.yaml@287204461266c02cdd2fe9da20527ac3f3ac842c
+    secrets: inherit
+    with:
+      runs-on-runner: blacksmith-2vcpu-ubuntu-2404
