@@ -157,6 +157,28 @@ services:
       # here either: the same reasoning as accounts and invites above.
       - -c
       - GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO solobill_app;
+      # documents is the one table in this schema a real DELETE ever
+      # reaches (DeleteDraftDocument on a still-mutable draft; see
+      # internal/storage/postgres/queries/documents.sql), so it is the
+      # one table granted DELETE here. document_lines also needs DELETE
+      # (DeleteDocumentLines, and document_lines' own ON DELETE CASCADE
+      # foreign key when a draft document is removed) but no UPDATE: no
+      # query ever updates an existing line in place, Update instead
+      # deletes every line and recreates the caller's current set.
+      # Neither grant lets solobill_app actually touch an issued
+      # document or its lines despite holding UPDATE/DELETE: see
+      # db/migrations' documents_block_issued_mutation and
+      # document_lines_block_issued_document_mutation triggers, which
+      # refuse that at the database level regardless of what this role
+      # is granted.
+      - -c
+      - GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO solobill_app;
+      - -c
+      - GRANT SELECT, INSERT, DELETE ON document_lines TO solobill_app;
+      # document_numbers is only ever inserted (first use of a counter),
+      # read and incremented, never deleted.
+      - -c
+      - GRANT SELECT, INSERT, UPDATE ON document_numbers TO solobill_app;
       - -c
       - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO solobill_app;
 
