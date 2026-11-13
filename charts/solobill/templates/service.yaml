@@ -11,5 +11,14 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    # The admin listener (/metrics, /healthz, /readyz). templates/ingress.yaml
+    # only ever references .Values.service.port, never this one, so routing
+    # to it still requires being inside the cluster; see values.yaml's own
+    # adminPort comment and README.md's "Metrics and probes live on their
+    # own port" section for the full reasoning.
+    - port: {{ .Values.adminPort }}
+      targetPort: admin
+      protocol: TCP
+      name: admin
   selector:
     {{- include "solobill.selectorLabels" . | nindent 4 }}

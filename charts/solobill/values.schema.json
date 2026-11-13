@@ -83,7 +83,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 65535,
-      "description": "The administrative container port cmd/solobill serves /metrics, /healthz and /readyz on through govue's httpserver.RunAdmin. Must match config.adminListenAddr. Deliberately not a field under service: it is not exposed on the Service, see values.yaml's own comment for why."
+      "description": "The administrative container port cmd/solobill serves /metrics, /healthz and /readyz on through govue's httpserver.RunAdmin. Must match config.adminListenAddr. Deliberately a field of its own, not under service: it is exposed on the Service as its own named port (see templates/service.yaml), but the Ingress still only ever routes to service.port; see values.yaml's own comment for why."
     },
     "ingress": {
       "type": "object",
