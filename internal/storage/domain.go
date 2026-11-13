@@ -298,8 +298,9 @@ type Document struct {
 	Imported bool
 	// FrozenPayload is the complete, self-contained snapshot an issued
 	// document is rendered from forever: nil until State ==
-	// DocumentStateIssued. See DocumentPayload for its shape, and
-	// FrozenPayloadSHA256 for how it is verified.
+	// DocumentStateIssued. Its shape is a later rendering step's
+	// contract, not yet built; see FrozenPayloadSHA256 for how the bytes
+	// stored here are verified.
 	FrozenPayload []byte
 	// FrozenPayloadSHA256 is the lowercase hex-encoded SHA-256 of
 	// FrozenPayload's own bytes, exactly as persisted: nil until State

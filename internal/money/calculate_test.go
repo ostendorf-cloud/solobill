@@ -1,6 +1,7 @@
 package money_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ostendorf-cloud/solobill/internal/money"
@@ -34,7 +35,7 @@ func TestCalculate_WorkedExample(t *testing.T) {
 		{QuantityThousandths: 1000, UnitPriceCents: 7004, VATRatePermyriad: 1900},
 	}
 
-	got, err := money.Calculate(lines, money.Discount{PercentPermyriad: percentPtr(1500)})
+	got, err := money.Calculate(lines, money.Discount{PercentPermyriad: percentPtr(1500)}, money.VATRegimeStandard)
 	if err != nil {
 		t.Fatalf("Calculate() error = %v, want nil", err)
 	}
@@ -83,6 +84,7 @@ func TestCalculate(t *testing.T) {
 		name             string
 		lines            []money.Line
 		documentDiscount money.Discount
+		regime           money.VATRegime
 		want             money.Result
 	}{
 		{
@@ -90,6 +92,7 @@ func TestCalculate(t *testing.T) {
 			lines: []money.Line{
 				{QuantityThousandths: 2500, UnitPriceCents: 1000, VATRatePermyriad: 1900},
 			},
+			regime: money.VATRegimeStandard,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 2500, NetAfterAllDiscountsCents: 2500},
@@ -106,6 +109,7 @@ func TestCalculate(t *testing.T) {
 			lines: []money.Line{
 				{QuantityThousandths: 1000, UnitPriceCents: 5000, VATRatePermyriad: 0},
 			},
+			regime: money.VATRegimeKleinunternehmer,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 5000, NetAfterAllDiscountsCents: 5000},
@@ -125,6 +129,7 @@ func TestCalculate(t *testing.T) {
 					Discount: money.Discount{PercentPermyriad: percentPtr(1000)}, // 10%
 				},
 			},
+			regime: money.VATRegimeStandard,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 9000, NetAfterAllDiscountsCents: 9000},
@@ -144,6 +149,7 @@ func TestCalculate(t *testing.T) {
 					Discount: money.Discount{AmountCents: amountPtr(250)},
 				},
 			},
+			regime: money.VATRegimeStandard,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 9750, NetAfterAllDiscountsCents: 9750},
@@ -164,6 +170,7 @@ func TestCalculate(t *testing.T) {
 				// down (below half) to 33.
 				{QuantityThousandths: 333, UnitPriceCents: 100, VATRatePermyriad: 0},
 			},
+			regime: money.VATRegimeStandard,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 33, NetAfterAllDiscountsCents: 33},
@@ -185,6 +192,7 @@ func TestCalculate(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 10000, VATRatePermyriad: 1900},
 			},
 			documentDiscount: money.Discount{AmountCents: amountPtr(10000)},
+			regime:           money.VATRegimeStandard,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 10000, DocumentDiscountShareCents: 0, NetAfterAllDiscountsCents: 10000},
@@ -204,6 +212,7 @@ func TestCalculate(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 5000, VATRatePermyriad: 1900},
 			},
 			documentDiscount: money.Discount{AmountCents: amountPtr(1500)},
+			regime:           money.VATRegimeStandard,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 5000, NetAfterAllDiscountsCents: 5000},
@@ -229,6 +238,7 @@ func TestCalculate(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 333, VATRatePermyriad: 50},
 				{QuantityThousandths: 1000, UnitPriceCents: 333, VATRatePermyriad: 50},
 			},
+			regime: money.VATRegimeStandard,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 333, NetAfterAllDiscountsCents: 333},
@@ -255,6 +265,7 @@ func TestCalculate(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 3333, VATRatePermyriad: 700},
 			},
 			documentDiscount: money.Discount{AmountCents: amountPtr(1000)},
+			regime:           money.VATRegimeStandard,
 			want: money.Result{
 				Lines: []money.LineResult{
 					{NetAfterLineDiscountCents: 6667, NetAfterAllDiscountsCents: 6667},
@@ -277,7 +288,7 @@ func TestCalculate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := money.Calculate(tt.lines, tt.documentDiscount)
+			got, err := money.Calculate(tt.lines, tt.documentDiscount, tt.regime)
 			if err != nil {
 				t.Fatalf("Calculate() error = %v, want nil", err)
 			}
@@ -338,40 +349,61 @@ func TestCalculate_Errors(t *testing.T) {
 		name             string
 		lines            []money.Line
 		documentDiscount money.Discount
+		regime           money.VATRegime
+		// wantErrContains is a substring Calculate's own error message
+		// must contain: err == nil alone cannot tell "refused for the
+		// reason this case names" apart from "refused for some wholly
+		// different, wrong reason", which the two document-discount
+		// cases below (negative amount, exceeds the net total) could
+		// each satisfy by tripping the other's guard instead of their
+		// own if a future edit mixed them up.
+		wantErrContains string
 	}{
 		{
-			name:  "no lines at all",
-			lines: nil,
+			name:            "no lines at all",
+			lines:           nil,
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "at least one line is required",
 		},
 		{
 			name: "zero quantity",
 			lines: []money.Line{
 				{QuantityThousandths: 0, UnitPriceCents: 100, VATRatePermyriad: 1900},
 			},
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "quantity must be positive",
 		},
 		{
 			name: "negative quantity",
 			lines: []money.Line{
 				{QuantityThousandths: -1000, UnitPriceCents: 100, VATRatePermyriad: 1900},
 			},
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "quantity must be positive",
 		},
 		{
 			name: "negative unit price",
 			lines: []money.Line{
 				{QuantityThousandths: 1000, UnitPriceCents: -1, VATRatePermyriad: 1900},
 			},
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "unit price must not be negative",
 		},
 		{
 			name: "VAT rate above 100%",
 			lines: []money.Line{
 				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 10001},
 			},
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "out of range",
 		},
 		{
 			name: "VAT rate negative",
 			lines: []money.Line{
 				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: -1},
 			},
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "out of range",
 		},
 		{
 			name: "line amount discount exceeds the line's own net amount",
@@ -381,6 +413,8 @@ func TestCalculate_Errors(t *testing.T) {
 					Discount: money.Discount{AmountCents: amountPtr(500)},
 				},
 			},
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "discount exceeds the line's own net amount",
 		},
 		{
 			name: "line discount percent above 100%",
@@ -390,6 +424,8 @@ func TestCalculate_Errors(t *testing.T) {
 					Discount: money.Discount{PercentPermyriad: percentPtr(10001)},
 				},
 			},
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "out of range",
 		},
 		{
 			name: "line discount both percent and amount set",
@@ -399,6 +435,8 @@ func TestCalculate_Errors(t *testing.T) {
 					Discount: money.Discount{PercentPermyriad: percentPtr(100), AmountCents: amountPtr(1)},
 				},
 			},
+			regime:          money.VATRegimeStandard,
+			wantErrContains: "mutually exclusive",
 		},
 		{
 			name: "document discount both percent and amount set",
@@ -406,6 +444,8 @@ func TestCalculate_Errors(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 1900},
 			},
 			documentDiscount: money.Discount{PercentPermyriad: percentPtr(100), AmountCents: amountPtr(1)},
+			regime:           money.VATRegimeStandard,
+			wantErrContains:  "mutually exclusive",
 		},
 		{
 			name: "document discount percent above 100%",
@@ -413,6 +453,8 @@ func TestCalculate_Errors(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 1900},
 			},
 			documentDiscount: money.Discount{PercentPermyriad: percentPtr(10001)},
+			regime:           money.VATRegimeStandard,
+			wantErrContains:  "out of range",
 		},
 		{
 			name: "document discount negative amount",
@@ -420,6 +462,8 @@ func TestCalculate_Errors(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 1900},
 			},
 			documentDiscount: money.Discount{AmountCents: amountPtr(-1)},
+			regime:           money.VATRegimeStandard,
+			wantErrContains:  "must not be negative",
 		},
 		{
 			// netTotal is 200 (100 at 19% plus 100 at 7%); a 500-cent
@@ -432,6 +476,20 @@ func TestCalculate_Errors(t *testing.T) {
 				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 700},
 			},
 			documentDiscount: money.Discount{AmountCents: amountPtr(500)},
+			regime:           money.VATRegimeStandard,
+			wantErrContains:  "document discount exceeds the net total",
+		},
+		{
+			// The kleinunternehmer counterpart of every VAT-rate case
+			// above: a line carrying a real rate is refused under this
+			// regime specifically, not merely out of its own [0, 10000]
+			// range.
+			name: "kleinunternehmer regime with a non-zero VAT rate",
+			lines: []money.Line{
+				{QuantityThousandths: 1000, UnitPriceCents: 100, VATRatePermyriad: 1900},
+			},
+			regime:          money.VATRegimeKleinunternehmer,
+			wantErrContains: "kleinunternehmer",
 		},
 	}
 
@@ -439,9 +497,13 @@ func TestCalculate_Errors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := money.Calculate(tt.lines, tt.documentDiscount)
+			_, err := money.Calculate(tt.lines, tt.documentDiscount, tt.regime)
 			if err == nil {
 				t.Fatal("Calculate() error = nil, want an error")
+			}
+
+			if !strings.Contains(err.Error(), tt.wantErrContains) {
+				t.Fatalf("Calculate() error = %q, want it to contain %q", err.Error(), tt.wantErrContains)
 			}
 		})
 	}
