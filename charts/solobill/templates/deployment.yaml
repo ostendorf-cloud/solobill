@@ -1,4 +1,20 @@
 {{/*
+Ingress and httpRoute are mutually exclusive: both pick an external route
+for the same hostname, and only one may be the deployment's actual
+front door. This guard lives here, not duplicated into
+templates/ingress.yaml and templates/httproute.yaml, because this
+Deployment always renders regardless of which routing flag is set (or
+neither), so a single check here fires exactly once, deterministically,
+however Helm orders template execution across files - unlike a guard
+split across the two routing templates themselves, where Helm's own
+template engine aborts the whole render at the first of the two to fail
+and never reaches the second, making only one of two duplicated guards
+ever observable.
+*/}}
+{{- if and .Values.ingress.enabled .Values.httpRoute.enabled -}}
+{{ fail "ingress.enabled and httpRoute.enabled cannot both be true: pick one external route and turn the other off." }}
+{{- end -}}
+{{/*
 These three fields have no usable default (there is no database or
 Secret this chart can provision itself), so values.schema.json no longer
 enforces them with "minLength": 1 - that produced a cryptic schema error
