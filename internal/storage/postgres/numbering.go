@@ -65,33 +65,24 @@ func (r *documentNumberRepository) Current(ctx context.Context, docType storage.
 // the caller's own transaction, so a transaction that allocates a number
 // and then rolls back takes that number back with it.
 //
-// Three statements, in this exact order, all against the same row and
-// all inside tx:
+// Two statements, in this exact order, both against the same row and
+// both inside tx:
 //
 //  1. EnsureDocumentNumberRow: an idempotent upsert that does nothing if
 //     the (tenant, docType, year) counter already exists, and creates it
 //     at last_number = 0 if this is the very first allocation ever
-//     requested under this key. Without this, LockDocumentNumber below
-//     would find no row to lock at all on a brand new key.
-//  2. LockDocumentNumber: SELECT ... FOR UPDATE on exactly that row. This
-//     is the lock issue #15's gaplessness guarantee rests on: a second,
-//     concurrent call for the same tenant, docType and year blocks here
-//     until this transaction commits (having consumed the number it is
-//     about to allocate) or rolls back (having consumed nothing), and
-//     only then proceeds to read the row for itself. Two different
-//     tenants, two different types, or two different years never
-//     contend for this lock at all, since each is its own row.
-//  3. IncrementDocumentNumber: last_number + 1, persisted and returned in
-//     one UPDATE. Because this transaction already holds step 2's lock
-//     on this row, no other transaction's step 3 can land between this
-//     transaction's own step 2 and step 3.
-//
-// LockDocumentNumber's own result is deliberately unused beyond
-// acquiring the lock: IncrementDocumentNumber's RETURNING already gives
-// the authoritative post-increment value, and reading last_number twice
-// (once from the lock, once from the increment) would just be two
-// different names for the same fact, read a moment apart on a row this
-// transaction already has exclusively locked.
+//     requested under this key. Without this, IncrementDocumentNumber
+//     below would find no row to update at all on a brand new key.
+//  2. IncrementDocumentNumber: last_number + 1, persisted and returned in
+//     one UPDATE ... RETURNING. This single statement is the lock
+//     issue #15's gaplessness guarantee rests on, not a separate SELECT
+//     ... FOR UPDATE: see queries/document_numbers.sql for why the
+//     UPDATE's own row lock and Postgres' READ COMMITTED re-evaluation
+//     of its SET expression against the latest committed row already
+//     serialise two concurrent calls for the same tenant, docType and
+//     year without a second round trip. Two different tenants, two
+//     different types, or two different years never contend for this
+//     lock at all, since each is its own row.
 func allocateNextDocumentNumber(ctx context.Context, tx pgx.Tx, docType storage.DocumentType, year int) (int64, error) {
 	yearInt32 := int32(year) //nolint:gosec // year is a calendar year, far inside int32's range
 
@@ -105,13 +96,6 @@ func allocateNextDocumentNumber(ctx context.Context, tx pgx.Tx, docType storage.
 		NumberYear: yearInt32,
 	}); err != nil {
 		return 0, fmt.Errorf("ensure document number row: %w", err)
-	}
-
-	if _, err := queries.LockDocumentNumber(ctx, sqlcgen.LockDocumentNumberParams{
-		Type:       string(docType),
-		NumberYear: yearInt32,
-	}); err != nil {
-		return 0, fmt.Errorf("lock document number: %w", err)
 	}
 
 	next, err := queries.IncrementDocumentNumber(ctx, sqlcgen.IncrementDocumentNumberParams{
