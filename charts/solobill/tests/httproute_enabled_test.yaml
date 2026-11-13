@@ -1,0 +1,93 @@
+suite: httpRoute enabled
+templates:
+  - templates/httproute.yaml
+  - templates/ingress.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  httpRoute:
+    enabled: true
+    hostnames:
+      - solobill.example.org
+    parentRefs:
+      name: shared-gateway
+      namespace: gateway-system
+tests:
+  - it: fails the render when httpRoute is enabled and parentRefs.name is left empty
+    template: templates/httproute.yaml
+    set:
+      httpRoute:
+        enabled: true
+        parentRefs:
+          name: ""
+          namespace: gateway-system
+    asserts:
+      - failedTemplate:
+          errorMessage: httpRoute.parentRefs.name is required when httpRoute.enabled is true
+
+  - it: fails the render when httpRoute is enabled and parentRefs.namespace is left empty
+    template: templates/httproute.yaml
+    set:
+      httpRoute:
+        enabled: true
+        parentRefs:
+          name: shared-gateway
+          namespace: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            httpRoute.parentRefs.namespace is required when httpRoute.enabled is true: the
+            Gateway this HTTPRoute attaches to usually lives in a different namespace than
+            this release
+
+  - it: renders exactly one HTTPRoute
+    template: templates/httproute.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isAPIVersion:
+          of: gateway.networking.k8s.io/v1
+      - isKind:
+          of: HTTPRoute
+
+  - it: names the parent Gateway and its namespace in parentRefs
+    template: templates/httproute.yaml
+    asserts:
+      - equal:
+          path: spec.parentRefs[0].name
+          value: shared-gateway
+      - equal:
+          path: spec.parentRefs[0].namespace
+          value: gateway-system
+
+  - it: carries the configured hostnames
+    template: templates/httproute.yaml
+    asserts:
+      - equal:
+          path: spec.hostnames[0]
+          value: solobill.example.org
+
+  - it: points its one rule at the chart's own Service and port
+    template: templates/httproute.yaml
+    asserts:
+      - equal:
+          path: spec.rules[0].backendRefs[0].name
+          value: RELEASE-NAME-solobill
+      - equal:
+          path: spec.rules[0].backendRefs[0].port
+          value: 8080
+
+  - it: carries no tls field, unlike the Ingress alternative
+    template: templates/httproute.yaml
+    asserts:
+      - isNull:
+          path: spec.tls
+
+  - it: renders no Ingress when httpRoute is the chosen route
+    template: templates/ingress.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
