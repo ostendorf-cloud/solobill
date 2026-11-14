@@ -7,15 +7,26 @@ Installs [solobill](https://github.com/ostendorf-cloud/solobill) on a Kubernetes
 - Kubernetes 1.27 or newer.
 - A PostgreSQL database reachable from the cluster, with `db/migrations` either already
   applied or applicable by this chart's own migration Job (see "Migrations" below).
-- **The database role this chart connects as must be `NOSUPERUSER` and `NOBYPASSRLS`.**
-  `db/migrations` enables `FORCE ROW LEVEL SECURITY` on `accounts` and `invites`: that is the
-  actual multi-tenancy guarantee, not application code. `FORCE` binds the policy to the
-  table's own owning role too, but a Postgres superuser, or any role carrying the `BYPASSRLS`
-  attribute, is exempt from row level security regardless of `FORCE`. If the role named by
-  `config.databaseUser` has either property, every tenant-isolation policy this application
-  depends on provides no actual protection, silently. Provisioning that role correctly is the
-  cluster operator's responsibility: this chart has no way to enforce it from here, and never
-  creates the role itself.
+- **Two Postgres roles, not one.** This chart's default is the two-role split "One role, or
+  two" below describes in full: a migration role (`migrationJob.databaseUser`) that runs
+  `db/migrations` and owns the tables it creates, and a separate application role
+  (`config.databaseUser`) that never does. Both roles must already exist; this chart creates
+  neither, and fails an install or upgrade outright when it is not told two distinct roles (see
+  "Installing" below).
+- **The role named by `config.databaseUser` must be `NOSUPERUSER` and `NOBYPASSRLS`, and must
+  never own `tenants`, `accounts`, `invites`, `documents` or `document_lines`.** `db/migrations`
+  enables `FORCE ROW LEVEL SECURITY` on every tenant-scoped table: that is the actual
+  multi-tenancy guarantee, not application code, and `documents`/`document_lines` each also
+  carry a trigger that is the actual mechanism keeping an issued invoice from ever being
+  changed again. `FORCE` binds the row-level-security policy to a table's own owning role too,
+  but a Postgres superuser, or any role carrying the `BYPASSRLS` attribute, is exempt from row
+  level security regardless of `FORCE`; and disabling a trigger
+  (`ALTER TABLE ... DISABLE TRIGGER`) takes the same thing bypassing `FORCE` does: table
+  ownership or superuser. If the role named by `config.databaseUser` has any of those three
+  properties, every guarantee this application depends on provides no actual protection,
+  silently. Provisioning both roles correctly, and never granting `config.databaseUser`
+  ownership some other way, is the cluster operator's responsibility: this chart has no way to
+  enforce it from here, and never creates either role itself.
 - A `Secret` already in the target namespace, created by your own secret manager operator,
   carrying the required database password and signing keys (see "Secrets" below). This chart
   never creates that `Secret` itself.
@@ -29,12 +40,16 @@ Installs [solobill](https://github.com/ostendorf-cloud/solobill) on a Kubernetes
 helm install solobill charts/solobill \
   --set existingSecret.name=solobill-secrets \
   --set config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require \
-  --set config.databaseUser=solobill_app
+  --set config.databaseUser=solobill_app \
+  --set migrationJob.databaseUser=solobill_migrator
 ```
 
-The chart has no usable default for `existingSecret.name`, `config.databaseUrl` or
-`config.databaseUser`: `templates/deployment.yaml` fails an install or upgrade that leaves any
-of them empty, with a message naming the missing key.
+The chart has no usable default for `existingSecret.name`, `config.databaseUrl`,
+`config.databaseUser` or `migrationJob.databaseUser`: `templates/deployment.yaml` fails an
+install or upgrade that leaves any of the first three empty, or that leaves
+`migrationJob.databaseUser` empty or equal to `config.databaseUser`, with a message naming what
+is missing and what to do about it. See "One role, or two" below for why
+`migrationJob.databaseUser` has no fallback to `config.databaseUser`.
 
 This chart is also published as an OCI artifact, versioned in lock-step with every release, once
 a publish workflow for it exists; none does yet, so for now install or `helm pull` it by path
@@ -42,54 +57,70 @@ from a checkout of this repository, as above.
 
 ## One role, or two
 
-Unlike `docker-compose.yaml`'s own local development setup, which brings its own throwaway
-Postgres and therefore has to script a second, restricted role itself (a bootstrap superuser
-used only to apply `db/migrations`, and a separate `NOSUPERUSER NOBYPASSRLS` role the
-application actually connects as, see that file's own comment for the full reasoning), this
-chart's Postgres already runs in the cluster it installs into.
+This chart's default is two roles, mirroring `docker-compose.yaml`'s own local development
+setup: that compose file brings its own throwaway Postgres and therefore has to script a
+second, restricted role itself (a bootstrap role used only to apply `db/migrations`, and a
+separate `NOSUPERUSER NOBYPASSRLS` role the application actually connects as, see that file's
+own comment for the full reasoning). This chart's Postgres already runs in the cluster it
+installs into instead, so provisioning the two roles is the cluster operator's job, not a
+script this chart runs; the shape is otherwise the same, with one difference noted below.
+`migrationJob.databaseUser` runs the migration Job and owns every table `db/migrations`
+creates; `config.databaseUser`, the Deployment's own role, never does. There is no fallback
+between the two any more: `templates/deployment.yaml` fails an install or upgrade that leaves
+`migrationJob.databaseUser` empty or equal to `config.databaseUser`, naming the problem and
+pointing back here, rather than quietly authenticating the migration Job and the Deployment as
+the same role.
 
-By default, this chart's own migration Job (below) and its Deployment authenticate as the
-exact same role, configured once by `config.databaseUser` and
-`existingSecret.databasePasswordKey`. A correctly-provisioned `NOSUPERUSER NOBYPASSRLS` role
-is still fully bound by `FORCE ROW LEVEL SECURITY` for every ordinary application query:
-ownership is irrelevant to `FORCE`, only a superuser or a `BYPASSRLS` role bypasses it. But
-that same role, because it is the one that ran `db/migrations` and therefore OWNS every table
-it creates, can also run `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY` or drop the policy
-outright: PostgreSQL's own `ALTER TABLE` reference documents ownership, not `FORCE`, as what
-that command checks. A single role that both migrates and serves the application therefore
-accepts a weaker boundary than `docker-compose.yaml`'s own two-role split: a compromised or
-buggy application process could not just read another tenant's rows through a live
-connection, but could also switch the protection off for every tenant at once, by virtue of
-owning the tables.
+A correctly-provisioned `NOSUPERUSER NOBYPASSRLS` `config.databaseUser` is fully bound by
+`FORCE ROW LEVEL SECURITY` for every ordinary application query regardless of ownership: only
+a superuser or a `BYPASSRLS` role bypasses it, `FORCE` notwithstanding. But PostgreSQL's own
+`ALTER TABLE` reference documents ownership, not `FORCE`, as what `ALTER TABLE` itself checks,
+and disabling a trigger (`ALTER TABLE ... DISABLE TRIGGER`) needs that same thing: table
+ownership or superuser, nothing row-level-security specific. `documents` and `document_lines`
+each carry a `BEFORE UPDATE OR DELETE`/`BEFORE INSERT OR UPDATE OR DELETE` trigger
+(`documents_block_issued_mutation`, `document_lines_block_issued_document_mutation`) that is
+the actual mechanism keeping an issued invoice from ever being changed again; see
+`db/migrations`' own comments on both for the full reasoning. A role that owns these tables can
+disable either trigger, or drop a row-level-security policy outright, and then mutate an
+issued invoice or read another tenant's rows, regardless of what either guarantee is supposed
+to prevent - which is exactly why `config.databaseUser` must never be that role, and why this
+chart no longer defaults to letting it be.
 
-The same ownership also reaches further than row level security. `documents` and
-`document_lines` each carry a `BEFORE UPDATE OR DELETE`/`BEFORE INSERT OR UPDATE OR DELETE`
-trigger (`documents_block_issued_mutation`, `document_lines_block_issued_document_mutation`)
-that is the actual mechanism keeping an issued invoice from ever being changed again; see
-`db/migrations`' own comments on both for the full reasoning. Disabling a trigger
-(`ALTER TABLE ... DISABLE TRIGGER`) needs the same thing bypassing row level security's
-`FORCE` does: table ownership or superuser. Under this chart's single-role default, the role
-owns `documents` and `document_lines` too, so it can disable either trigger and then mutate
-or delete an issued invoice outright, the tax document this application exists to never let
-anyone touch again once issued. This is a strictly worse failure mode than the row-level-
-security one above: a buggy or compromised application process does not even need a second
-step (switching a policy off first) to reach it, one `ALTER TABLE ... DISABLE TRIGGER` and one
-ordinary `UPDATE` do it directly.
+Grant `config.databaseUser` exactly the privileges `docker-compose.yaml`'s own
+`grant-app-role` service grants `solobill_app`, table by table, never ownership:
+`SELECT, INSERT` on `tenants`; `SELECT, INSERT, UPDATE` on `accounts`, `invites`, `customers`
+and `catalogue_items`; `SELECT, INSERT, UPDATE, DELETE` on `documents`; `SELECT, INSERT, DELETE`
+on `document_lines`; `SELECT, INSERT, UPDATE` on `document_numbers`; and the matching
+`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES` rule to cover a later
+migration's new table. `db/migrations`' own comments on `documents` and `document_lines`
+explain why each one needs exactly the privileges granted there (for example, why
+`document_lines` is granted `DELETE` but never `UPDATE`); that reasoning, not this list, is
+what to re-check before changing either one. This chart never issues a `GRANT` itself and has
+no way to: it only ever runs `db/migrations` as `migrationJob.databaseUser`.
 
-Set `migrationJob.databaseUser` (and, if its password lives under a different key in the same
-Secret, `existingSecret.migrationDatabasePasswordKey`) to a separate role the application
-itself never authenticates as, to get the stronger, two-role boundary instead, mirroring
-`docker-compose.yaml`'s own bootstrap-superuser-for-migrations-only split. Left empty, the
-default, this chart keeps the single-role behaviour above, for both row level security and
-the two immutability triggers.
+Set `existingSecret.migrationDatabasePasswordKey` alongside `migrationJob.databaseUser` if its
+password lives under a different key in the same Secret than
+`existingSecret.databasePasswordKey` names; left unset, it falls back to that same key, which
+only works when both roles happen to share one password.
 
-This chart has no way to provision that second role itself, the same reason the
-"Prerequisites" section above cannot enforce `config.databaseUser`'s own `NOSUPERUSER
-NOBYPASSRLS` requirement from here: creating the role, granting it exactly what
-`db/migrations`'s own grants document, and keeping `config.databaseUser` from ever being made
-its owner are all the cluster operator's responsibility. Setting `migrationJob.databaseUser`
-only tells this chart's own templates which role to run the migration Job as; it is not itself
-the guarantee, provisioning the role correctly is.
+This chart has no way to provision either role itself, or to verify what it is told, the same
+reason the "Prerequisites" section above cannot enforce `config.databaseUser`'s own
+`NOSUPERUSER NOBYPASSRLS` requirement from here. Three things specifically stay the cluster
+operator's responsibility and this chart's render-time guard cannot see: `migrationJob.databaseUser`
+not being a superuser or carrying `BYPASSRLS` (it only ever needs to own the schema it creates,
+nothing more - unlike `docker-compose.yaml`'s own bootstrap role, which the official Postgres
+image makes a full superuser rather than only a schema owner); `config.databaseUser` staying
+`NOSUPERUSER NOBYPASSRLS`; and `config.databaseUser` never being granted ownership of
+`tenants`, `accounts`, `invites`, `documents` or `document_lines` some other way after install,
+directly or through membership in the role that owns them. Setting `migrationJob.databaseUser`
+and `config.databaseUser` to two distinct roles, and satisfying the render-time guard above, is
+necessary for the guarantee this section describes; it is not sufficient, and provisioning both
+roles correctly remains the cluster operator's job either way.
+
+Disable the migration Job outright with `migrationJob.enabled: false` for a deployment that
+applies `db/migrations` some other way; see "Migrations" below. That route owns this same
+two-role contract itself, outside this chart's own render-time guard, which only ever checks
+`migrationJob.databaseUser` while `migrationJob.enabled` is true.
 
 ## Migrations
 
@@ -107,7 +138,7 @@ Disable it with `migrationJob.enabled: false` for a deployment that applies `db/
 some other way; see "Values" below.
 
 The migration Job assembles its own connection URL from `config.databaseUrl`,
-`migrationJob.databaseUser` (falling back to `config.databaseUser` when unset; see
+`migrationJob.databaseUser` (required, with no fallback to `config.databaseUser`; see
 "One role, or two" above) and the existing Secret's password with plain POSIX shell parameter
 expansion, not a URL encoder: the password must therefore contain no character that needs
 percent-encoding in a URL (no `@`, `/`, `:`, `%`, whitespace, ...). This organisation's own
@@ -295,7 +326,7 @@ to discover `PodMonitor` resources; it now has the `Service` port it would need 
 | `existingSecret.oidcClientSecretKey` | Key for `OIDC_CLIENT_SECRET`. Empty omits the variable. | `""` |
 | `existingSecret.migrationDatabasePasswordKey` | Password key for `migrationJob.databaseUser`, in this same Secret. Empty falls back to `databasePasswordKey`. | `""` |
 | `migrationJob.enabled` | Run the `db/migrations` hook Job on install and upgrade. | `true` |
-| `migrationJob.databaseUser` | Separate role that owns and migrates `accounts`/`invites`, distinct from `config.databaseUser`. Empty falls back to `config.databaseUser`; see "One role, or two" above. | `""` |
+| `migrationJob.databaseUser` | Separate role that owns the schema and runs `db/migrations`, distinct from `config.databaseUser`. Required whenever `migrationJob.enabled` is true, with no fallback: see "One role, or two" above. | `""` |
 | `migrationJob.image.repository` | The official dbmate image. | `ghcr.io/amacneil/dbmate` |
 | `migrationJob.image.tag` | dbmate image tag, matching `docker-compose.yaml`'s own pin. | `2.38.1` |
 | `migrationJob.annotations` | Extra annotations on the migration Job. | `{}` |
@@ -305,6 +336,10 @@ to discover `PodMonitor` resources; it now has the `Service` port it would need 
 are enforced by a `fail` guard in `templates/deployment.yaml` instead of `values.schema.json`'s
 `minLength`: an install or upgrade with any of them missing or empty fails the render with a
 readable message. Every other required field above is still enforced by the schema.
+
+`migrationJob.databaseUser` is the same kind of conditionally-required field, enforced the same
+way, but only while `migrationJob.enabled` is true: a `fail` guard in `templates/deployment.yaml`
+fires when it is left empty or set equal to `config.databaseUser`; see "One role, or two" above.
 
 `httpRoute.parentRefs.name` and `httpRoute.parentRefs.namespace` are the same kind of
 conditionally-required field, enforced the same way: a `fail` guard in `templates/httproute.yaml`
