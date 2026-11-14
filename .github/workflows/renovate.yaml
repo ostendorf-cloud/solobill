@@ -37,5 +37,3 @@ jobs:
     # line past yamllint's 120-character line-length limit (the SHA alone is 40 characters).
     uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate.yaml@52cffb7b98063f12833bf09ca1b0ab20293a483c
     secrets: inherit
-    with:
-      runs-on-runner: blacksmith-2vcpu-ubuntu-2404
