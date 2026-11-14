@@ -7,6 +7,8 @@ set:
   config:
     databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
     databaseUser: solobill_app
+  migrationJob:
+    databaseUser: solobill_migrator
 tests:
   - it: keeps selector labels stable at the only valid replica count
     set:

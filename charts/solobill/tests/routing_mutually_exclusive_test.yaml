@@ -9,6 +9,8 @@ set:
     databaseUser: solobill_app
     trustedProxies:
       - 10.0.0.0/8
+  migrationJob:
+    databaseUser: solobill_migrator
   ingress:
     enabled: true
   httpRoute:

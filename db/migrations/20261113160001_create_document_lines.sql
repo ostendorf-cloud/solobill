@@ -260,28 +260,33 @@ END;
 $$;
 
 -- This trigger's UPDATE arm is unreachable for solobill_app specifically
--- under docker-compose.yaml's own local-dev setup and under this
--- chart's two-role deployment (see charts/solobill/README.md's "One
--- role, or two"): "grant-app-role" grants document_lines only SELECT,
--- INSERT and DELETE, never UPDATE (no query ever updates a line in
--- place; see that grant's own comment), so a raw UPDATE is already
--- refused by the privilege check before this trigger ever runs there,
--- and document_immutability_integration_test.go's own UPDATE subtest
+-- under docker-compose.yaml's own local-dev setup and under
+-- charts/solobill's own default deployment shape (see
+-- charts/solobill/README.md's "One role, or two"): "grant-app-role"
+-- grants document_lines only SELECT, INSERT and DELETE, never UPDATE
+-- (no query ever updates a line in place; see that grant's own
+-- comment), so a raw UPDATE is already refused by the privilege check
+-- before this trigger ever runs there, and
+-- document_immutability_integration_test.go's own UPDATE subtest
 -- against the restricted test role asserts exactly that (42501, not
 -- this trigger's 23000).
 --
--- It is NOT unreachable in general: charts/solobill/README.md's "One
--- role, or two" documents the chart's own default as a single role that
--- both runs db/migrations and serves the application, which therefore
--- OWNS this table and so holds every privilege on it, UPDATE included,
--- with no GRANT needed. Under that default, this is the live arm, and
--- it is the one Blocker 1's own fix (see the function body above) landed
--- in: a raw UPDATE moving a line between documents is exactly what an
--- owning role can still do, and this trigger, not a grant, is the only
--- thing left to refuse it. A second integration subtest, run as a role
--- that owns this table (document_immutability_integration_test.go's
--- "moving an issued document's line onto a draft" case), exercises that
--- arm directly rather than leaving it uncovered.
+-- It is NOT unreachable in general: the chart only refuses to render
+-- when migrationJob.databaseUser is left unset or set equal to
+-- config.databaseUser (templates/deployment.yaml's own fail guards); it
+-- has no way to stop an operator from separately granting
+-- config.databaseUser ownership of this table some other way after
+-- install (directly, or through membership in the owning role), despite
+-- having satisfied that render-time contract. A role that owns this
+-- table holds every privilege on it, UPDATE included, with no GRANT
+-- needed, which is exactly the case Blocker 1's own fix (see the
+-- function body above) landed in: a raw UPDATE moving a line between
+-- documents is exactly what an owning role can still do, and this
+-- trigger, not a grant, is the only thing left to refuse it. A second
+-- integration subtest, run as a role that owns this table
+-- (document_immutability_integration_test.go's "moving an issued
+-- document's line onto a draft" case), exercises that arm directly
+-- rather than leaving it uncovered.
 CREATE TRIGGER document_lines_block_issued_document_mutation
     BEFORE INSERT OR UPDATE OR DELETE ON document_lines
     FOR EACH ROW

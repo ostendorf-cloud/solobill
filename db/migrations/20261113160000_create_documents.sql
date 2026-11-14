@@ -301,18 +301,20 @@ CREATE POLICY documents_tenant_isolation ON documents
 -- document_lines; solobill_super, the role that does own them, only
 -- ever runs db/migrations itself, never application traffic.
 --
--- It does NOT hold under charts/solobill/README.md's own default
+-- It also holds under charts/solobill/README.md's own default
 -- deployment shape: by default, the chart's migration Job and its
--- Deployment authenticate as the exact same role (config.databaseUser),
--- which therefore owns every table db/migrations creates, this one
--- included, and so CAN run ALTER TABLE documents DISABLE TRIGGER
--- documents_block_issued_mutation and then mutate or delete an issued
--- invoice outright. See README.md's "One role, or two" section for the
--- two-role split (migrationJob.databaseUser set to a role distinct from
--- config.databaseUser) that restores the guarantee this comment
--- describes, and for why provisioning that split is the operator's own
--- responsibility, not something this migration or that chart can
--- enforce from here.
+-- Deployment authenticate as two separate roles (migrationJob.databaseUser
+-- and config.databaseUser), and templates/deployment.yaml refuses to
+-- render an install that leaves migrationJob.databaseUser unset or sets
+-- it equal to config.databaseUser. config.databaseUser therefore never
+-- owns this table, or documents_block_issued_mutation, under a chart
+-- install that actually renders. What the chart cannot see or enforce
+-- from here is an operator granting config.databaseUser ownership of
+-- this table some other way after install (directly, or through
+-- membership in the role that owns it): that would reopen exactly this
+-- gap despite having satisfied the chart's own render-time contract.
+-- See README.md's "One role, or two" section for the full reasoning and
+-- that remaining caveat.
 --
 -- Deliberately blocks every UPDATE and DELETE once OLD.state = 'issued',
 -- with no column-by-column exception: nothing in this step's scope (no
