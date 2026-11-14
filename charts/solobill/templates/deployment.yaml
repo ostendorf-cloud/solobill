@@ -32,6 +32,36 @@ instead.
 {{ fail "existingSecret.name is required" }}
 {{- end -}}
 {{/*
+migrationJob.databaseUser has no usable default either, for a different
+reason than the three checks above: a value exists that would render
+(falling back to config.databaseUser), but README.md's "One role, or
+two" documents why that single-role shape accepts a weaker boundary -
+the role that runs db/migrations then owns tenants, accounts, invites,
+documents and document_lines, and an owner can ALTER TABLE ... DISABLE
+TRIGGER or ALTER TABLE ... NO FORCE ROW LEVEL SECURITY and then touch an
+issued invoice or another tenant's rows outright. The chart's default is
+therefore the two-role shape, not the single-role fallback, and it is
+expressed here as a render-time guard rather than a values.yaml default,
+because this chart cannot create the second Postgres role itself: there
+is no value that would make a fresh install actually work on its own,
+only a contract the cluster operator fulfils before installing. Failing
+loudly here, by name, is the point: left to render anyway, this Job
+would instead fail deep inside dbmate with a bare Postgres permission
+error (or silently succeed with the single-role boundary README.md
+warns against) with no indication that a second role was ever expected.
+Skipped entirely when migrationJob.enabled is false: an operator who
+disables the Job and applies db/migrations some other way owns this
+contract some other way too.
+*/}}
+{{- if .Values.migrationJob.enabled }}
+{{- if not .Values.migrationJob.databaseUser -}}
+{{ fail "migrationJob.databaseUser is required when migrationJob.enabled is true: this chart's default is a role distinct from config.databaseUser that runs db/migrations and owns the tables it creates, so the application role never can. Provision that role (able to connect and run CREATE TABLE/CREATE TRIGGER against this database) and set migrationJob.databaseUser to its name; see README.md's \"One role, or two\" section for exactly what config.databaseUser then needs granted instead." }}
+{{- end -}}
+{{- if eq .Values.migrationJob.databaseUser .Values.config.databaseUser -}}
+{{ fail "migrationJob.databaseUser must not equal config.databaseUser: authenticating the migration Job and the Deployment as the same role recreates the single-role ownership gap this chart's default two-role split exists to close. Set migrationJob.databaseUser to a separate role that owns db/migrations' tables; see README.md's \"One role, or two\" section." }}
+{{- end -}}
+{{- end -}}
+{{/*
 With an Ingress in front of the Service, the TCP peer govue's
 clientip.Resolver.Resolve would otherwise key the rate limiter on is the
 ingress controller's own pod address, the same for every client: one

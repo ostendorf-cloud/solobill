@@ -6,21 +6,28 @@ command is idempotent (it tracks applied migrations in its own
 schema_migrations table), so re-running it on every upgrade against an
 already-migrated database is safe.
 
-One role, or two: left empty, the default, migrationJob.databaseUser
-falls back to config.databaseUser, so this Job authenticates as the exact
-same role the Deployment itself uses. That role is still fully bound by
-FORCE ROW LEVEL SECURITY for every ordinary application query (ownership
-is irrelevant to FORCE), but PostgreSQL's own ALTER TABLE reference makes
-ownership, not FORCE, what ALTER TABLE itself checks - so that same role,
-because it owns the tables db/migrations creates, can also run
-ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or drop the policy outright.
-Setting migrationJob.databaseUser to a separate role the application
-itself never authenticates as closes that gap, mirroring
-docker-compose.yaml's own bootstrap-superuser-for-migrations-only split.
-See README.md's "One role, or two" section for the full reasoning, and
-values.yaml's own comment on config.databaseUser for the operator-facing
-requirement (NOSUPERUSER NOBYPASSRLS) this chart cannot enforce from here
-either way.
+One role, or two: this chart's default is two. migrationJob.databaseUser
+has no usable default of its own and no fallback to config.databaseUser
+any more - templates/deployment.yaml fails the render when it is left
+unset or set equal to config.databaseUser - so this Job always
+authenticates as a role distinct from the Deployment's own
+config.databaseUser whenever it actually renders. That is what keeps
+config.databaseUser from ever owning the tables db/migrations creates:
+PostgreSQL's own ALTER TABLE reference makes ownership, not FORCE ROW
+LEVEL SECURITY, what ALTER TABLE itself checks, so an owning role could
+otherwise run ALTER TABLE ... NO FORCE ROW LEVEL SECURITY, or disable
+documents/document_lines' own immutability triggers, and then touch
+another tenant's rows or an issued invoice outright, regardless of
+FORCE. Mirrors docker-compose.yaml's own bootstrap-superuser-for-
+migrations-only split, with one difference: that compose file's
+bootstrap role is a full Postgres superuser (the official image makes
+whatever POSTGRES_USER names one), where this chart's own contract only
+ever asks migrationJob.databaseUser to own the schema it creates, never
+to be a superuser or carry BYPASSRLS. See README.md's "One role, or
+two" section for the full reasoning, exactly what config.databaseUser
+needs granted instead, and the caveats (not a superuser, no BYPASSRLS,
+no ownership granted some other way) this chart has no way to enforce
+from here.
 
 The official dbmate image has a shell (unlike solobill's own distroless
 runtime image), used here only to assemble the full connection URL dbmate
@@ -37,7 +44,7 @@ requirement (see values.yaml's existingSecret.databasePasswordKey comment
 and README.md), not a limitation this Job works around silently.
 */}}
 {{- if .Values.migrationJob.enabled -}}
-{{- $migrationUser := .Values.migrationJob.databaseUser | default .Values.config.databaseUser -}}
+{{- $migrationUser := .Values.migrationJob.databaseUser -}}
 {{- $migrationSecretKey := .Values.existingSecret.migrationDatabasePasswordKey | default .Values.existingSecret.databasePasswordKey -}}
 apiVersion: batch/v1
 kind: Job
