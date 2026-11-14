@@ -131,8 +131,6 @@ asserting isolation through a superuser connection would prove nothing.
   `v0` once it exists.
 - No CodeQL workflow. Code scanning on a private repository needs GitHub Advanced Security, which
   this account does not have.
-- Every job runs on `blacksmith-2vcpu-ubuntu-2404`, never on a GitHub hosted runner: this
-  repository is private, so its minutes are billed.
 - `Dockerfile`'s web stage installs corepack through npm instead of `mise`: Node stopped
   distributing corepack from Node.js 25 onward (nodejs/node PR 57617), and there is no `mise`
   inside that image stage to install it another way.
