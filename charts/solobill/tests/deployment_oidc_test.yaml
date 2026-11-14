@@ -15,6 +15,8 @@ set:
       defaultTenantSlug: acme
       scopes:
         - roles
+  migrationJob:
+    databaseUser: solobill_migrator
 tests:
   - it: wires OIDC_ISSUER_URL, OIDC_CLIENT_ID, OIDC_REDIRECT_URL and OIDC_DEFAULT_TENANT_SLUG as plain env vars
     asserts:
@@ -65,6 +67,8 @@ tests:
       config:
         databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
         databaseUser: solobill_app
+      migrationJob:
+        databaseUser: solobill_migrator
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env
@@ -99,6 +103,8 @@ tests:
           clientId: solobill
           redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
           defaultTenantSlug: acme
+      migrationJob:
+        databaseUser: solobill_migrator
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env

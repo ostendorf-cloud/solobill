@@ -134,6 +134,16 @@ services:
   #
   # Runs as solobill_super against the postgres service: it only grants
   # privileges, so it needs no password of solobill_app's own.
+  #
+  # internal/storage/postgres/integration_test.go's setUpTestAppRole
+  # grants its own solobill_test_app role the identical set of
+  # privileges, table by table, so that the isolation and immutability
+  # tests run under the same restrictions as the real application role
+  # rather than a role with its own, possibly looser, rules. The two grant
+  # lists are necessarily separate (one is psql -c arguments here, the
+  # other a Go string built for a different role name) and nothing
+  # enforces that they stay in step; a table's privileges changed in one
+  # place need the same change in the other, by hand.
   grant-app-role:
     image: postgres:18@sha256:b9f6b8ff03b62f3cfd9d9ba3fe56226a9991c79d3fb46fd46536263bf02be553
     depends_on:
@@ -157,6 +167,40 @@ services:
       # here either: the same reasoning as accounts and invites above.
       - -c
       - GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO solobill_app;
+      # documents is the one table in this schema a real DELETE ever
+      # reaches (DeleteDraftDocument on a still-mutable draft; see
+      # internal/storage/postgres/queries/documents.sql), so it is the
+      # one table granted DELETE here. document_lines also needs DELETE
+      # (DeleteDocumentLines, and document_lines' own ON DELETE CASCADE
+      # foreign key when a draft document is removed) but no UPDATE: no
+      # query ever updates an existing line in place, Update instead
+      # deletes every line and recreates the caller's current set. That
+      # means a raw UPDATE against document_lines is refused for
+      # solobill_app unconditionally, for a draft's own line exactly as
+      # much as for an issued one: the rejection comes from this grant
+      # withholding the privilege itself (Postgres' own
+      # "permission denied for table document_lines", SQLSTATE 42501),
+      # before any trigger ever runs, not from
+      # document_lines_block_issued_document_mutation deciding the write
+      # is illegal. The trigger below still has its own job: refusing an
+      # INSERT or a DELETE once the parent document is issued, which
+      # this grant does nothing about since both of those are granted.
+      #
+      # Neither grant lets solobill_app actually touch an issued
+      # document or its lines despite holding UPDATE/DELETE (documents)
+      # or INSERT/DELETE (document_lines): see db/migrations'
+      # documents_block_issued_mutation and
+      # document_lines_block_issued_document_mutation triggers, which
+      # refuse that at the database level regardless of what this role
+      # is granted.
+      - -c
+      - GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO solobill_app;
+      - -c
+      - GRANT SELECT, INSERT, DELETE ON document_lines TO solobill_app;
+      # document_numbers is only ever inserted (first use of a counter),
+      # read and incremented, never deleted.
+      - -c
+      - GRANT SELECT, INSERT, UPDATE ON document_numbers TO solobill_app;
       - -c
       - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO solobill_app;
 

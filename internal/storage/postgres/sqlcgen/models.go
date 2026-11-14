@@ -51,6 +51,53 @@ type Customer struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type Document struct {
+	ID                       uuid.UUID
+	TenantID                 uuid.UUID
+	Type                     string
+	State                    string
+	CustomerID               uuid.UUID
+	CorrectsDocumentID       pgtype.UUID
+	VatRegime                string
+	ServiceDate              pgtype.Date
+	DueDate                  pgtype.Date
+	DiscountPercentPermyriad pgtype.Int4
+	DiscountAmountCents      pgtype.Int8
+	Number                   pgtype.Int8
+	NumberYear               pgtype.Int4
+	Imported                 bool
+	FrozenPayload            []byte
+	FrozenPayloadSha256      pgtype.Text
+	IssuedAt                 pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+}
+
+type DocumentLine struct {
+	ID                           uuid.UUID
+	TenantID                     uuid.UUID
+	DocumentID                   uuid.UUID
+	Position                     int32
+	CatalogueItemID              pgtype.UUID
+	Description                  string
+	QuantityThousandths          int64
+	UnitPriceCents               int64
+	Unit                         string
+	VatRatePermyriad             int32
+	LineDiscountPercentPermyriad pgtype.Int4
+	LineDiscountAmountCents      pgtype.Int8
+	CreatedAt                    pgtype.Timestamptz
+	UpdatedAt                    pgtype.Timestamptz
+}
+
+type DocumentNumber struct {
+	TenantID   uuid.UUID
+	Type       string
+	NumberYear int32
+	LastNumber int64
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type Invite struct {
 	ID         uuid.UUID
 	TenantID   uuid.UUID

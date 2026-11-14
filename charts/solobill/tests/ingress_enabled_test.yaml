@@ -10,6 +10,8 @@ set:
     databaseUser: solobill_app
     trustedProxies:
       - 10.0.0.0/8
+  migrationJob:
+    databaseUser: solobill_migrator
   ingress:
     enabled: true
     className: nginx
@@ -26,6 +28,8 @@ tests:
         databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
         databaseUser: solobill_app
         trustedProxies: []
+      migrationJob:
+        databaseUser: solobill_migrator
     asserts:
       - failedTemplate:
           errorMessage: >-

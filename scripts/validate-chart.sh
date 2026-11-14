@@ -40,12 +40,15 @@ names=(
 )
 
 # Each entry is one combination's --set arguments, matching the corresponding
-# charts/solobill/tests/*_test.yaml suite's "set:" block.
+# charts/solobill/tests/*_test.yaml suite's "set:" block. migrationJob.databaseUser is set in
+# every combination, distinct from config.databaseUser: this chart's default now requires it
+# (see charts/solobill/README.md's "One role, or two"), and templates/deployment.yaml, which
+# every combination below renders, fails the render otherwise.
 sets=(
-  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app"
-  "existingSecret.name=solobill-secrets,existingSecret.oidcClientSecretKey=OIDC_CLIENT_SECRET,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,config.oidc.issuerUrl=https://idp.example.com,config.oidc.clientId=solobill,config.oidc.redirectUrl=https://solobill.example.com/api/v1/auth/oidc/callback,config.oidc.defaultTenantSlug=acme"
-  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx,ingress.hosts[0].host=solobill.example.org,ingress.hosts[0].paths[0].path=/,ingress.hosts[0].paths[0].pathType=Prefix"
-  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,httpRoute.enabled=true,httpRoute.hostnames[0]=solobill.example.org,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
+  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+  "existingSecret.name=solobill-secrets,existingSecret.oidcClientSecretKey=OIDC_CLIENT_SECRET,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.oidc.issuerUrl=https://idp.example.com,config.oidc.clientId=solobill,config.oidc.redirectUrl=https://solobill.example.com/api/v1/auth/oidc/callback,config.oidc.defaultTenantSlug=acme"
+  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx,ingress.hosts[0].host=solobill.example.org,ingress.hosts[0].paths[0].path=/,ingress.hosts[0].paths[0].pathType=Prefix"
+  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,httpRoute.enabled=true,httpRoute.hostnames[0]=solobill.example.org,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
 )
 
 # kubeconform's default schema location carries no Gateway API schemas. This second
