@@ -235,7 +235,7 @@
         "enabled": { "type": "boolean" },
         "databaseUser": {
           "type": "string",
-          "description": "Optional separate role that owns and migrates accounts/invites, distinct from config.databaseUser. Left empty, falls back to config.databaseUser; see values.yaml's own comment and README.md's 'One role, or two' section."
+          "description": "Separate role that owns and migrates the schema, distinct from config.databaseUser. No usable default: templates/deployment.yaml fails the render, not this schema with minLength, when this is left empty or set equal to config.databaseUser while migrationJob.enabled is true, matching config.databaseUrl/config.databaseUser/existingSecret.name's own pattern. See values.yaml's own comment and README.md's 'One role, or two' section."
         },
         "image": {
           "type": "object",
