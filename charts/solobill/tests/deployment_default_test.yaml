@@ -13,6 +13,8 @@ set:
   config:
     databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
     databaseUser: solobill_app
+  migrationJob:
+    databaseUser: solobill_migrator
 tests:
   - it: renders exactly one replica
     template: templates/deployment.yaml
@@ -307,7 +309,7 @@ tests:
       - hasDocuments:
           count: 0
 
-  - it: renders the migration Job as a pre-install,pre-upgrade hook authenticating as the same role
+  - it: renders the migration Job as a pre-install,pre-upgrade hook authenticating as its own distinct migration role
     template: templates/migration-job.yaml
     asserts:
       - isKind:
@@ -322,6 +324,11 @@ tests:
           path: metadata.annotations["helm.sh/hook-delete-policy"]
           value: before-hook-creation,hook-succeeded
       - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_USER
+            value: solobill_migrator
+      - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: DATABASE_USER

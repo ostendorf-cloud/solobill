@@ -217,16 +217,20 @@ config:
   # NOBYPASSRLS, not this chart, which has no way to enforce that from
   # here.
   #
-  # By default this one role also runs db/migrations (via migrationJob
-  # below), and that role then OWNS the tables it creates. FORCE ROW
-  # LEVEL SECURITY still binds every ordinary application query the same
-  # role runs (ownership is irrelevant to FORCE), but PostgreSQL's own
-  # ALTER TABLE reference makes ownership, not FORCE, what ALTER TABLE
-  # itself checks - so this role, because it owns those tables, can also
-  # run ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or drop the policy
-  # outright. Set migrationJob.databaseUser to accept docker-compose's
-  # own two-role split instead and close that gap; see README.md's
-  # "One role, or two" section.
+  # This role must never be the one that runs db/migrations (via
+  # migrationJob below), and must never own tenants, accounts, invites,
+  # documents or document_lines: FORCE ROW LEVEL SECURITY binds every
+  # ordinary application query this role runs regardless of ownership,
+  # but PostgreSQL's own ALTER TABLE reference makes ownership, not
+  # FORCE, what ALTER TABLE itself checks - an owning role could still
+  # run ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or drop a policy
+  # outright, or disable documents'/document_lines' own immutability
+  # triggers and then mutate or delete an issued invoice. This chart's
+  # default is the two-role split that keeps that from being possible
+  # (migrationJob.databaseUser, set to a role distinct from this one);
+  # see migrationJob.databaseUser's own comment below and README.md's
+  # "One role, or two" section for exactly what this role needs granted
+  # instead of owning anything.
   databaseUser: ""
   # sessionAllowPlainHttp drops the Secure cookie attribute, matching
   # internal/config.Config's own SessionAllowPlainHTTP doc comment: "a
@@ -328,19 +332,27 @@ existingSecret:
 # upgrade is safe, not merely tolerated.
 migrationJob:
   enabled: true
-  # Optional: a separate, higher-privileged role that OWNS accounts/invites
-  # and applies db/migrations, distinct from config.databaseUser (which the
-  # Deployment's pods connect as for ordinary queries). Mirrors
-  # docker-compose.yaml's own bootstrap-superuser-for-migrations-only
-  # split. Left empty, the default, this Job authenticates as
-  # config.databaseUser instead: a single role that owns its own tables,
-  # which IS still bound by FORCE ROW LEVEL SECURITY for every ordinary
-  # application query, but which can, precisely because it owns the
-  # tables, run ALTER TABLE ... NO FORCE ROW LEVEL SECURITY or drop the
-  # policy outright (PostgreSQL's ALTER TABLE reference: ownership is
-  # what that command checks, FORCE notwithstanding). Set this to a role
-  # the application itself never authenticates as to close that gap; see
-  # README.md.
+  # Required whenever migrationJob.enabled is true, with no usable
+  # default: left empty here on purpose, the same reason
+  # config.databaseUrl, config.databaseUser and existingSecret.name are.
+  # This chart cannot create the role itself, so there is no value that
+  # would make a fresh install work on its own; templates/deployment.yaml
+  # fails the render with a readable message, naming what is missing,
+  # when this is left unset or set equal to config.databaseUser, rather
+  # than quietly falling back to it.
+  #
+  # Set this to a separate, higher-privileged role that OWNS the tables
+  # db/migrations creates and applies them, distinct from
+  # config.databaseUser (which the Deployment's pods connect as for
+  # ordinary queries, and which must never own them; see that key's own
+  # comment above). Mirrors docker-compose.yaml's own bootstrap-role-for-
+  # migrations-only split, with one difference: that compose file's
+  # bootstrap role is a full Postgres superuser, where this role only
+  # ever needs to own the schema it creates, never to be a superuser or
+  # carry BYPASSRLS. See README.md's "One role, or two" section for the
+  # full reasoning, exactly what config.databaseUser needs granted
+  # instead of ownership, and the caveats this chart cannot enforce from
+  # here.
   databaseUser: ""
   image:
     # The same official dbmate image docker-compose.yaml already uses for

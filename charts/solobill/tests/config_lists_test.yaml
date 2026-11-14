@@ -13,6 +13,8 @@ set:
     trustedProxies:
       - 10.0.0.0/8
       - 192.168.1.1
+  migrationJob:
+    databaseUser: solobill_migrator
 tests:
   - it: joins ALLOWED_ORIGINS with a comma, matching envconf.Loader.List's own split
     asserts:
