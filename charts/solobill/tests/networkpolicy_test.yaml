@@ -488,3 +488,64 @@ tests:
           errorMessage: >-
             networkPolicy.egress.oidc.port is required while networkPolicy.egress.enabled is
             true: it is the only port this policy allows identity provider egress on.
+
+  - it: fails the render when service.port and adminPort are equal
+    set:
+      service:
+        port: 8081
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            service.port and adminPort are both 8081: the public ingress rule above admits
+            any source on that port by default, so adminPort would be reachable from
+            anywhere regardless of networkPolicy.ingress.admin. Set service.port and
+            adminPort to different values.
+
+  - it: fails the render when adminPort is changed to match the default service.port
+    set:
+      adminPort: 8080
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            service.port and adminPort are both 8080: the public ingress rule above admits
+            any source on that port by default, so adminPort would be reachable from
+            anywhere regardless of networkPolicy.ingress.admin. Set service.port and
+            adminPort to different values.
+
+  # config.databaseUrl's host carries no port, so the pre-fix helper fell back
+  # to postgres's own 5432 default and missed the mismatch entirely: the
+  # query parameter is what actually determines the port pgx connects on.
+  # This is the false negative the guard above would have let through before
+  # solobill.urlPort learned to read it.
+  - it: fails the render when config.databaseUrl's port query parameter disagrees with networkPolicy.egress.postgres.port
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc/solobill?sslmode=require&port=6432"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl names port 6432 but networkPolicy.egress.postgres.port is
+            5432: with networkPolicy.enabled and networkPolicy.egress.enabled both true,
+            this policy would deny the one connection this application cannot start
+            without. Set networkPolicy.egress.postgres.port to 6432, or point
+            config.databaseUrl at port 5432.
+
+  # A port query parameter overrides an explicit host-embedded port too, not
+  # just a missing one: pgx applies it last, regardless of what the host
+  # already carried. Proven here by matching the rule's port against the
+  # query value rather than the host value, which would fail this same case
+  # if the override were not honoured.
+  - it: follows config.databaseUrl's port query parameter over its own host-embedded port
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require&port=6432"
+      networkPolicy:
+        egress:
+          postgres:
+            port: 6432
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 6432
