@@ -574,8 +574,10 @@ above.
 
 `networkPolicy.egress.postgres.port` and `networkPolicy.egress.oidc.port` are required while
 `networkPolicy.egress.enabled` is true, enforced by a `required` call in
-`templates/networkpolicy.yaml`, which also holds the two port-mismatch guards, the non-numeric
-port guard and the `service.port`/`adminPort` collision guard; see "NetworkPolicy" above.
+`templates/networkpolicy.yaml`, which also holds the two port-mismatch guards and the
+`service.port`/`adminPort` collision guard. The non-numeric port guard itself lives in
+`templates/_helpers.tpl`'s `solobill.urlPort` helper, invoked from `templates/networkpolicy.yaml`;
+see "NetworkPolicy" above.
 
 `config.listenAddr` and `config.adminListenAddr` are not: nothing fails the render when either
 disagrees with `service.port` or `adminPort`, only the comment on each in `values.yaml` and the
