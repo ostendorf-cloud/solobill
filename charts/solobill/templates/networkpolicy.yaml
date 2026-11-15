@@ -1,0 +1,171 @@
+{{- if .Values.networkPolicy.enabled -}}
+{{- $np := .Values.networkPolicy -}}
+{{- $egress := $np.egress | default dict -}}
+{{- $publicPeers := include "solobill.networkPolicy.peers" (($np.ingress).public | default dict) -}}
+{{- $adminPeers := include "solobill.networkPolicy.peers" (($np.ingress).admin | default dict) -}}
+{{- $postgresPeers := include "solobill.networkPolicy.peers" ($egress.postgres | default dict) -}}
+{{- $oidcPeers := include "solobill.networkPolicy.peers" ($egress.oidc | default dict) -}}
+{{- $dnsPeers := include "solobill.networkPolicy.peers" ($egress.dns | default dict) -}}
+{{- $postgresPort := ($egress.postgres).port -}}
+{{- $oidcPort := ($egress.oidc).port -}}
+{{/*
+Two guards turning a runtime failure into a render failure. A default-deny
+egress policy whose allowed port does not match the port the application
+actually dials does not fail at render: it fails later, as a connection that
+times out, with nothing in this chart's output to point at. Both compare the
+port a configured URL names against the port the matching egress rule allows,
+and both live here rather than in templates/deployment.yaml: they are only ever
+wrong while this policy renders, this template renders exactly once, and neither
+value means anything with the policy off.
+
+A URL whose scheme solobill.urlPort does not know yields an empty port and is
+skipped rather than guessed at; see that helper and README.md's "NetworkPolicy"
+section.
+*/}}
+{{- if $egress.enabled -}}
+{{- $_ := $postgresPort | required "networkPolicy.egress.postgres.port is required while networkPolicy.egress.enabled is true: it is the only port this policy allows PostgreSQL egress on." -}}
+{{- $_ = $oidcPort | required "networkPolicy.egress.oidc.port is required while networkPolicy.egress.enabled is true: it is the only port this policy allows identity provider egress on." -}}
+{{- $dbPort := include "solobill.urlPort" .Values.config.databaseUrl -}}
+{{- if and $dbPort (ne $dbPort (printf "%v" $postgresPort)) -}}
+{{ fail (printf "config.databaseUrl names port %s but networkPolicy.egress.postgres.port is %v: with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would deny the one connection this application cannot start without. Set networkPolicy.egress.postgres.port to %s, or point config.databaseUrl at port %v." $dbPort $postgresPort $dbPort $postgresPort) }}
+{{- end -}}
+{{- if .Values.config.oidc.issuerUrl -}}
+{{- $issuerPort := include "solobill.urlPort" .Values.config.oidc.issuerUrl -}}
+{{- if and $issuerPort (ne $issuerPort (printf "%v" $oidcPort)) -}}
+{{ fail (printf "config.oidc.issuerUrl names port %s but networkPolicy.egress.oidc.port is %v: with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would deny every OIDC discovery, token and JWKS call, so every OIDC login fails while the local login path keeps working. Set networkPolicy.egress.oidc.port to %s, or point config.oidc.issuerUrl at port %v." $issuerPort $oidcPort $issuerPort $oidcPort) }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{/*
+service.port and adminPort select two different listeners on purpose: the
+public one, which networkPolicy.ingress.public scopes or leaves open, and the
+admin one, which this policy otherwise admits from nobody until
+networkPolicy.ingress.admin names a peer. Equal, there is only one port
+number to render an ingress rule for, and the public rule above renders
+first and is unscoped by default, so adminPort is then admitted from any
+source regardless of what networkPolicy.ingress.admin says - the exact
+boundary this policy exists to build, inverted silently rather than denied
+loudly. Guarded here, inside networkPolicy.enabled, because the two ports
+only collide as a NetworkPolicy problem while this object actually renders.
+*/}}
+{{- if eq (printf "%v" .Values.service.port) (printf "%v" .Values.adminPort) -}}
+{{ fail (printf "service.port and adminPort are both %v: the public ingress rule above admits any source on that port by default, so adminPort would be reachable from anywhere regardless of networkPolicy.ingress.admin. Set service.port and adminPort to different values." .Values.service.port) }}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "solobill.fullname" . }}
+  labels:
+    {{- include "solobill.labels" . | nindent 4 }}
+spec:
+  # Selects this chart's own pods by the same selectorLabels the Deployment's
+  # own matchLabels uses. That also selects the migration Job's pods, which
+  # carry the same app.kubernetes.io/name and /instance (see
+  # solobill.migration.labels) and differ only in their component label.
+  # Deliberate, not an accident of the selector: the Job needs DNS and Postgres
+  # egress and no ingress at all, which is a strict subset of what the rules
+  # below allow, so it runs under this policy unchanged. On a fresh install it
+  # runs before this object exists anyway, being a pre-install hook; on an
+  # upgrade the previous release's copy of this policy is what applies to it.
+  podSelector:
+    matchLabels:
+      {{- include "solobill.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if $egress.enabled }}
+    - Egress
+    {{- end }}
+  ingress:
+    # The public port. Unscoped by default, and that default is the documented
+    # behaviour rather than an omission: traffic arrives here from an ingress
+    # controller or a Gateway, both of which live in a cluster-owned namespace
+    # this chart cannot name in advance, and the whole point of the port is to
+    # be reachable. networkPolicy.ingress.public scopes it for an installation
+    # that does know; left empty, this rule admits any source on this port.
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+      {{- with $publicPeers }}
+      from:
+        {{- . | nindent 8 }}
+      {{- end }}
+    {{- with $adminPeers }}
+    # The admin port (/metrics, /healthz, /readyz), admitted only from
+    # networkPolicy.ingress.admin's own peers. This rule exists only while that
+    # block scopes something: an ingress rule carrying ports and no "from" is
+    # "any source" per the NetworkPolicy API, so rendering this rule unscoped
+    # would admit from every pod in the cluster exactly the port this policy
+    # exists to close. Omitting it is what denies it, within this policy: a
+    # NetworkPolicy only adds access, so a wider policy already selecting
+    # these pods elsewhere in the namespace can still admit it. See
+    # README.md's "NetworkPolicy" section for that caveat.
+    - ports:
+        - protocol: TCP
+          port: {{ $.Values.adminPort }}
+      from:
+        {{- . | nindent 8 }}
+    {{- end }}
+  {{- if $egress.enabled }}
+  egress:
+    # Of the rules below, DNS is scoped by destination as well as by port.
+    # Postgres and the identity provider are scoped by port alone unless this
+    # installation sets their own scope blocks, and that is said here rather
+    # than left for a reader to infer from the shape of the DNS rule: a policy
+    # that scopes one rule while reading as if it scopes all of them is worse
+    # than one that says plainly which rules still admit any destination.
+    #
+    # Reply traffic needs no rule of its own. NetworkPolicy is applied per
+    # connection, not per packet, so the responses to the ingress rules above
+    # are allowed by those rules.
+    #
+    # DNS, scoped by networkPolicy.egress.dns on top of the port restriction.
+    # Both of its selectors default to kube-dns's own conventional namespace
+    # and pod label, which CoreDNS also carries on most clusters for
+    # compatibility. Wrong on a cluster whose DNS pods do not: the pod then
+    # resolves no name at all, so neither Postgres nor the identity provider is
+    # reachable by name, and the pod stays unready with a connection error that
+    # names the database rather than DNS. See README.md.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+      {{- with $dnsPeers }}
+      to:
+        {{- . | nindent 8 }}
+      {{- end }}
+    # PostgreSQL. The port is its own value rather than read out of
+    # config.databaseUrl: a guard above already fails the render when the two
+    # disagree, which is the part that matters, and keeping the allowed port
+    # explicit means an operator can see what this policy permits without
+    # parsing a URL in their head. The destination is left to
+    # networkPolicy.egress.postgres's own selectors, which default to nothing:
+    # config.databaseUrl may name a managed PostgreSQL instance outside this
+    # cluster entirely, which no namespace or pod selector can describe, so a
+    # default here would be a guess that fails as a timeout. Left unset, this
+    # rule admits any destination on this port; ipBlock is how an off-cluster
+    # database is scoped.
+    - ports:
+        - protocol: TCP
+          port: {{ $postgresPort }}
+      {{- with $postgresPeers }}
+      to:
+        {{- . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.config.oidc.issuerUrl }}
+    # The identity provider, rendered only while OIDC is actually configured:
+    # with config.oidc.issuerUrl empty, cmd/solobill builds no OIDC client at
+    # all and this policy allows no outbound HTTPS. Same destination story as
+    # PostgreSQL above, for the same reason: an identity provider is as often
+    # off-cluster as in it. Left unset, this rule admits any destination on
+    # networkPolicy.egress.oidc.port.
+    - ports:
+        - protocol: TCP
+          port: {{ $oidcPort }}
+      {{- with $oidcPeers }}
+      to:
+        {{- . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end -}}

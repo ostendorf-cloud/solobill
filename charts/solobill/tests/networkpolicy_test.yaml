@@ -1,0 +1,551 @@
+suite: NetworkPolicy
+templates:
+  - templates/networkpolicy.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  migrationJob:
+    databaseUser: solobill_migrator
+tests:
+  - it: renders by default, since networkPolicy.enabled defaults to true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: NetworkPolicy
+
+  - it: renders nothing when networkPolicy.enabled is false
+    set:
+      networkPolicy:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: selects this chart's own pods through the shared selectorLabels helper
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/name"]
+          value: solobill
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+
+  # A hardcoded label would still match the default name, so the override is
+  # what proves the selector comes from the shared helper rather than a literal.
+  - it: follows a non-default nameOverride in the pod selector
+    set:
+      nameOverride: custom-billing
+    asserts:
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/name"]
+          value: custom-billing
+
+  - it: governs both ingress and egress by default
+    asserts:
+      - equal:
+          path: spec.policyTypes
+          value:
+            - Ingress
+            - Egress
+
+  # ---------------------------------------------------------------------
+  # Ingress
+  # ---------------------------------------------------------------------
+  - it: admits the public port from any source by default, with no from block at all
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: 8080
+      - isNull:
+          path: spec.ingress[0].from
+
+  - it: follows a non-default service.port for the public ingress rule, proving it is not hardcoded
+    set:
+      service:
+        port: 9090
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: 9090
+
+  # This is the acceptance criterion of the issue this policy answers: with the
+  # policy enforced and no admin scope configured, no rule admits adminPort, so
+  # a pod not matching the selector cannot reach it. Asserting the rule count
+  # alone would pass with a second rule for a different port, so the port is
+  # asserted absent by name as well.
+  - it: admits the admin port from nothing by default, rendering no rule for it
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+      - notExists:
+          path: spec.ingress[1]
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - protocol: TCP
+              port: 8080
+
+  - it: admits the admin port once networkPolicy.ingress.admin scopes a peer
+    set:
+      networkPolicy:
+        ingress:
+          admin:
+            namespaceSelector:
+              kubernetes.io/metadata.name: monitoring
+            podSelector:
+              app.kubernetes.io/name: prometheus
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
+      - equal:
+          path: spec.ingress[1].ports[0].port
+          value: 8081
+      # One peer carrying both selectors, so they are ANDed: a Prometheus pod
+      # in the monitoring namespace, not either of the two on its own.
+      - lengthEqual:
+          path: spec.ingress[1].from
+          count: 1
+      - equal:
+          path: spec.ingress[1].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: monitoring
+      - equal:
+          path: spec.ingress[1].from[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: prometheus
+
+  - it: follows a non-default adminPort for the admin ingress rule, proving it is not hardcoded
+    set:
+      adminPort: 9091
+      networkPolicy:
+        ingress:
+          admin:
+            podSelector:
+              app.kubernetes.io/name: prometheus
+    asserts:
+      - equal:
+          path: spec.ingress[1].ports[0].port
+          value: 9091
+
+  # An ipBlock peer cannot share a list item with a selector: the NetworkPolicy
+  # API rejects that. Two items is an OR, which is what this renders and what
+  # the values comment promises.
+  - it: renders an admin ipBlock as its own peer, ORed with the selector peer
+    set:
+      networkPolicy:
+        ingress:
+          admin:
+            podSelector:
+              app.kubernetes.io/name: prometheus
+            ipBlock:
+              cidr: 10.0.0.0/24
+              except:
+                - 10.0.0.5/32
+    asserts:
+      - lengthEqual:
+          path: spec.ingress[1].from
+          count: 2
+      - equal:
+          path: spec.ingress[1].from[0].podSelector.matchLabels["app.kubernetes.io/name"]
+          value: prometheus
+      - equal:
+          path: spec.ingress[1].from[1].ipBlock.cidr
+          value: 10.0.0.0/24
+      - equal:
+          path: spec.ingress[1].from[1].ipBlock.except
+          value:
+            - 10.0.0.5/32
+
+  - it: omits an ipBlock peer whose cidr is left empty, rather than rendering an invalid one
+    set:
+      networkPolicy:
+        ingress:
+          admin:
+            podSelector:
+              app.kubernetes.io/name: prometheus
+            ipBlock:
+              except:
+                - 10.0.0.5/32
+    asserts:
+      - lengthEqual:
+          path: spec.ingress[1].from
+          count: 1
+      - notExists:
+          path: spec.ingress[1].from[0].ipBlock
+
+  - it: scopes the public port once networkPolicy.ingress.public names a peer
+    set:
+      networkPolicy:
+        ingress:
+          public:
+            namespaceSelector:
+              kubernetes.io/metadata.name: ingress-nginx
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: ingress-nginx
+      - isNull:
+          path: spec.ingress[0].from[0].podSelector
+
+  # ---------------------------------------------------------------------
+  # Egress
+  # ---------------------------------------------------------------------
+  - it: allows exactly two egress rules by default, DNS and PostgreSQL
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 2
+
+  - it: drops the egress half entirely when networkPolicy.egress.enabled is false, keeping the ingress half
+    set:
+      networkPolicy:
+        egress:
+          enabled: false
+    asserts:
+      - equal:
+          path: spec.policyTypes
+          value:
+            - Ingress
+      - isNull:
+          path: spec.egress
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+
+  - it: allows DNS egress on UDP and TCP 53, scoped to kube-dns's own default namespace and pod label
+    asserts:
+      - equal:
+          path: spec.egress[0].ports
+          value:
+            - protocol: UDP
+              port: 53
+            - protocol: TCP
+              port: 53
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: kube-system
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["k8s-app"]
+          value: kube-dns
+
+  # Pins the merge behaviour the two replacement cases below exist for, rather
+  # than leaving it assumed: an override under a key the default does not use is
+  # added alongside the default, and matchLabels ANDs the two, so this selector
+  # matches no pod carrying only one of them and DNS stays blocked. Were Helm to
+  # replace the map instead, this case would fail and the nulls below would be
+  # pointless rather than load-bearing.
+  - it: keeps the default DNS podSelector key alongside an override under a different key
+    set:
+      networkPolicy:
+        egress:
+          dns:
+            podSelector:
+              app: custom-coredns
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels
+          value:
+            app: custom-coredns
+            k8s-app: kube-dns
+
+  # Helm merges a map override into the default key by key, and matchLabels ANDs
+  # the result, so an override under a key the default does not use is added
+  # alongside the default rather than replacing it. Asserting only that the new
+  # key is present would pass while the default key silently survived, so the
+  # default key is asserted absent too.
+  - it: replaces the default DNS podSelector key when the override nulls it
+    set:
+      networkPolicy:
+        egress:
+          dns:
+            podSelector:
+              k8s-app: null
+              app: custom-coredns
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].podSelector.matchLabels["app"]
+          value: custom-coredns
+      - notExists:
+          path: spec.egress[0].to[0].podSelector.matchLabels["k8s-app"]
+
+  - it: replaces the default DNS namespaceSelector key when the override nulls it, the same per-key merge
+    set:
+      networkPolicy:
+        egress:
+          dns:
+            namespaceSelector:
+              kubernetes.io/metadata.name: null
+              team: platform
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["team"]
+          value: platform
+      - notExists:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+
+  - it: overrides the default DNS namespaceSelector under its own key without leaving the default behind
+    set:
+      networkPolicy:
+        egress:
+          dns:
+            namespaceSelector:
+              kubernetes.io/metadata.name: custom-dns
+    asserts:
+      - equal:
+          path: spec.egress[0].to[0].namespaceSelector.matchLabels
+          value:
+            kubernetes.io/metadata.name: custom-dns
+
+  - it: falls back to a port-only DNS rule when both selectors are set to null
+    set:
+      networkPolicy:
+        egress:
+          dns:
+            namespaceSelector: null
+            podSelector: null
+    asserts:
+      - isNull:
+          path: spec.egress[0].to
+
+  - it: allows PostgreSQL egress on its default port, with no destination restriction
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 5432
+      - isNull:
+          path: spec.egress[1].to
+
+  - it: follows a non-default networkPolicy.egress.postgres.port, proving it is value-driven
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:6432/solobill?sslmode=require"
+      networkPolicy:
+        egress:
+          postgres:
+            port: 6432
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 6432
+
+  - it: scopes PostgreSQL egress to an in-cluster database once its selectors are set
+    set:
+      networkPolicy:
+        egress:
+          postgres:
+            namespaceSelector:
+              kubernetes.io/metadata.name: postgres
+            podSelector:
+              cnpg.io/cluster: solobill
+    asserts:
+      - lengthEqual:
+          path: spec.egress[1].to
+          count: 1
+      - equal:
+          path: spec.egress[1].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: postgres
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["cnpg.io/cluster"]
+          value: solobill
+
+  - it: scopes PostgreSQL egress to an off-cluster database through an ipBlock
+    set:
+      networkPolicy:
+        egress:
+          postgres:
+            ipBlock:
+              cidr: 203.0.113.7/32
+    asserts:
+      - lengthEqual:
+          path: spec.egress[1].to
+          count: 1
+      - equal:
+          path: spec.egress[1].to[0].ipBlock.cidr
+          value: 203.0.113.7/32
+
+  - it: allows no identity provider egress while config.oidc.issuerUrl is empty
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 2
+      - notExists:
+          path: spec.egress[2]
+
+  - it: allows identity provider egress on HTTPS once OIDC is configured, with no destination restriction
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: https://idp.example.com/realms/solobill
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - lengthEqual:
+          path: spec.egress
+          count: 3
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 443
+      - isNull:
+          path: spec.egress[2].to
+
+  - it: scopes identity provider egress to an in-cluster Keycloak on its own port
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: http://keycloak.identity.svc.cluster.local:8080/realms/solobill
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+      networkPolicy:
+        egress:
+          oidc:
+            port: 8080
+            namespaceSelector:
+              kubernetes.io/metadata.name: identity
+    asserts:
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 8080
+      - equal:
+          path: spec.egress[2].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: identity
+
+  # ---------------------------------------------------------------------
+  # Render-time guards
+  # ---------------------------------------------------------------------
+  - it: fails the render when config.databaseUrl names a port the PostgreSQL egress rule does not allow
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:6432/solobill?sslmode=require"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl names port 6432 but networkPolicy.egress.postgres.port is 5432:
+            with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy
+            would deny the one connection this application cannot start without. Set
+            networkPolicy.egress.postgres.port to 6432, or point config.databaseUrl at port 5432.
+
+  - it: fails the render when config.oidc.issuerUrl names a port the identity provider egress rule does not allow
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: http://keycloak.identity.svc.cluster.local:8080/realms/solobill
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.oidc.issuerUrl names port 8080 but networkPolicy.egress.oidc.port is 443: with
+            networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would
+            deny every OIDC discovery, token and JWKS call, so every OIDC login fails while the
+            local login path keeps working. Set networkPolicy.egress.oidc.port to 8080, or point
+            config.oidc.issuerUrl at port 443.
+
+  # The guard above only fires for a URL whose port this chart can read. A
+  # scheme with no known default port yields none, and the render goes ahead
+  # rather than guessing: stated as a test so the behaviour is deliberate.
+  - it: renders without a port guard for a database URL whose scheme names no port
+    set:
+      config:
+        databaseUrl: "unix:///var/run/postgresql/.s.PGSQL.5432"
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 5432
+
+  - it: fails the render when networkPolicy.egress.postgres.port is nulled while the egress half is on
+    set:
+      networkPolicy:
+        egress:
+          postgres:
+            port: null
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            networkPolicy.egress.postgres.port is required while networkPolicy.egress.enabled is
+            true: it is the only port this policy allows PostgreSQL egress on.
+
+  - it: fails the render when networkPolicy.egress.oidc.port is nulled while the egress half is on
+    set:
+      networkPolicy:
+        egress:
+          oidc:
+            port: null
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            networkPolicy.egress.oidc.port is required while networkPolicy.egress.enabled is
+            true: it is the only port this policy allows identity provider egress on.
+
+  - it: fails the render when service.port and adminPort are equal
+    set:
+      service:
+        port: 8081
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            service.port and adminPort are both 8081: the public ingress rule above admits
+            any source on that port by default, so adminPort would be reachable from
+            anywhere regardless of networkPolicy.ingress.admin. Set service.port and
+            adminPort to different values.
+
+  - it: fails the render when adminPort is changed to match the default service.port
+    set:
+      adminPort: 8080
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            service.port and adminPort are both 8080: the public ingress rule above admits
+            any source on that port by default, so adminPort would be reachable from
+            anywhere regardless of networkPolicy.ingress.admin. Set service.port and
+            adminPort to different values.
+
+  # config.databaseUrl's host carries no port, so the pre-fix helper fell back
+  # to postgres's own 5432 default and missed the mismatch entirely: the
+  # query parameter is what actually determines the port pgx connects on.
+  # This is the false negative the guard above would have let through before
+  # solobill.urlPort learned to read it.
+  - it: fails the render when config.databaseUrl's port query parameter disagrees with networkPolicy.egress.postgres.port
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc/solobill?sslmode=require&port=6432"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl names port 6432 but networkPolicy.egress.postgres.port is
+            5432: with networkPolicy.enabled and networkPolicy.egress.enabled both true,
+            this policy would deny the one connection this application cannot start
+            without. Set networkPolicy.egress.postgres.port to 6432, or point
+            config.databaseUrl at port 5432.
+
+  # A port query parameter overrides an explicit host-embedded port too, not
+  # just a missing one: pgx applies it last, regardless of what the host
+  # already carried. Proven here by matching the rule's port against the
+  # query value rather than the host value, which would fail this same case
+  # if the override were not honoured.
+  - it: follows config.databaseUrl's port query parameter over its own host-embedded port
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require&port=6432"
+      networkPolicy:
+        egress:
+          postgres:
+            port: 6432
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 6432

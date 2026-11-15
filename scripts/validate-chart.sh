@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Validates charts/solobill for its default values and every documented non-default
-# combination, so CI and a local run share the exact same logic. The combinations below
-# mirror charts/solobill/tests/*_test.yaml exactly: default, OIDC enabled, ingress enabled,
-# httpRoute enabled.
+# Validates charts/solobill: a must-succeed set for its default values and every documented
+# non-default combination, and a must-fail set proving every fail and required guard in its
+# templates actually rejects the values it is meant to reject. CI and a local run share the
+# exact same logic. The must-succeed combinations below mirror
+# charts/solobill/tests/*_test.yaml: default, OIDC enabled, ingress enabled, httpRoute
+# enabled, NetworkPolicy fully scoped, NetworkPolicy with its egress half off.
 #
 # Takes exactly one mode argument:
-#   lint        - helm lint, one job per check (Taskfile's lint:helm / CI's helm-lint job)
+#   lint        - helm lint over the must-succeed set, then helm template over the must-fail
+#                 set, one job per check (Taskfile's lint:helm / CI's helm-lint job)
 #   kubeconform - helm template piped into kubeconform, its own job (CI's kubeconform job)
-# kept as two modes of one script, not two near-duplicate scripts, so the four --set
-# combinations above live in exactly one place.
+# kept as two modes of one script, not two near-duplicate scripts, so the combinations
+# above live in exactly one place.
 #
 # Mode "lint" also runs a must-fail set (the guard_* arrays below): every render-time
 # "fail" guard in charts/solobill/templates, each isolated by satisfying every other
@@ -45,23 +48,63 @@ esac
 
 chart="charts/solobill"
 
+# The values every combination needs, must-fail cases included: existingSecret.name,
+# config.databaseUrl and config.databaseUser have no usable default and each carries its own
+# fail guard, and migrationJob.databaseUser is required whenever the migration Job is enabled
+# and must differ from config.databaseUser (see charts/solobill/README.md's "One role, or
+# two"). Every template below renders the Deployment, which holds all four guards, so a
+# combination missing any of them would fail for that reason rather than its own.
+baseline="existingSecret.name=solobill-secrets"
+baseline="${baseline},config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require"
+baseline="${baseline},config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+
+# OIDC is off exactly while config.oidc.issuerUrl is empty, and the other three fields plus
+# the client secret key are required together with it. The issuer names no explicit port, so
+# templates/networkpolicy.yaml reads it as 443, matching networkPolicy.egress.oidc.port's own
+# default.
+oidc_valid="existingSecret.oidcClientSecretKey=OIDC_CLIENT_SECRET"
+oidc_valid="${oidc_valid},config.oidc.issuerUrl=https://idp.example.com,config.oidc.clientId=solobill"
+oidc_valid="${oidc_valid},config.oidc.redirectUrl=https://solobill.example.com/api/v1/auth/oidc/callback"
+oidc_valid="${oidc_valid},config.oidc.defaultTenantSlug=acme"
+
+# The two external routing combinations, each valid on its own: ingress enabled with its own
+# required config.trustedProxies guard satisfied, httpRoute enabled with both of its own
+# required parentRefs fields set.
+ingress_valid="config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx"
+ingress_valid="${ingress_valid},ingress.hosts[0].host=solobill.example.org"
+ingress_valid="${ingress_valid},ingress.hosts[0].paths[0].path=/,ingress.hosts[0].paths[0].pathType=Prefix"
+httproute_valid="httpRoute.enabled=true,httpRoute.hostnames[0]=solobill.example.org"
+httproute_valid="${httproute_valid},httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
+
+# The NetworkPolicy renders on the default values already (networkPolicy.enabled defaults to
+# true), so this combination is the one where every optional scope block is actually set: an
+# admin peer, so the admin-port ingress rule renders at all, a public peer, an in-cluster
+# PostgreSQL destination and an off-cluster one through an ipBlock in the same rule.
+networkpolicy_scoped="networkPolicy.ingress.admin.namespaceSelector.kubernetes\\.io/metadata\\.name=monitoring"
+networkpolicy_scoped="${networkpolicy_scoped},networkPolicy.ingress.admin.podSelector.app\\.kubernetes\\.io/name=prometheus"
+networkpolicy_scoped="${networkpolicy_scoped},networkPolicy.ingress.public.namespaceSelector.kubernetes\\.io/metadata\\.name=ingress-nginx"
+networkpolicy_scoped="${networkpolicy_scoped},networkPolicy.egress.postgres.namespaceSelector.kubernetes\\.io/metadata\\.name=postgres"
+networkpolicy_scoped="${networkpolicy_scoped},networkPolicy.egress.postgres.ipBlock.cidr=203.0.113.7/32"
+
 names=(
   "default values"
   "oidc enabled"
   "ingress enabled"
   "httpRoute enabled"
+  "networkPolicy fully scoped"
+  "networkPolicy with the egress half off"
 )
 
 # Each entry is one combination's --set arguments, matching the corresponding
-# charts/solobill/tests/*_test.yaml suite's "set:" block. migrationJob.databaseUser is set in
-# every combination, distinct from config.databaseUser: this chart's default now requires it
-# (see charts/solobill/README.md's "One role, or two"), and templates/deployment.yaml, which
-# every combination below renders, fails the render otherwise.
+# charts/solobill/tests/*_test.yaml suite's "set:" block, always layered on top of baseline
+# above.
 sets=(
-  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
-  "existingSecret.name=solobill-secrets,existingSecret.oidcClientSecretKey=OIDC_CLIENT_SECRET,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.oidc.issuerUrl=https://idp.example.com,config.oidc.clientId=solobill,config.oidc.redirectUrl=https://solobill.example.com/api/v1/auth/oidc/callback,config.oidc.defaultTenantSlug=acme"
-  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx,ingress.hosts[0].host=solobill.example.org,ingress.hosts[0].paths[0].path=/,ingress.hosts[0].paths[0].pathType=Prefix"
-  "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,httpRoute.enabled=true,httpRoute.hostnames[0]=solobill.example.org,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
+  "${baseline}"
+  "${baseline},${oidc_valid}"
+  "${baseline},${ingress_valid}"
+  "${baseline},${httproute_valid}"
+  "${baseline},${oidc_valid},${networkpolicy_scoped}"
+  "${baseline},networkPolicy.egress.enabled=false"
 )
 
 # kubeconform's default schema location carries no Gateway API schemas. This second
@@ -113,6 +156,11 @@ if [ "$mode" = "lint" ]; then
     "ingress.enabled true, config.trustedProxies empty"
     "httpRoute.enabled true, httpRoute.parentRefs.name empty"
     "httpRoute.enabled true, httpRoute.parentRefs.namespace empty"
+    "config.databaseUrl port mismatching networkPolicy.egress.postgres.port"
+    "config.oidc.issuerUrl port mismatching networkPolicy.egress.oidc.port"
+    "networkPolicy.egress.postgres.port empty while egress enabled"
+    "networkPolicy.egress.oidc.port empty while egress enabled"
+    "service.port equals adminPort"
   )
 
   guard_sets=(
@@ -125,12 +173,20 @@ if [ "$mode" = "lint" ]; then
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,ingress.enabled=true,ingress.className=nginx"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,httpRoute.enabled=true,httpRoute.parentRefs.name=,httpRoute.parentRefs.namespace=gateway-system"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,httpRoute.enabled=true,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace="
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:6432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.oidc.issuerUrl=http://keycloak.identity.svc.cluster.local:8080/realms/solobill"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,networkPolicy.egress.postgres.port=null"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,networkPolicy.egress.oidc.port=null"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,service.port=8081"
   )
 
   # The distinctive lead sentence of each guard's own fail message (see
-  # charts/solobill/templates/deployment.yaml and templates/httproute.yaml),
-  # not the full text: enough to tell the guards apart and to prove this
-  # specific guard fired, short enough to survive a reworded explanation.
+  # charts/solobill/templates/deployment.yaml, templates/httproute.yaml and
+  # templates/networkpolicy.yaml), not the full text: enough to tell the guards
+  # apart and to prove this specific guard fired, short enough to survive a
+  # reworded explanation. The two port-comparison guards below are matched on
+  # the text before the port numbers they interpolate, not the numbers
+  # themselves.
   guard_messages=(
     "ingress.enabled and httpRoute.enabled cannot both be true"
     "config.databaseUrl is required"
@@ -141,6 +197,11 @@ if [ "$mode" = "lint" ]; then
     "ingress.enabled is true but config.trustedProxies is empty"
     "httpRoute.parentRefs.name is required when httpRoute.enabled is true"
     "httpRoute.parentRefs.namespace is required when httpRoute.enabled is true"
+    "config.databaseUrl names port"
+    "config.oidc.issuerUrl names port"
+    "networkPolicy.egress.postgres.port is required while networkPolicy.egress.enabled is true"
+    "networkPolicy.egress.oidc.port is required while networkPolicy.egress.enabled is true"
+    "service.port and adminPort are both"
   )
 
   for i in "${!guard_names[@]}"; do
