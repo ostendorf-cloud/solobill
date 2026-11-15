@@ -549,3 +549,34 @@ tests:
       - equal:
           path: spec.egress[1].ports[0].port
           value: 6432
+
+  # Before this guard, a non-numeric port query parameter still failed the
+  # render, but through the port-mismatch guard above, whose message is
+  # built for a numeric mismatch and read as nonsense: "set
+  # networkPolicy.egress.postgres.port to abc".
+  - it: fails the render when config.databaseUrl's port query parameter is not a number
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc/solobill?sslmode=require&port=abc"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            postgres://postgres.example.svc/solobill?sslmode=require&port=abc has a
+            non-numeric port "abc" in its "port" query parameter: a URL's port must
+            be digits only. Fix or remove that query parameter.
+
+  # Before this guard, a non-numeric host-embedded port crashed inside
+  # urlParse (net/url.Parse) itself, aborting the whole render with a raw Go
+  # template error ("invalid port ... after host") instead of a message this
+  # chart authored.
+  - it: fails the render when config.databaseUrl's host-embedded port is not a number
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:abc/solobill?sslmode=require"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            postgres://postgres.example.svc:abc/solobill?sslmode=require has a
+            non-numeric port "abc" in its host part: a URL's port must be digits
+            only. Fix the port after the host's ":", or remove it so this chart
+            falls back to the scheme's own default port.

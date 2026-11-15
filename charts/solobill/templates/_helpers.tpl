@@ -144,9 +144,41 @@ query-string parser: this template has no access to one, and a port is never
 percent-encoded or multi-valued in practice, so the simple split is exact for
 what this helper is asked to answer. The last "port" pair wins when the query
 string repeats it, matching pgconn's own last-occurrence-wins behaviour.
+
+A port that is not plain digits fails the render here, naming the value, the
+URL it came from and the fix, rather than either reaching a caller's own
+mismatch guard with nothing to compare against sensibly ("abc" is never equal
+to a numeric NetworkPolicy port, so that guard already rejected it, but its
+own message, built for a numeric mismatch, told a reader to set the
+NetworkPolicy's port to "abc") or crashing inside urlParse itself: Go's
+net/url.Parse, behind urlParse, refuses a URL whose host carries a
+non-numeric port at all ("invalid port \"...\" after host"), aborting the
+whole render with its own raw Go error before this helper, or any caller,
+gets a chance to say anything readable. The host-embedded case is therefore
+extracted and checked by hand, matching net/url's own authority grammar
+closely enough for the URLs this chart actually takes (an optional
+"user:pass@", an optional IPv6 literal in brackets, then an optional
+":port"), so it fails readably before urlParse ever sees it; the query-
+parameter case is checked the same way, after the safe call to urlParse that
+reads the rest of the URL.
 */}}
 {{- define "solobill.urlPort" -}}
-{{- $parsed := urlParse . -}}
+{{- $url := . -}}
+{{- if contains "://" $url -}}
+{{- $authority := regexReplaceAll "^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]*).*$" $url "$1" -}}
+{{- $hostport := regexReplaceAll "^.*@" $authority "" -}}
+{{- $hostPortCandidate := "" -}}
+{{- if contains "]" $hostport -}}
+{{- $afterBracket := regexReplaceAll "^.*\\]" $hostport "" -}}
+{{- $hostPortCandidate = trimPrefix ":" $afterBracket -}}
+{{- else if contains ":" $hostport -}}
+{{- $hostPortCandidate = regexReplaceAll "^.*:" $hostport "" -}}
+{{- end -}}
+{{- if and $hostPortCandidate (not (regexMatch "^[0-9]+$" $hostPortCandidate)) -}}
+{{ fail (printf "%s has a non-numeric port %q in its host part: a URL's port must be digits only. Fix the port after the host's \":\", or remove it so this chart falls back to the scheme's own default port." $url $hostPortCandidate) }}
+{{- end -}}
+{{- end -}}
+{{- $parsed := urlParse $url -}}
 {{- $scheme := $parsed.scheme | default "" -}}
 {{- $queryPort := "" -}}
 {{- range splitList "&" ($parsed.query | default "") -}}
@@ -154,6 +186,9 @@ string repeats it, matching pgconn's own last-occurrence-wins behaviour.
 {{- if and (ge (len $kv) 2) (eq (index $kv 0) "port") -}}
 {{- $queryPort = index $kv 1 -}}
 {{- end -}}
+{{- end -}}
+{{- if and $queryPort (not (regexMatch "^[0-9]+$" $queryPort)) -}}
+{{ fail (printf "%s has a non-numeric port %q in its \"port\" query parameter: a URL's port must be digits only. Fix or remove that query parameter." $url $queryPort) }}
 {{- end -}}
 {{- $explicit := regexFind ":[0-9]+$" ($parsed.host | default "") -}}
 {{- if $queryPort -}}
