@@ -49,14 +49,22 @@ securityContext:
 service:
   type: ClusterIP
   # Also used as the container port: must match the port encoded in
-  # config.listenAddr (default ":8080" for both). No probe targets this
-  # port any more; see adminPort below and templates/deployment.yaml.
+  # config.listenAddr (default ":8080" for both). That match is comment-only,
+  # unlike adminPort below: nothing fails the render when the two disagree.
+  # No probe targets this port any more; see adminPort below and
+  # templates/deployment.yaml.
   port: 8080
 
 # The second, administrative container port cmd/solobill listens on
 # through govue's httpserver.RunAdmin: /metrics, /healthz and /readyz live
 # here, nowhere on service.port. Must match the port encoded in
-# config.adminListenAddr (default ":8081" for both).
+# config.adminListenAddr (default ":8081" for both); that match, too, is
+# comment-only, with no render-time guard behind it.
+#
+# Equal to service.port, though, IS guarded: templates/networkpolicy.yaml
+# fails the render, because the two select different NetworkPolicy ingress
+# rules and a collision would silently admit this port from any source. See
+# README.md's "NetworkPolicy" section.
 #
 # Exposed on the Service as its own named port; see templates/service.yaml's
 # own comment and README.md's "Metrics and probes live on their own port"
@@ -102,13 +110,18 @@ networkPolicy:
       namespaceSelector: {}
       podSelector: {}
       ipBlock: {}
-    # Scopes who may reach adminPort. Empty, the default, admits NOTHING: no
-    # ingress rule for that port is rendered at all, so with the policy
-    # enforced no pod can reach /metrics, /healthz or /readyz. This is the
+    # Scopes who may reach adminPort. Empty, the default, admits NOTHING FROM
+    # THIS RULE: no ingress rule for that port is rendered at all. This is the
     # opposite of public above, deliberately, and it is not expressible as an
     # empty rule: an ingress rule carrying ports and no "from" means "any
-    # source" per the NetworkPolicy API, so the only way to deny a port is to
-    # render no rule for it.
+    # source" per the NetworkPolicy API, so the only way to deny a port from
+    # within this policy is to render no rule for it.
+    #
+    # A NetworkPolicy only adds access, never removes it: the denial above
+    # holds only as long as no other NetworkPolicy in this namespace already
+    # selects these pods with a wider ingress rule. See README.md's
+    # "NetworkPolicy" section for the additive-policy caveat and how to check
+    # for one on a live cluster.
     #
     # Set this to the pods that legitimately scrape the admin port, for
     # example a Prometheus in its own namespace. Kubelet probe traffic needs
@@ -154,6 +167,12 @@ networkPolicy:
     # key. Set a selector to null entirely (not {}: Helm merges a map default
     # with an empty override instead of clearing it, so {} silently keeps the
     # default) to drop it and leave the rule scoped by port alone.
+    #
+    # That per-key null is what to reach for. Nulling this whole `dns` block
+    # instead renders the rule with no selector at all rather than removing
+    # the rule: it stays scoped by port, admitting any destination on 53,
+    # which is a silent widening of the one egress rule this chart otherwise
+    # scopes by destination as well as by port.
     dns:
       namespaceSelector:
         kubernetes.io/metadata.name: kube-system

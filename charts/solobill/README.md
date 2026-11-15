@@ -249,8 +249,11 @@ narrowed who could reach it. That reasoning does not hold: a pod IP is routable 
 inside the cluster regardless of whether a `Service` also exposes that port, so leaving it off
 removed a convenient path to the admin listener, not the only path. Reaching it from inside the
 cluster is a `NetworkPolicy`'s job, not the Service's absence of a port, and that policy is what
-`networkPolicy` below renders: with it enforced and no admin scope configured, nothing may reach
-`adminPort` at all. See "NetworkPolicy" below.
+`networkPolicy` below renders: with it enforced and no admin scope configured, this policy's own
+rules admit nothing on `adminPort`. That is not the same as nothing reaching it at all: a
+`NetworkPolicy` only adds access, so a wider policy already selecting this release's pods in the
+same namespace can still admit it. See "NetworkPolicy" below, including the additive-policy
+caveat there.
 
 `livenessProbe` and `readinessProbe` still reach `adminPort` by naming the container port
 directly (`port: admin`), which a kubelet resolves against the pod's own IP, never through the
@@ -278,6 +281,20 @@ anyway is that the alternative is worse in the common case. `adminPort` carries 
 not the `Service` exposes that port, so an install that does not opt in has no boundary around
 it at all. One value turns the policy off; nothing turns on a boundary nobody knew was missing.
 
+**A second caveat, independent of the first: a `NetworkPolicy` only adds access, never removes
+it.** The effective access for a pod is the union of every `NetworkPolicy` that selects it;
+nothing in the API lets one policy narrow what another, wider policy already admits. Every
+denial this section describes, the admin port included, holds only as long as no other
+`NetworkPolicy` in this namespace also selects this release's pods with a wider ingress rule. A
+namespace that already carries a broad, namespace-wide allow-ingress policy (admitting traffic
+from every pod in the namespace, say) leaves `/metrics`, `/healthz` and `/readyz` reachable from
+every pod in that namespace regardless of what `networkPolicy.ingress.admin` says here, and
+nothing in this chart's output would say so. Check for one before relying on this chart's
+denial: `kubectl get networkpolicy -n <namespace>` for every other policy in the release's
+namespace, then read each one for an ingress rule that selects this release's pods (by label or
+by selecting none, which matches every pod) and admits a wider `from` than the rule this chart
+renders.
+
 ### What the policy selects
 
 This chart's own pods, by the same `app.kubernetes.io/name` and `app.kubernetes.io/instance`
@@ -296,8 +313,10 @@ the previous release's copy of the policy applies to it.
 - The admin port, `adminPort`. **Admits nothing by default**: no rule for that port is rendered
   at all. This is the opposite of the public port above, deliberately, and it is not
   expressible as an empty rule, because an ingress rule carrying ports and no `from` means "any
-  source" per the `NetworkPolicy` API. Omitting the rule is what denies the port. Set
-  `networkPolicy.ingress.admin` to the pods that legitimately scrape it:
+  source" per the `NetworkPolicy` API. Omitting the rule is what denies the port, within this
+  policy; see the additive-policy caveat above for what else has to hold true in the namespace
+  for that to be the whole story. Set `networkPolicy.ingress.admin` to the pods that legitimately
+  scrape it:
 
   ```yaml
   networkPolicy:
@@ -381,10 +400,14 @@ by the ingress rules themselves.
   The same applies to `namespaceSelector`'s own `kubernetes.io/metadata.name` key. Set a
   selector to `null` entirely, not `{}` (Helm merges a map default with an empty override
   instead of clearing it, so `{}` silently keeps the default), to drop it and leave the rule
-  scoped by port alone.
+  scoped by port alone. That per-key `null` is what to reach for: nulling `networkPolicy.egress.dns`
+  as a whole does the same thing to the entire rule, not just to one key, and does it silently.
+  With no selector left at all the DNS rule still renders, scoped by port alone, admitting any
+  destination on 53 rather than being removed - the one egress rule this chart otherwise keeps
+  scoped by destination as well as by port.
 - **PostgreSQL**, on `networkPolicy.egress.postgres.port` (default `5432`). The port is an
   explicit value rather than read out of `config.databaseUrl`, and a guard fails the render
-  when the two disagree; see "Two guards" below. The destination is left to that block's own
+  when the two disagree; see "Three guards" below. The destination is left to that block's own
   selectors, which **default to nothing, so this rule admits any destination on its port**. No
   default could do better: `config.databaseUrl` may name a managed PostgreSQL instance outside
   this cluster entirely, which no namespace or pod selector can describe, and a guessed
@@ -422,7 +445,7 @@ SMTP setting and no package builds a mail client. Mail is part of a later milest
 (`docs/concepts/solobill.md`'s document delivery), and the rule lands with it rather than now,
 as a guess at a port and a destination that nothing dials.
 
-### Two guards turn a runtime failure into a render failure
+### Three guards turn a runtime failure, or a silent inversion, into a render failure
 
 A default-deny egress policy whose allowed port does not match the port the application
 actually dials does not fail at render. It fails later, as a connection that times out, with
@@ -434,9 +457,19 @@ naming both:
 - `config.oidc.issuerUrl`'s port against `networkPolicy.egress.oidc.port`, only while OIDC is
   configured.
 
-Each reads an explicit port from the URL, falling back to its scheme's own default (`443` for
-`https`, `80` for `http`, `5432` for `postgres` and `postgresql`). A URL whose scheme names
+Each reads the port from the URL's own `port` query parameter first, then its explicit
+host-embedded port, then its scheme's own default (`443` for `https`, `80` for `http`, `5432`
+for `postgres` and `postgresql`). The query parameter wins over the host-embedded port rather
+than the other way round, because that is what `pgx` (and the libpq URI format it follows)
+actually does with one: `postgres://pg.svc/db?port=5433` connects on `5433`, not `5432`, even
+though the host carries no port of its own. A URL whose scheme names no default and carries
 neither yields no port, and the render goes ahead rather than guessing.
+
+A third guard is not about a URL at all: `service.port` and `adminPort` select two different
+listeners, and the public ingress rule above, unscoped by default, renders on whichever port
+number `service.port` names. Equal, that same rule now also covers `adminPort`, admitting it
+from any source regardless of `networkPolicy.ingress.admin` and inverting, silently, the
+boundary this policy exists to build. The render fails naming both values instead.
 
 ## Values
 
@@ -472,7 +505,7 @@ neither yields no port, and the render goes ahead rather than guessing.
 | `httpRoute.parentRefs.sectionName` | Specific listener on the `Gateway` to attach to, when it exposes more than one. | `""` |
 | `networkPolicy.enabled` | Create a `NetworkPolicy` over this chart's own pods. On by default. **Does nothing unless your CNI enforces `NetworkPolicy`**; see "NetworkPolicy" above. | `true` |
 | `networkPolicy.ingress.public.*` | Scopes who may reach `service.port`. Empty admits any source on that port. `namespaceSelector`/`podSelector` are ANDed in one peer; `ipBlock` (`cidr`, `except`) is a peer of its own, ORed with them. | `{}` |
-| `networkPolicy.ingress.admin.*` | Scopes who may reach `adminPort`. Empty admits **nothing**: the rule is omitted, which is the only way to deny a port. Set it to the pods that scrape `/metrics`. Kubelet probes need nothing here; see "NetworkPolicy" above. | `{}` |
+| `networkPolicy.ingress.admin.*` | Scopes who may reach `adminPort`. Empty admits **nothing from this rule**: the rule is omitted, which is the only way to deny a port from within this policy. A wider policy already selecting these pods elsewhere in the namespace still can; see "NetworkPolicy" above for the additive-policy caveat and how to check for one. Set it to the pods that scrape `/metrics`. Kubelet probes need nothing here. | `{}` |
 | `networkPolicy.egress.enabled` | Include the `Egress` half of the policy. Its own flag: turning it off keeps the admin-port isolation while dropping every egress rule, for a cluster where one of them is wrong. | `true` |
 | `networkPolicy.egress.dns.*` | Destination scope for the DNS rule, on top of UDP/TCP 53. Defaults to kube-dns's conventional namespace and pod label. **Wrong labels mean the pod resolves no name at all**; see "NetworkPolicy" above for the per-key merge trap and how to replace a default key. | `kube-system` / `k8s-app: kube-dns` |
 | `networkPolicy.egress.postgres.port` | Port the PostgreSQL egress rule allows. A render guard fails the install when `config.databaseUrl` names a different one. | `5432` |
@@ -533,15 +566,42 @@ above.
 
 `networkPolicy.egress.postgres.port` and `networkPolicy.egress.oidc.port` are required while
 `networkPolicy.egress.enabled` is true, enforced by a `required` call in
-`templates/networkpolicy.yaml`, which also holds the two port-mismatch guards; see
-"NetworkPolicy" above.
+`templates/networkpolicy.yaml`, which also holds the two port-mismatch guards and the
+`service.port`/`adminPort` collision guard; see "NetworkPolicy" above.
+
+`config.listenAddr` and `config.adminListenAddr` are not: nothing fails the render when either
+disagrees with `service.port` or `adminPort`, only the comment on each in `values.yaml` and the
+"Keep in sync with" notes in the values table above. A mismatch there does not invert a boundary
+the way the three guards above do, but it still breaks the pod: the `Service`, the probes and
+this policy's own ingress rules all read `service.port` and `adminPort`, while `cmd/solobill`
+listens on whatever `config.listenAddr` and `config.adminListenAddr` actually say, so a mismatch
+means the probes and the `Service` reach a port nothing is listening on. Keep the two pairs in
+sync by hand until this has a guard of its own.
 
 ## Upgrading
 
-A plain `helm upgrade` is safe for any change to this chart's values: the migration Job
-re-applies `db/migrations` (a no-op when nothing changed) before the Deployment is updated.
-There is no persistent state in the chart itself: every durable fact lives in your own
-PostgreSQL instance, outside this release.
+A plain `helm upgrade` is safe for a values change on a release already running this chart
+version or later. It is not automatically safe for an existing release upgrading onto this
+version from an earlier one: `networkPolicy.enabled` defaults to `true`, so that upgrade turns
+on a default-deny ingress and egress boundary the previous release did not have, on an already
+running Deployment. Check both of the following first:
+
+- **DNS.** `networkPolicy.egress.dns` defaults to kube-dns's conventional namespace and pod
+  label. A cluster running NodeLocal DNSCache points pods at a per-node pod labelled
+  `k8s-app: node-local-dns` instead, which that default does not select: the rolled-out pods
+  resolve no name at all, readiness never passes, and the rollout stalls. Verify your cluster's
+  actual DNS pod labels before upgrading, for example with
+  `kubectl get pods -n kube-system -l k8s-app=kube-dns --show-labels`; see "NetworkPolicy" above,
+  "Egress rules", for the full reasoning and the per-key override shape.
+- **Admin-port scraping.** If anything already reaches `adminPort` today, from Prometheus or
+  otherwise, that scrape stops the moment this policy is enforced, with no error anywhere in
+  this chart's own output: `networkPolicy.ingress.admin` admits nothing until it is set. Set it
+  to that scraper's pods before or in the same upgrade that turns the policy on; see
+  "NetworkPolicy" above.
+
+Once both check out, the migration Job re-applies `db/migrations` (a no-op when nothing
+changed) before the Deployment is updated, and there is no other persistent state in the chart
+itself: every durable fact lives in your own PostgreSQL instance, outside this release.
 
 ## Uninstalling
 
