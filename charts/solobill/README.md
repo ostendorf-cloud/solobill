@@ -248,10 +248,9 @@ Earlier, `adminPort` was deliberately left off the `Service`, on the reasoning t
 narrowed who could reach it. That reasoning does not hold: a pod IP is routable from anywhere
 inside the cluster regardless of whether a `Service` also exposes that port, so leaving it off
 removed a convenient path to the admin listener, not the only path. Reaching it from inside the
-cluster is a `NetworkPolicy`'s job, not the Service's absence of a port; adding one for this
-chart is tracked separately (#20). Until it lands, the admin listener is reachable by any pod
-in the cluster that can resolve the `Service` or the pod IP directly, the same as it already
-was.
+cluster is a `NetworkPolicy`'s job, not the Service's absence of a port, and that policy is what
+`networkPolicy` below renders: with it enforced and no admin scope configured, nothing may reach
+`adminPort` at all. See "NetworkPolicy" below.
 
 `livenessProbe` and `readinessProbe` still reach `adminPort` by naming the container port
 directly (`port: admin`), which a kubelet resolves against the pod's own IP, never through the
@@ -262,6 +261,182 @@ needs no `Service` port of its own, and keeps working for a pod that is not yet 
 yet behind the `Service`'s endpoints), which matters for catching a startup failure. A
 `ServiceMonitor` is only the fallback for a cluster whose Prometheus Operator is not configured
 to discover `PodMonitor` resources; it now has the `Service` port it would need either way.
+
+## NetworkPolicy
+
+`networkPolicy.enabled` defaults to `true`.
+
+**A `NetworkPolicy` does nothing at all unless your CNI enforces `NetworkPolicy`.** A cluster
+whose network plugin does not implement it accepts and stores this object with no error and no
+warning, and enforces none of it. The Kubernetes documentation is explicit: "Creating a
+NetworkPolicy resource without a controller that implements it will have no effect." Confirm
+your own CNI enforces `NetworkPolicy` before treating anything in this section as a boundary.
+That cuts both ways, and it is the whole cost of the default being on: on such a cluster this
+chart renders an object that reads like protection and provides none. The reason it is on
+anyway is that the alternative is worse in the common case. `adminPort` carries `/metrics`,
+`/healthz` and `/readyz` and is reachable from any pod in the cluster on the pod IP, whether or
+not the `Service` exposes that port, so an install that does not opt in has no boundary around
+it at all. One value turns the policy off; nothing turns on a boundary nobody knew was missing.
+
+### What the policy selects
+
+This chart's own pods, by the same `app.kubernetes.io/name` and `app.kubernetes.io/instance`
+labels the `Deployment`'s `matchLabels` uses. That also selects the migration Job's pods, which
+carry the same two labels and differ only in their component label. Deliberate: the Job needs
+DNS and PostgreSQL egress and no ingress at all, a strict subset of what the rules below allow.
+On a fresh install it runs before this object exists, being a pre-install hook; on an upgrade
+the previous release's copy of the policy applies to it.
+
+### Ingress rules
+
+- The public port, `service.port`. **Unscoped by default**, and that is the documented
+  behaviour rather than an omission: traffic arrives from an ingress controller or a Gateway in
+  a cluster-owned namespace this chart cannot name in advance, and a public port that admits
+  nothing is a broken install. Scope it with `networkPolicy.ingress.public` where you do know.
+- The admin port, `adminPort`. **Admits nothing by default**: no rule for that port is rendered
+  at all. This is the opposite of the public port above, deliberately, and it is not
+  expressible as an empty rule, because an ingress rule carrying ports and no `from` means "any
+  source" per the `NetworkPolicy` API. Omitting the rule is what denies the port. Set
+  `networkPolicy.ingress.admin` to the pods that legitimately scrape it:
+
+  ```yaml
+  networkPolicy:
+    ingress:
+      admin:
+        namespaceSelector:
+          kubernetes.io/metadata.name: monitoring
+        podSelector:
+          app.kubernetes.io/name: prometheus
+  ```
+
+  `namespaceSelector` and `podSelector` land in one peer, so they are ANDed: that example
+  admits a Prometheus pod in the `monitoring` namespace, not every pod in that namespace and
+  not every Prometheus pod anywhere. An `ipBlock` is a peer of its own, ORed with them, because
+  the API rejects a peer carrying both. The same shape applies to every scope block in this
+  section.
+
+### Kubelet probe traffic needs no rule, with one caveat
+
+No rule admits the kubelet's `livenessProbe` and `readinessProbe` requests to `adminPort`, and
+none is needed. Per the
+[Kubernetes documentation](https://kubernetes.io/docs/concepts/services-networking/network-policies/),
+listing the entities a pod can communicate with: "traffic to and from the node where a Pod is
+running is always allowed, regardless of the IP address of the Pod or the node". Probes
+originate from the node the pod runs on, so they fall under that exception rather than under
+the admin rule above, and they keep working with the admin port admitting nothing.
+
+The caveat is that this is a documented property, not a conformance-tested one, and individual
+CNI implementations have got it wrong: the AWS VPC CNI carried a bug where a `NetworkPolicy`
+blocked liveness and readiness probes
+([aws/amazon-vpc-cni-k8s#2571](https://github.com/aws/amazon-vpc-cni-k8s/issues/2571)). If
+probes start failing on this chart's pods the moment the policy is enforced, that is the
+failure mode, and `networkPolicy.ingress.admin.ipBlock` set to your node CIDR is the escape
+hatch; it is not something this chart can default, since it cannot know that CIDR.
+
+### Egress rules
+
+`networkPolicy.egress.enabled` defaults to `true` and is a separate flag on purpose. The egress
+half is the half whose mistakes break an installation rather than expose one: a rule whose port
+or destination does not match what the application dials fails as a connection timeout at
+runtime, not at render. Turning it off drops the `Egress` policy type and every rule below while
+keeping the admin-port isolation that is the point of the policy. Turning the whole policy off
+gives up both.
+
+Said plainly, since a policy that scopes one rule while reading as if it scopes all of them is
+worse than one that names what it still admits: **DNS is scoped by destination and by port.
+PostgreSQL and the identity provider are scoped by port alone unless you set their own scope
+blocks, and both default to admitting any destination on their port.** Reply traffic needs no
+rule: `NetworkPolicy` is applied per connection, so responses to admitted ingress are allowed
+by the ingress rules themselves.
+
+- **DNS**, UDP and TCP port 53, scoped by `networkPolicy.egress.dns`. Both selectors default to
+  kube-dns's own conventional namespace and pod label (`kube-system` / `k8s-app: kube-dns`),
+  which CoreDNS also carries on most clusters for compatibility, kubeadm's default install
+  included. **If your cluster's DNS pods do not carry these labels, the pod resolves no name at
+  all**, so it reaches neither PostgreSQL nor the identity provider by name, and it stays
+  unready with a connection error naming the database rather than DNS. A `NetworkPolicy` peer's
+  `podSelector` matches pods, not the `Service` in front of them, and the two can disagree, so
+  verify the actual labels before relying on the default, for example with
+  `kubectl get pods -n kube-system -l k8s-app=kube-dns --show-labels`. NodeLocal DNSCache is a
+  second way the default misses: a cluster running it points the pod's resolver at a per-node
+  pod labelled `k8s-app: node-local-dns`, and whether that traffic is admitted then rests on
+  the "traffic to and from the node is always allowed" exception above.
+
+  Helm merges an override into the default map key by key, not key for key, and `matchLabels`
+  ANDs the result: an override under a key the default does not use is added alongside the
+  default rather than replacing it. `podSelector: {app: coredns}` on a cluster whose CoreDNS
+  pods carry `app: coredns` therefore renders both keys, a selector matching no pod carrying
+  only one of the two, and DNS stays blocked. Null the specific default key you mean to
+  replace:
+
+  ```yaml
+  networkPolicy:
+    egress:
+      dns:
+        podSelector:
+          k8s-app: null
+          app: coredns
+  ```
+
+  The same applies to `namespaceSelector`'s own `kubernetes.io/metadata.name` key. Set a
+  selector to `null` entirely, not `{}` (Helm merges a map default with an empty override
+  instead of clearing it, so `{}` silently keeps the default), to drop it and leave the rule
+  scoped by port alone.
+- **PostgreSQL**, on `networkPolicy.egress.postgres.port` (default `5432`). The port is an
+  explicit value rather than read out of `config.databaseUrl`, and a guard fails the render
+  when the two disagree; see "Two guards" below. The destination is left to that block's own
+  selectors, which **default to nothing, so this rule admits any destination on its port**. No
+  default could do better: `config.databaseUrl` may name a managed PostgreSQL instance outside
+  this cluster entirely, which no namespace or pod selector can describe, and a guessed
+  namespace fails as a timeout rather than at render. Scope an in-cluster database with
+  selectors, an off-cluster one with an `ipBlock`:
+
+  ```yaml
+  networkPolicy:
+    egress:
+      postgres:
+        namespaceSelector:
+          kubernetes.io/metadata.name: postgres
+        podSelector:
+          cnpg.io/cluster: solobill
+  ```
+
+  ```yaml
+  networkPolicy:
+    egress:
+      postgres:
+        ipBlock:
+          cidr: 203.0.113.7/32
+  ```
+
+- **The identity provider**, on `networkPolicy.egress.oidc.port` (default `443`), rendered only
+  while `config.oidc.issuerUrl` is set. With OIDC off, which is this chart's default,
+  `cmd/solobill` builds no OIDC client and this policy allows no outbound HTTPS at all. Same
+  destination story as PostgreSQL: **unscoped by default, admitting any destination on its
+  port**, because an identity provider is as often outside the cluster as in it. An in-cluster
+  Keycloak on plain HTTP behind the cluster's own TLS needs `port` set to its own, commonly
+  `8080`.
+
+There is no SMTP rule, because nothing in this application sends mail: `internal/config` has no
+SMTP setting and no package builds a mail client. Mail is part of a later milestone
+(`docs/concepts/solobill.md`'s document delivery), and the rule lands with it rather than now,
+as a guess at a port and a destination that nothing dials.
+
+### Two guards turn a runtime failure into a render failure
+
+A default-deny egress policy whose allowed port does not match the port the application
+actually dials does not fail at render. It fails later, as a connection that times out, with
+nothing in the rendered output to point at. `templates/networkpolicy.yaml` therefore compares
+the port each configured URL names against the port its own rule allows, and fails the render
+naming both:
+
+- `config.databaseUrl`'s port against `networkPolicy.egress.postgres.port`.
+- `config.oidc.issuerUrl`'s port against `networkPolicy.egress.oidc.port`, only while OIDC is
+  configured.
+
+Each reads an explicit port from the URL, falling back to its scheme's own default (`443` for
+`https`, `80` for `http`, `5432` for `postgres` and `postgresql`). A URL whose scheme names
+neither yields no port, and the render goes ahead rather than guessing.
 
 ## Values
 
@@ -295,6 +470,15 @@ to discover `PodMonitor` resources; it now has the `Service` port it would need 
 | `httpRoute.parentRefs.name` | Name of the `Gateway` to attach to. Required when `httpRoute.enabled` is true. | `""` |
 | `httpRoute.parentRefs.namespace` | Namespace the `Gateway` lives in. Required when `httpRoute.enabled` is true; see "External routing" above for why this has no same-namespace fallback. | `""` |
 | `httpRoute.parentRefs.sectionName` | Specific listener on the `Gateway` to attach to, when it exposes more than one. | `""` |
+| `networkPolicy.enabled` | Create a `NetworkPolicy` over this chart's own pods. On by default. **Does nothing unless your CNI enforces `NetworkPolicy`**; see "NetworkPolicy" above. | `true` |
+| `networkPolicy.ingress.public.*` | Scopes who may reach `service.port`. Empty admits any source on that port. `namespaceSelector`/`podSelector` are ANDed in one peer; `ipBlock` (`cidr`, `except`) is a peer of its own, ORed with them. | `{}` |
+| `networkPolicy.ingress.admin.*` | Scopes who may reach `adminPort`. Empty admits **nothing**: the rule is omitted, which is the only way to deny a port. Set it to the pods that scrape `/metrics`. Kubelet probes need nothing here; see "NetworkPolicy" above. | `{}` |
+| `networkPolicy.egress.enabled` | Include the `Egress` half of the policy. Its own flag: turning it off keeps the admin-port isolation while dropping every egress rule, for a cluster where one of them is wrong. | `true` |
+| `networkPolicy.egress.dns.*` | Destination scope for the DNS rule, on top of UDP/TCP 53. Defaults to kube-dns's conventional namespace and pod label. **Wrong labels mean the pod resolves no name at all**; see "NetworkPolicy" above for the per-key merge trap and how to replace a default key. | `kube-system` / `k8s-app: kube-dns` |
+| `networkPolicy.egress.postgres.port` | Port the PostgreSQL egress rule allows. A render guard fails the install when `config.databaseUrl` names a different one. | `5432` |
+| `networkPolicy.egress.postgres.*` | Destination scope for the PostgreSQL rule. Empty admits **any destination** on the port above: the database may sit outside the cluster, where no selector applies. Use `ipBlock` for that case. | `{}` |
+| `networkPolicy.egress.oidc.port` | Port the identity provider egress rule allows. Same render guard against `config.oidc.issuerUrl`. | `443` |
+| `networkPolicy.egress.oidc.*` | Destination scope for the identity provider rule, which renders only while `config.oidc.issuerUrl` is set. Empty admits **any destination** on the port above. | `{}` |
 | `resources.requests` | Resource requests, always set. | `cpu: 100m`, `memory: 128Mi` |
 | `resources.limits` | Resource limits. No CPU limit: request handling is bursty, not broken, under brief CPU pressure. A memory limit stays as a leak safety net. | `memory: 256Mi` |
 | `startupProbe.enabled` | Enable a startup probe, against `adminPort`'s `/healthz`. Off by default: the migration Job, not `cmd/solobill`'s own startup, is what waits on the database. | `false` |
@@ -347,6 +531,11 @@ that only fires when `httpRoute.enabled` is true. The `ingress.enabled`/`httpRou
 mutual exclusion is its own `fail` guard, in `templates/deployment.yaml`; see "External routing"
 above.
 
+`networkPolicy.egress.postgres.port` and `networkPolicy.egress.oidc.port` are required while
+`networkPolicy.egress.enabled` is true, enforced by a `required` call in
+`templates/networkpolicy.yaml`, which also holds the two port-mismatch guards; see
+"NetworkPolicy" above.
+
 ## Upgrading
 
 A plain `helm upgrade` is safe for any change to this chart's values: the migration Job
@@ -360,8 +549,9 @@ PostgreSQL instance, outside this release.
 helm uninstall solobill
 ```
 
-Removes every ordinary object this chart created: the `Deployment`, `Service`, and the `Ingress`
-or `HTTPRoute`, whichever was enabled. The `ServiceAccount`, the migration Job and its
+Removes every ordinary object this chart created: the `Deployment`, `Service`, the
+`NetworkPolicy` if `networkPolicy.enabled` was left on, and the `Ingress` or `HTTPRoute`,
+whichever was enabled. The `ServiceAccount`, the migration Job and its
 `ConfigMap` are all Helm
 hooks, which Helm does not track as part of the release for `helm uninstall` to remove; each is
 governed only by its own `helm.sh/hook-delete-policy` instead. The Job and its `ConfigMap` carry
@@ -378,9 +568,14 @@ instance and its data, are never touched, since this chart never owned them.
 
 This chart is verified with:
 
-- `helm lint`
-- `helm template`, for the default values, OIDC-enabled, ingress-enabled and
-  httpRoute-enabled combinations
+- `helm lint`, over the default values and every documented non-default combination:
+  OIDC-enabled, ingress-enabled, httpRoute-enabled, `NetworkPolicy` fully scoped, and
+  `NetworkPolicy` with its egress half off
+- `helm template`, over a must-fail set: one case per `fail` and `required` guard in the
+  chart's templates, asserting both that the render fails and that it fails with that guard's
+  own message. This set is deliberately not run through `helm lint`: a template's `fail` or
+  `required` call is only logged by `helm lint`, which still reports no failed chart and exits
+  zero, so a lint pass proves nothing about a guard built on either
 - `kubeconform`, against every one of those rendered manifests. The default schema set
   carries no Gateway API schemas, so the httpRoute-enabled combination's `HTTPRoute` is
   validated with a second `-schema-location` added after the default one, pointing at the
