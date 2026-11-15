@@ -580,3 +580,42 @@ tests:
             non-numeric port "abc" in its host part: a URL's port must be digits
             only. Fix the port after the host's ":", or remove it so this chart
             falls back to the scheme's own default port.
+
+  # solobill.urlPort is the same helper for config.oidc.issuerUrl as it is for
+  # config.databaseUrl above: a change that broke the guard for one path and
+  # not the other would otherwise go unnoticed, since the two tests above only
+  # ever exercise the database URL.
+  - it: fails the render when config.oidc.issuerUrl's port query parameter is not a number
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://idp.example.com/realms/solobill?port=abc"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            https://idp.example.com/realms/solobill?port=abc has a
+            non-numeric port "abc" in its "port" query parameter: a URL's port
+            must be digits only. Fix or remove that query parameter.
+
+  - it: fails the render when config.oidc.issuerUrl's host-embedded port is not a number
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://idp.example.com:abc/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            https://idp.example.com:abc/realms/solobill has a
+            non-numeric port "abc" in its host part: a URL's port must be digits
+            only. Fix the port after the host's ":", or remove it so this chart
+            falls back to the scheme's own default port.
