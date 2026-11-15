@@ -36,6 +36,21 @@ section.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{/*
+service.port and adminPort select two different listeners on purpose: the
+public one, which networkPolicy.ingress.public scopes or leaves open, and the
+admin one, which this policy otherwise admits from nobody until
+networkPolicy.ingress.admin names a peer. Equal, there is only one port
+number to render an ingress rule for, and the public rule above renders
+first and is unscoped by default, so adminPort is then admitted from any
+source regardless of what networkPolicy.ingress.admin says - the exact
+boundary this policy exists to build, inverted silently rather than denied
+loudly. Guarded here, inside networkPolicy.enabled, because the two ports
+only collide as a NetworkPolicy problem while this object actually renders.
+*/}}
+{{- if eq (printf "%v" .Values.service.port) (printf "%v" .Values.adminPort) -}}
+{{ fail (printf "service.port and adminPort are both %v: the public ingress rule above admits any source on that port by default, so adminPort would be reachable from anywhere regardless of networkPolicy.ingress.admin. Set service.port and adminPort to different values." .Values.service.port) }}
+{{- end -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -80,7 +95,10 @@ spec:
     # block scopes something: an ingress rule carrying ports and no "from" is
     # "any source" per the NetworkPolicy API, so rendering this rule unscoped
     # would admit from every pod in the cluster exactly the port this policy
-    # exists to close. Omitting it is what denies it.
+    # exists to close. Omitting it is what denies it, within this policy: a
+    # NetworkPolicy only adds access, so a wider policy already selecting
+    # these pods elsewhere in the namespace can still admit it. See
+    # README.md's "NetworkPolicy" section for that caveat.
     - ports:
         - protocol: TCP
           port: {{ $.Values.adminPort }}

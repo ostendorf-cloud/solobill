@@ -160,6 +160,7 @@ if [ "$mode" = "lint" ]; then
     "config.oidc.issuerUrl port mismatching networkPolicy.egress.oidc.port"
     "networkPolicy.egress.postgres.port empty while egress enabled"
     "networkPolicy.egress.oidc.port empty while egress enabled"
+    "service.port equals adminPort"
   )
 
   guard_sets=(
@@ -176,6 +177,7 @@ if [ "$mode" = "lint" ]; then
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.oidc.issuerUrl=http://keycloak.identity.svc.cluster.local:8080/realms/solobill"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,networkPolicy.egress.postgres.port=null"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,networkPolicy.egress.oidc.port=null"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,service.port=8081"
   )
 
   # The distinctive lead sentence of each guard's own fail message (see
@@ -199,6 +201,7 @@ if [ "$mode" = "lint" ]; then
     "config.oidc.issuerUrl names port"
     "networkPolicy.egress.postgres.port is required while networkPolicy.egress.enabled is true"
     "networkPolicy.egress.oidc.port is required while networkPolicy.egress.enabled is true"
+    "service.port and adminPort are both"
   )
 
   for i in "${!guard_names[@]}"; do
