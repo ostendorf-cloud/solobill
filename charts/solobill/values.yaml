@@ -65,8 +65,131 @@ service:
 # cannot reach it through the Ingress. A pod IP is routable from anywhere in
 # the cluster regardless of whether this port sits on the Service, so
 # leaving it off the Service narrowed one convenient path, not the actual
-# one; closing that off for real is a NetworkPolicy, tracked separately.
+# one; what closes that off for real is networkPolicy below.
 adminPort: 8081
+
+# A NetworkPolicy over this chart's own pods: who may reach them, and what
+# they may reach.
+#
+# ------------------------------------------------------------------
+# This object does nothing unless the CNI enforces NetworkPolicy
+# ------------------------------------------------------------------
+# A cluster whose network plugin does not implement NetworkPolicy accepts and
+# stores this object with no error and no warning, and enforces none of it.
+# The Kubernetes documentation is explicit: "Creating a NetworkPolicy resource
+# without a controller that implements it will have no effect." Confirm your
+# own CNI enforces NetworkPolicy before treating anything below as a boundary;
+# see README.md's "NetworkPolicy" section.
+networkPolicy:
+  # On by default. The admin port (adminPort above) carries /metrics, /healthz
+  # and /readyz and is reachable from any pod in the cluster without this, on
+  # the pod IP whether or not the Service exposes it, so an install that does
+  # not opt in is an install with no boundary at all. The cost of that default
+  # is the inverse of the warning above: on a cluster that does not enforce
+  # NetworkPolicy, this renders an object that reads like protection and
+  # provides none.
+  enabled: true
+  ingress:
+    # Scopes who may reach service.port. Empty, the default, admits any
+    # source on that port: traffic arrives from an ingress controller or a
+    # Gateway in a cluster-owned namespace this chart cannot name in advance,
+    # and a public port that admits nothing is a broken install. Set
+    # namespaceSelector/podSelector (ANDed, one peer) or ipBlock (its own
+    # peer, ORed with them) to narrow it to your own ingress controller; see
+    # templates/_helpers.tpl's solobill.networkPolicy.peers for the AND/OR
+    # shape and README.md for a worked example.
+    public:
+      namespaceSelector: {}
+      podSelector: {}
+      ipBlock: {}
+    # Scopes who may reach adminPort. Empty, the default, admits NOTHING: no
+    # ingress rule for that port is rendered at all, so with the policy
+    # enforced no pod can reach /metrics, /healthz or /readyz. This is the
+    # opposite of public above, deliberately, and it is not expressible as an
+    # empty rule: an ingress rule carrying ports and no "from" means "any
+    # source" per the NetworkPolicy API, so the only way to deny a port is to
+    # render no rule for it.
+    #
+    # Set this to the pods that legitimately scrape the admin port, for
+    # example a Prometheus in its own namespace. Kubelet probe traffic needs
+    # nothing here: it originates from the node, and node-to-pod traffic is
+    # always allowed; see README.md for the evidence and the one case where
+    # ipBlock is the escape hatch for it.
+    admin:
+      namespaceSelector: {}
+      podSelector: {}
+      ipBlock: {}
+  egress:
+    # Off switch for the egress half alone, separate from networkPolicy.enabled
+    # above. The egress half is the half that breaks an installation rather
+    # than exposing one: a rule whose port or destination does not match what
+    # this application actually dials fails as a timeout at runtime. Turning
+    # this off drops the Egress policyType and every rule below while keeping
+    # the admin-port isolation, which is the point of this policy; turning the
+    # whole policy off would give up both.
+    enabled: true
+    # Scopes the DNS egress rule's destination, on top of its port
+    # restriction. Both selectors default to kube-dns's own conventional
+    # namespace and pod label, which CoreDNS also carries on most clusters for
+    # compatibility (kubeadm's default install included). Wrong on a cluster
+    # whose DNS pods do not carry these labels: the pod then resolves no name
+    # at all, so it reaches neither PostgreSQL nor the identity provider by
+    # name, and it stays unready with an error naming the database rather than
+    # DNS. Verify your cluster's actual DNS pod labels, for example with
+    # `kubectl get pods -n kube-system -l k8s-app=kube-dns --show-labels`,
+    # before relying on the default. A Service's own labels do not bind a
+    # NetworkPolicy, which matches pods directly, and the two can disagree.
+    # NodeLocal DNSCache is a second way this default misses: a cluster
+    # running it points the pod's resolver at a per-node pod labelled
+    # `k8s-app: node-local-dns`.
+    #
+    # Helm merges an override into this default map key by key, not key for
+    # key: an override under a key the default does not already use is added
+    # alongside the default, not instead of it, and matchLabels ANDs them.
+    # `podSelector: {app: coredns}` here renders `app: coredns` AND
+    # `k8s-app: kube-dns`, a selector matching no pod carrying only one of the
+    # two, and DNS stays blocked. Null the specific default key you mean to
+    # replace, for example `podSelector: {k8s-app: null, app: coredns}`. The
+    # same applies to namespaceSelector's own `kubernetes.io/metadata.name`
+    # key. Set a selector to null entirely (not {}: Helm merges a map default
+    # with an empty override instead of clearing it, so {} silently keeps the
+    # default) to drop it and leave the rule scoped by port alone.
+    dns:
+      namespaceSelector:
+        kubernetes.io/metadata.name: kube-system
+      podSelector:
+        k8s-app: kube-dns
+    postgres:
+      # The port this policy allows PostgreSQL egress on. Kept as its own
+      # value rather than parsed out of config.databaseUrl, with
+      # templates/networkpolicy.yaml's own guard failing the render when the
+      # two disagree: what matters is that a mismatch cannot reach a cluster,
+      # and an explicit port is readable without parsing a URL.
+      port: 5432
+      # Destination scope, on top of the port above. Empty, the default,
+      # admits any destination on that port. No default could do better:
+      # config.databaseUrl may name a managed PostgreSQL instance outside this
+      # cluster entirely, which no namespace or pod selector can describe, and
+      # a guessed namespace fails as a timeout. Scope an in-cluster database
+      # with namespaceSelector/podSelector, an off-cluster one with ipBlock;
+      # see README.md for both worked examples.
+      namespaceSelector: {}
+      podSelector: {}
+      ipBlock: {}
+    oidc:
+      # The port this policy allows identity provider egress on, with the same
+      # render-time guard against config.oidc.issuerUrl naming a different
+      # one. An in-cluster Keycloak on plain HTTP behind the cluster's own TLS
+      # needs this set to its own port, commonly 8080.
+      port: 443
+      # Destination scope, on top of the port above, with the same empty
+      # default and the same reasoning as postgres above: an identity provider
+      # is as often outside the cluster as in it. The whole rule is omitted
+      # while config.oidc.issuerUrl is empty, so a default install with no
+      # OIDC allows no outbound HTTPS at all.
+      namespaceSelector: {}
+      podSelector: {}
+      ipBlock: {}
 
 ingress:
   enabled: false

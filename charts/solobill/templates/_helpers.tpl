@@ -71,6 +71,83 @@ Fully qualified name of the migration Job and its ConfigMap.
 {{- end -}}
 
 {{/*
+Build a NetworkPolicy peer list from one of networkPolicy's own scope blocks
+(namespaceSelector, podSelector, ipBlock), rendered as YAML and returned as a
+string. Empty when the block scopes nothing, which every caller tests for: an
+empty string is falsy, so "with" skips it.
+
+Two things about the shape this produces, both easy to get backwards:
+
+  - namespaceSelector and podSelector go into ONE list item, so they are ANDed:
+    the peer is "a pod carrying these labels, in a namespace carrying those".
+    Two separate list items would be an OR instead, which silently admits more
+    than it names.
+  - ipBlock is its own list item, so it is ORed with the selector peer above.
+    That is not a choice: the NetworkPolicy API rejects a peer that carries
+    ipBlock alongside a selector. A scope block that sets both therefore means
+    "the selected pods, or this CIDR", never "both at once".
+
+Each selector value is a plain label map (a matchLabels block), not the full
+Kubernetes LabelSelector shape: this chart has no use for matchExpressions.
+
+Callers pass the block through "default dict", so a block set to null in values
+renders as no peer rather than failing on a nil map.
+*/}}
+{{- define "solobill.networkPolicy.peers" -}}
+{{- $scope := . -}}
+{{- $peers := list -}}
+{{- $selectorPeer := dict -}}
+{{- with $scope.namespaceSelector -}}
+{{- $_ := set $selectorPeer "namespaceSelector" (dict "matchLabels" .) -}}
+{{- end -}}
+{{- with $scope.podSelector -}}
+{{- $_ := set $selectorPeer "podSelector" (dict "matchLabels" .) -}}
+{{- end -}}
+{{- if $selectorPeer -}}
+{{- $peers = append $peers $selectorPeer -}}
+{{- end -}}
+{{- with $scope.ipBlock -}}
+{{- if .cidr -}}
+{{- $ipBlock := dict "cidr" .cidr -}}
+{{- with .except -}}
+{{- $_ := set $ipBlock "except" . -}}
+{{- end -}}
+{{- $peers = append $peers (dict "ipBlock" $ipBlock) -}}
+{{- end -}}
+{{- end -}}
+{{- if $peers -}}
+{{- toYaml $peers -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The TCP port a URL names: its explicit port when it carries one, otherwise the
+default port of its scheme. Empty for a scheme this template does not know,
+which every caller treats as "cannot tell, do not guess".
+
+Used only to compare a configured URL's port against the port the matching
+NetworkPolicy egress rule allows, so a mismatch fails the render instead of the
+connection. sprig's urlParse exposes "host" (host and port together) and
+"hostname", never a port of its own, so the port is read off "host" with a
+regex. That also keeps an IPv6 literal correct: "[::1]:5432" matches, "[::1]"
+does not.
+*/}}
+{{- define "solobill.urlPort" -}}
+{{- $parsed := urlParse . -}}
+{{- $explicit := regexFind ":[0-9]+$" ($parsed.host | default "") -}}
+{{- $scheme := $parsed.scheme | default "" -}}
+{{- if $explicit -}}
+{{- trimPrefix ":" $explicit -}}
+{{- else if eq $scheme "https" -}}
+443
+{{- else if eq $scheme "http" -}}
+80
+{{- else if or (eq $scheme "postgres") (eq $scheme "postgresql") -}}
+5432
+{{- end -}}
+{{- end -}}
+
+{{/*
 Migration Job labels, mirroring solobill.labels with its own component.
 */}}
 {{- define "solobill.migration.labels" -}}

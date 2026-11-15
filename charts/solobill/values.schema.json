@@ -122,6 +122,104 @@
         }
       }
     },
+    "networkPolicy": {
+      "type": "object",
+      "required": ["enabled"],
+      "description": "A NetworkPolicy over this chart's own pods. It has no effect at all on a cluster whose CNI does not implement NetworkPolicy: such a cluster stores the object without error or warning and enforces none of it. See README.md's 'NetworkPolicy' section.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "public": {
+              "type": "object",
+              "description": "Scopes who may reach service.port. namespaceSelector and podSelector are each a plain label map (a matchLabels block), not the full Kubernetes LabelSelector shape, and go into one peer, so they are ANDed; ipBlock is its own peer, ORed with them, because the API rejects a peer carrying both. Every selector empty, the default, admits any source on that port, since an ingress controller or Gateway lives in a cluster-owned namespace this chart cannot name in advance.",
+              "properties": {
+                "namespaceSelector": { "type": "object" },
+                "podSelector": { "type": "object" },
+                "ipBlock": {
+                  "type": "object",
+                  "properties": {
+                    "cidr": { "type": "string" },
+                    "except": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            },
+            "admin": {
+              "type": "object",
+              "description": "Scopes who may reach adminPort (/metrics, /healthz, /readyz). Same shape as public above. Every selector empty, the default, admits nothing: the rule is omitted entirely, which is the only way to deny a port, since an ingress rule with ports and no 'from' means any source per the NetworkPolicy API. Kubelet probe traffic needs nothing here, originating from the node.",
+              "properties": {
+                "namespaceSelector": { "type": "object" },
+                "podSelector": { "type": "object" },
+                "ipBlock": {
+                  "type": "object",
+                  "properties": {
+                    "cidr": { "type": "string" },
+                    "except": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "required": ["enabled"],
+          "description": "The egress half of the policy, with its own flag: it is the half whose mistakes break an installation rather than expose one, so it can be dropped while the admin-port isolation stays.",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "dns": {
+              "type": "object",
+              "description": "Destination scope for the DNS egress rule, on top of its port restriction. Both selectors default to a non-empty value (kube-system / k8s-app: kube-dns). Helm merges an override into a default map key by key, and matchLabels ANDs the result, so an override under a different key is added alongside the default rather than replacing it: null the specific default key to replace it, or null the whole selector (not {}, which Helm merges into the default) to drop it.",
+              "properties": {
+                "namespaceSelector": { "type": "object" },
+                "podSelector": { "type": "object" },
+                "ipBlock": {
+                  "type": "object",
+                  "properties": {
+                    "cidr": { "type": "string" },
+                    "except": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            },
+            "postgres": {
+              "type": "object",
+              "description": "PostgreSQL egress. port is explicit rather than parsed out of config.databaseUrl, and templates/networkpolicy.yaml fails the render when the two name different ports. Every selector empty, the default, admits any destination on that port: config.databaseUrl may name a database outside this cluster, which no selector can describe. Use ipBlock for that case.",
+              "properties": {
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "namespaceSelector": { "type": "object" },
+                "podSelector": { "type": "object" },
+                "ipBlock": {
+                  "type": "object",
+                  "properties": {
+                    "cidr": { "type": "string" },
+                    "except": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            },
+            "oidc": {
+              "type": "object",
+              "description": "Identity provider egress, rendered only while config.oidc.issuerUrl is set. Same shape and the same render-time port guard as postgres above.",
+              "properties": {
+                "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "namespaceSelector": { "type": "object" },
+                "podSelector": { "type": "object" },
+                "ipBlock": {
+                  "type": "object",
+                  "properties": {
+                    "cidr": { "type": "string" },
+                    "except": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "resources": { "type": "object" },
     "startupProbe": {
       "type": "object",
