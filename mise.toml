@@ -38,7 +38,7 @@ sqlc = "1.31"
 # support; see the helm-unittest entry at the end of this file for how this repository installs
 # the plugin without hitting it. Pinned to the current latest stable, not cve-notifier's older
 # line.
-helm = "4.3.1"
+helm = "4.3.2"
 # Latest minor on the mise registry; no coupling to helm's own version the way golangci-lint is
 # coupled to go above, since kubeconform only ever consumes a chart's already-rendered YAML.
 kubeconform = "0.8.0"
