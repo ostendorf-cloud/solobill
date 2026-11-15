@@ -121,22 +121,44 @@ renders as no peer rather than failing on a nil map.
 {{- end -}}
 
 {{/*
-The TCP port a URL names: its explicit port when it carries one, otherwise the
-default port of its scheme. Empty for a scheme this template does not know,
-which every caller treats as "cannot tell, do not guess".
+The TCP port a URL names: its own "port" query parameter when it carries one,
+otherwise its explicit host-embedded port, otherwise the default port of its
+scheme. Empty for a scheme this template does not know, which every caller
+treats as "cannot tell, do not guess".
 
 Used only to compare a configured URL's port against the port the matching
-NetworkPolicy egress rule allows, so a mismatch fails the render instead of the
-connection. sprig's urlParse exposes "host" (host and port together) and
-"hostname", never a port of its own, so the port is read off "host" with a
-regex. That also keeps an IPv6 literal correct: "[::1]:5432" matches, "[::1]"
-does not.
+NetworkPolicy egress rule allows, so a mismatch fails the render instead of
+the connection. The query parameter takes priority over the host-embedded
+port, not the other way around, because that is what pgx actually does:
+pgconn's own URL parser documents an explicit "?port=" as overriding the
+netloc-derived port (jackc/pgx/v5 pgconn/parse_url.go), matching libpq's own
+URI format, which both the postgres and postgresql schemes follow. A URL
+such as "postgres://pg.svc/db?port=5433" therefore connects on 5433, not 5432,
+even though its host carries no port of its own; reading only the host would
+miss that and let this guard pass a mismatch through unnoticed. sprig's
+urlParse exposes "host" (host and port together) and "hostname", never a port
+of its own, so the host-embedded port is read off "host" with a regex. That
+also keeps an IPv6 literal correct: "[::1]:5432" matches, "[::1]" does not.
+The query string is split by hand ("&" then "=") rather than through a full
+query-string parser: this template has no access to one, and a port is never
+percent-encoded or multi-valued in practice, so the simple split is exact for
+what this helper is asked to answer. The last "port" pair wins when the query
+string repeats it, matching pgconn's own last-occurrence-wins behaviour.
 */}}
 {{- define "solobill.urlPort" -}}
 {{- $parsed := urlParse . -}}
-{{- $explicit := regexFind ":[0-9]+$" ($parsed.host | default "") -}}
 {{- $scheme := $parsed.scheme | default "" -}}
-{{- if $explicit -}}
+{{- $queryPort := "" -}}
+{{- range splitList "&" ($parsed.query | default "") -}}
+{{- $kv := splitList "=" . -}}
+{{- if and (ge (len $kv) 2) (eq (index $kv 0) "port") -}}
+{{- $queryPort = index $kv 1 -}}
+{{- end -}}
+{{- end -}}
+{{- $explicit := regexFind ":[0-9]+$" ($parsed.host | default "") -}}
+{{- if $queryPort -}}
+{{- $queryPort -}}
+{{- else if $explicit -}}
 {{- trimPrefix ":" $explicit -}}
 {{- else if eq $scheme "https" -}}
 443
