@@ -128,13 +128,9 @@ asserting isolation through a superuser connection would prove nothing.
 - The Elastic License 2.0 is source available, not open source.
 - The reason: this tool has product potential, so a third party should not be able to
   offer it as a hosted service without the author's own agreement.
-- `.github/workflows/dco.yaml` calls `ostendorf-cloud/workflows`'s reusable workflow at `v0.1.1`.
-  `checks.yaml`'s `renovate-config` job and `renovate.yaml` call theirs at `v0.2.1`. None use a
-  floating `v0` major tag: `ostendorf-cloud/workflows` has not cut one yet. Repoint all three at
-  `v0` once it exists.
 - `Dockerfile`'s web stage installs corepack through npm instead of `mise`: Node stopped
   distributing corepack from Node.js 25 onward (nodejs/node PR 57617), and there is no `mise`
   inside that image stage to install it another way.
-- `.yamllint.yaml`'s line-length limit is 140, not the baseline's 120. A pinned reusable
-  workflow reference then fits on one line together with its version comment, matching
+- `.yamllint.yaml`'s line-length limit is 140, not the baseline's 120. A pinned action
+  reference then fits on one line together with its version comment, matching
   most of the organisation's own repositories.
