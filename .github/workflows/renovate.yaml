@@ -18,10 +18,10 @@ name: renovate
 # "if:", not duplicated here.
 on:
   # Deliberately staggered from ostendorf-cloud/workflows's own dogfooding
-  # cron (17 3 * * *) and from other repositories' Renovate schedules in this
+  # cron (17 * * * *) and from other repositories' Renovate schedules in this
   # rollout.
   schedule:
-    - cron: "42 4 * * *"
+    - cron: "42 * * * *"
   workflow_dispatch:
   issues:
     types: [edited]
