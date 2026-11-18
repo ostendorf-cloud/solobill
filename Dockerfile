@@ -38,7 +38,7 @@ RUN mkdir -p cmd/solobill && cd web && pnpm run build
 # 1.27.x): see mise.toml's own comment for why golangci-lint 2.15.0
 # specifically needs that exact patch, a constraint this image is kept
 # aligned with even though golangci-lint itself never runs here.
-FROM golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS build
 
 WORKDIR /src
 
