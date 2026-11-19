@@ -502,7 +502,7 @@ migrationJob:
     # (docker-compose.yaml's own comment: "Pinned to 2.38.1, the latest
     # patch in the 2.38 line mise.toml already pins dbmate to").
     repository: ghcr.io/amacneil/dbmate
-    tag: "2.38.1"
+    tag: "2.38.2"
   annotations: {}
   resources:
     requests:
