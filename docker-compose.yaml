@@ -53,7 +53,7 @@ services:
   # separate environment variable, generated separately in .env, for
   # exactly that reason.
   postgres:
-    image: postgres:18@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+    image: postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
     restart: unless-stopped
     environment:
       POSTGRES_USER: solobill_super
@@ -145,7 +145,7 @@ services:
   # enforces that they stay in step; a table's privileges changed in one
   # place need the same change in the other, by hand.
   grant-app-role:
-    image: postgres:18@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc
+    image: postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
     depends_on:
       migrate:
         condition: service_completed_successfully
