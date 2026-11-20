@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-import en from '../i18n/locales/en.json'
+import { en } from '../i18n/locales'
 import { apiClient } from '../api'
 import AcceptInviteView from './AcceptInviteView.vue'
 

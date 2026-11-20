@@ -13,6 +13,8 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1340,6 +1342,128 @@ ORDER BY c.relname`)
 	}
 }
 
+// tablesWithoutTenantID is every table in the public schema allowed to
+// have no tenant_id column, with the reason. A new table without
+// tenant_id that is missing here fails
+// TestEveryTableIsTenantScopedOrAllowlisted: a table that forgot its
+// tenant_id would otherwise escape the row level security test above
+// entirely, since that test only looks at tables that have the column.
+var tablesWithoutTenantID = map[string]string{
+	"tenants":           "a row here is a tenant, not something a tenant owns",
+	"schema_migrations": "dbmate's own bookkeeping, never read by the application",
+}
+
+// TestEveryTableIsTenantScopedOrAllowlisted closes the gap the test above
+// leaves: every table in the public schema, ordinary or partitioned (the
+// parent, not its partitions), either carries tenant_id (and is then
+// checked for row level security above) or is listed in
+// tablesWithoutTenantID with a reason.
+func TestEveryTableIsTenantScopedOrAllowlisted(t *testing.T) {
+	adminURL := os.Getenv("DATABASE_URL")
+	if adminURL == "" {
+		t.Skip("DATABASE_URL not set; skipping the Postgres-backed table introspection test")
+	}
+
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatalf("open admin pool: %v", err)
+	}
+	t.Cleanup(adminPool.Close)
+
+	rows, err := adminPool.Query(ctx, `
+SELECT c.relname
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind IN ('r', 'p')
+  AND NOT c.relispartition
+  AND NOT EXISTS (
+      SELECT 1 FROM information_schema.columns col
+      WHERE col.table_schema = 'public'
+        AND col.table_name = c.relname
+        AND col.column_name = 'tenant_id'
+  )
+ORDER BY c.relname`)
+	if err != nil {
+		t.Fatalf("introspect tables without tenant_id: %v", err)
+	}
+
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("scan tables without tenant_id: %v", err)
+	}
+
+	for _, name := range names {
+		if _, ok := tablesWithoutTenantID[name]; !ok {
+			t.Errorf("table %q has no tenant_id column and is not in tablesWithoutTenantID: "+
+				"add tenant_id with row level security, or allowlist it with a reason", name)
+		}
+	}
+}
+
+// TestAppRoleCannotChangeFiles asserts the primary control of the
+// receipt storage design (docs/concepts/solobill.md, "Receipt storage and
+// GoBD"): the application role can read and insert files rows, never
+// update or delete them. The files table lands with issue #75; until
+// then this test skips.
+func TestAppRoleCannotChangeFiles(t *testing.T) {
+	adminURL := os.Getenv("DATABASE_URL")
+	if adminURL == "" {
+		t.Skip("DATABASE_URL not set; skipping the Postgres-backed privilege test")
+	}
+
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatalf("open admin pool: %v", err)
+	}
+	t.Cleanup(adminPool.Close)
+
+	var exists bool
+	if err := adminPool.QueryRow(ctx, `SELECT to_regclass('public.files') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatalf("look up files: %v", err)
+	}
+	if !exists {
+		t.Skip("table files does not exist yet; it lands with issue #75")
+	}
+
+	setUpTestAppRole(ctx, t, adminPool, adminURL)
+
+	for privilege, want := range map[string]bool{"SELECT": true, "INSERT": true, "UPDATE": false, "DELETE": false} {
+		var got bool
+		if err := adminPool.QueryRow(ctx, `SELECT has_table_privilege($1, 'public.files', $2)`, testAppRole, privilege).Scan(&got); err != nil {
+			t.Fatalf("has_table_privilege(%s): %v", privilege, err)
+		}
+		if got != want {
+			t.Errorf("%s on files = %v, want %v", privilege, got, want)
+		}
+	}
+
+	// has_table_privilege answers for the whole table only. A column
+	// level grant ("GRANT UPDATE (sha256) ON files") would still let the
+	// role change that column, so every column is checked too.
+	rows, err := adminPool.Query(ctx, `
+SELECT a.attname
+FROM pg_attribute a
+WHERE a.attrelid = 'public.files'::regclass
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+  AND has_column_privilege($1, 'public.files', a.attname, 'UPDATE')`, testAppRole)
+	if err != nil {
+		t.Fatalf("check column privileges on files: %v", err)
+	}
+	columns, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("scan column privileges on files: %v", err)
+	}
+	if len(columns) != 0 {
+		t.Errorf("the app role can UPDATE files columns %v, want none", columns)
+	}
+}
+
 // setUpTestAppRole creates testAppRole on the database adminURL points at,
 // if it does not exist yet, grants it exactly the privileges the
 // application needs on the tenant-scoped tables, and returns a connection
@@ -1362,31 +1486,31 @@ $$;`
 		t.Fatalf("create %s role: %v", testAppRole, err)
 	}
 
-	// Granted at the minimum each table actually needs, mirroring
-	// docker-compose.yaml's own "grant-app-role" service grant to the
-	// compose role: nothing before documents deletes a row, so no
-	// table before it gets DELETE, and tenants is never updated (no
-	// UpdateTenant method exists), so it gets only SELECT and INSERT.
-	// documents and document_lines are the exception: see
-	// docker-compose.yaml's own comment on this grant for why DELETE is
-	// real there (DeleteDraftDocument, DeleteDocumentLines and the
-	// ON DELETE CASCADE it triggers) and why document_lines gets no
-	// UPDATE despite that (no query ever updates a line in place, so a
-	// raw UPDATE against document_lines is refused by this grant itself,
-	// unconditionally, not by document_lines_block_issued_document_mutation;
-	// see document_immutability_integration_test.go for the subtest that
-	// exercises exactly that).
-	grant := `
-GRANT USAGE ON SCHEMA public TO ` + testAppRole + `;
-GRANT SELECT, INSERT ON tenants TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE ON accounts, invites TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO ` + testAppRole + `;
-GRANT SELECT, INSERT, DELETE ON document_lines TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE ON document_numbers TO ` + testAppRole + `;`
+	// Granted from the same files docker-compose.yaml's "grant-app-role"
+	// service applies (docker/postgres/grants, one file per issue, in file
+	// name order), with the role name replaced, so the test role carries
+	// exactly the application role's privileges and the two lists cannot
+	// drift. See the header of the base file for the per-table reasoning,
+	// and document_immutability_integration_test.go for the subtest that
+	// exercises document_lines' missing UPDATE.
+	if _, err := adminPool.Exec(ctx, `GRANT USAGE ON SCHEMA public TO `+testAppRole); err != nil {
+		t.Fatalf("grant %s schema usage: %v", testAppRole, err)
+	}
 
-	if _, err := adminPool.Exec(ctx, grant); err != nil {
-		t.Fatalf("grant %s privileges: %v", testAppRole, err)
+	grantFiles, err := filepath.Glob(filepath.Join("..", "..", "..", "docker", "postgres", "grants", "*.sql"))
+	if err != nil || len(grantFiles) == 0 {
+		t.Fatalf("find grant files: %v (found %d)", err, len(grantFiles))
+	}
+	sort.Strings(grantFiles)
+
+	for _, file := range grantFiles {
+		sql, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		if _, err := adminPool.Exec(ctx, strings.ReplaceAll(string(sql), "solobill_app", testAppRole)); err != nil {
+			t.Fatalf("grant %s privileges from %s: %v", testAppRole, file, err)
+		}
 	}
 
 	restricted, err := url.Parse(adminURL)

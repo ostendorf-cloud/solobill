@@ -4,6 +4,10 @@
   "type": "object",
   "required": ["image", "service", "adminPort", "config", "existingSecret"],
   "properties": {
+    "requestLimits": {
+      "type": "object",
+      "description": "Request body limits at the ingress, matching the upload limits of docs/api.md. Owned by issue #82 alone: it fills this property and templates/_requestlimits.tpl."
+    },
     "replicaCount": {
       "type": "integer",
       "minimum": 1,
@@ -250,6 +254,10 @@
     "nodeSelector": { "type": "object" },
     "tolerations": { "type": "array" },
     "affinity": { "type": "object" },
+    "objectStore": {
+      "type": "object",
+      "description": "The S3 compatible store for receipts and the logo. Owned by issue #75 alone: it fills this property and templates/_objectstore.tpl."
+    },
     "config": {
       "type": "object",
       "required": ["listenAddr", "adminListenAddr", "databaseUrl", "databaseUser"],

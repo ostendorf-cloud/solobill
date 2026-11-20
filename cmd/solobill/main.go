@@ -30,9 +30,12 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	code, msg := exitWith(dispatch(os.Args[1:], os.Stdout, run))
+	if msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+	}
+	if code != 0 {
+		os.Exit(code)
 	}
 }
 
@@ -126,6 +129,11 @@ func run() error {
 		return fmt.Errorf("solobill: %w", err)
 	}
 
+	repos, err := buildRepositories(ctx, wireEnv{cfg: cfg, logger: logger, store: store, health: healthRegistry})
+	if err != nil {
+		return fmt.Errorf("solobill: %w", err)
+	}
+
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:           logger,
 		Store:            store,
@@ -143,6 +151,7 @@ func run() error {
 		RateLimitPer:     cfg.RateLimitPer,
 		DefaultInviteTTL: cfg.DefaultInviteTTL,
 		DistFS:           spaFS,
+		Repositories:     repos,
 	})
 	if err != nil {
 		return fmt.Errorf("solobill: build http handler: %w", err)

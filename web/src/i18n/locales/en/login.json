@@ -1,0 +1,17 @@
+{
+  "title": "Log in",
+  "lead": "Log in with your solobill account.",
+  "tenantSlug": "Tenant",
+  "email": "Email",
+  "password": "Password",
+  "totpCode": "TOTP code",
+  "submit": "Log in",
+  "submitting": "Logging in",
+  "oidcLink": "Log in with single sign-on",
+  "validation": {
+    "tenantSlug": "Please enter the tenant.",
+    "email": "Please enter your email address.",
+    "password": "Please enter your password.",
+    "totpCode": "Please enter the TOTP code."
+  }
+}

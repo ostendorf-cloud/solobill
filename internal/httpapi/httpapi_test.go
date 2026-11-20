@@ -32,6 +32,12 @@ type testApp struct {
 	adminHandler http.Handler
 	store        *fakeStore
 	csrfKey      []byte
+	// repos is what the repository hooks set, so a feature test can type
+	// assert its own fake back out of it.
+	repos httpapi.Repositories
+	// handlers is what NewHandler returned, for a test that inspects it
+	// through export_test.go.
+	handlers httpapi.Handlers
 }
 
 // buildTestApp builds a real internal/httpapi handler over a fakeStore, so
@@ -61,6 +67,15 @@ func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 	healthRegistry := health.New()
 	healthRegistry.Add("fixture", 0, func(context.Context) error { return nil })
 
+	// Every feature's fakes, registered by the init of its own
+	// fake_<resource>_test.go: see testhooks_test.go. Scope is the fake
+	// store's own WithTenant, set before the hooks run, so a feature's
+	// handlers open their tenant scope exactly as in production.
+	repos := httpapi.Repositories{Scope: store}
+	for _, hook := range repositoryHooks {
+		hook(t, &repos)
+	}
+
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:           logging.New(io.Discard, slog.LevelError),
 		Store:            store,
@@ -73,12 +88,13 @@ func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 		RateLimitPer:     time.Minute,
 		DefaultInviteTTL: time.Hour,
 		DistFS:           distFS,
+		Repositories:     repos,
 	})
 	if err != nil {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)
 	}
 
-	return testApp{handler: handlers.Public, adminHandler: handlers.Admin, store: store, csrfKey: csrfKey}
+	return testApp{handler: handlers.Public, adminHandler: handlers.Admin, store: store, csrfKey: csrfKey, repos: repos, handlers: handlers}
 }
 
 // fixedKey returns a deterministic 32 byte key, seed changing only the

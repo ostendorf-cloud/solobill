@@ -8,8 +8,6 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
 // Store wires a connection pool into the five repositories and the
@@ -88,46 +86,6 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
-// Tenants returns the tenant repository. Its methods are not
-// tenant-scoped; see storage.TenantRepository.
-func (s *Store) Tenants() storage.TenantRepository {
-	return &tenantRepository{pool: s.pool}
-}
-
-// Accounts returns the account repository. Every method on it requires a
-// context WithTenant produced; see storage.AccountRepository.
-func (s *Store) Accounts() storage.AccountRepository {
-	return &accountRepository{}
-}
-
-// Invites returns the invite repository. Every method on it requires a
-// context WithTenant produced; see storage.InviteRepository.
-func (s *Store) Invites() storage.InviteRepository {
-	return &inviteRepository{}
-}
-
-// Customers returns the customer repository. Every method on it
-// requires a context WithTenant produced; see storage.CustomerRepository.
-func (s *Store) Customers() storage.CustomerRepository {
-	return &customerRepository{}
-}
-
-// CatalogueItems returns the catalogue item repository. Every method on
-// it requires a context WithTenant produced; see
-// storage.CatalogueItemRepository.
-func (s *Store) CatalogueItems() storage.CatalogueItemRepository {
-	return &catalogueItemRepository{}
-}
-
-// Documents returns the document repository. Every method on it
-// requires a context WithTenant produced; see storage.DocumentRepository.
-func (s *Store) Documents() storage.DocumentRepository {
-	return &documentRepository{}
-}
-
-// DocumentNumbers returns the document numbering repository. Every
-// method on it requires a context WithTenant produced; see
-// storage.DocumentNumberRepository.
-func (s *Store) DocumentNumbers() storage.DocumentNumberRepository {
-	return &documentNumberRepository{}
-}
+// Every repository accessor (Tenants, Accounts, ...) lives in its own
+// store_<resource>.go, so two issues adding accessors never edit the same
+// lines: see AGENTS.md's conflict zones.

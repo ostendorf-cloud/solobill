@@ -1,0 +1,13 @@
+{
+  "title": "Overview",
+  "lead": "This view only proves that login and the token contract work.",
+  "loading": "Loading profile",
+  "loadError": "Could not load the profile.",
+  "email": "Email",
+  "name": "Name",
+  "role": "Role",
+  "tenantId": "Tenant ID",
+  "logout": "Log out",
+  "loggingOut": "Logging out",
+  "logoutError": "Logging out failed."
+}

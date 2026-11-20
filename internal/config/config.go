@@ -163,6 +163,14 @@ type Config struct {
 	// accepts.
 	SeedOwnerEmail       string
 	SeedOwnerOIDCSubject string
+
+	// ObjectStore is the S3 configuration, owned by issue #75 in
+	// config_objectstore.go.
+	ObjectStore ObjectStoreConfig
+
+	// PDF is the renderer configuration, owned by issue #74 in
+	// config_pdf.go.
+	PDF PDFConfig
 }
 
 // Load reads every setting through getenv, collecting every problem into
@@ -260,6 +268,12 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.SeedOwnerOIDCSubject != "" && cfg.SeedTenantSlug == "" {
 		fail(errors.New("SEED_TENANT_SLUG: is required when SEED_OWNER_OIDC_SUBJECT is set"))
 	}
+
+	// One loader per feature file. A feature issue edits only its own
+	// config_<feature>.go, never this function: see AGENTS.md's conflict
+	// zones.
+	loadObjectStore(l, &cfg.ObjectStore, fail)
+	loadPDF(l, &cfg.PDF, fail)
 
 	if err := errors.Join(append(problems, l.Err())...); err != nil {
 		return Config{}, fmt.Errorf("config: load: %w", err)

@@ -2,6 +2,11 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+# Request body limits at the ingress (docs/api.md upload limits). Owned by
+# issue #82 alone, together with templates/_requestlimits.tpl. Empty until
+# then.
+requestLimits: {}
+
 replicaCount: 1
 
 image:
@@ -510,3 +515,9 @@ migrationJob:
       memory: 64Mi
     limits:
       memory: 128Mi
+
+# The S3 compatible store for receipts, imported originals and the logo
+# (docs/concepts/solobill.md, "Object store client and configuration").
+# Owned by issue #75 alone, together with templates/_objectstore.tpl.
+# Empty until then.
+objectStore: {}
