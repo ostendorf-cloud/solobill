@@ -98,6 +98,21 @@ type DocumentNumber struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type File struct {
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	Purpose          string
+	ObjectKey        string
+	ObjectVersionID  pgtype.Text
+	Sha256           string
+	SizeBytes        int64
+	ContentType      string
+	OriginalFilename string
+	UploadedBy       pgtype.UUID
+	UploadedAt       pgtype.Timestamptz
+	RetainUntil      pgtype.Timestamptz
+}
+
 type Invite struct {
 	ID         uuid.UUID
 	TenantID   uuid.UUID

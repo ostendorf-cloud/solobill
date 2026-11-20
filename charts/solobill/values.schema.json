@@ -256,7 +256,50 @@
     "affinity": { "type": "object" },
     "objectStore": {
       "type": "object",
-      "description": "The S3 compatible store for receipts and the logo. Owned by issue #75 alone: it fills this property and templates/_objectstore.tpl."
+      "description": "The S3 compatible store for receipts, imported originals and the logo. Owned by issue #75 alone, together with templates/_objectstore.tpl and templates/files-verify-cronjob.yaml.",
+      "additionalProperties": false,
+      "required": ["endpoint", "bucket", "region", "usePathStyle", "objectLock", "requireVersioning", "existingSecret", "verify"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "pattern": "^(https?://[^/?#@]+/?)?$",
+          "description": "Base URL of the S3 API, scheme and host only. Empty: no store, the file routes answer 503."
+        },
+        "bucket": { "type": "string" },
+        "region": { "type": "string", "minLength": 1 },
+        "usePathStyle": { "type": "boolean" },
+        "objectLock": { "type": "boolean" },
+        "requireVersioning": { "type": "boolean" },
+        "existingSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "accessKeyIdKey": { "type": "string" },
+            "secretAccessKeyKey": { "type": "string" }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespaceSelector": { "type": "object" },
+            "podSelector": { "type": "object" },
+            "ipBlock": { "type": "object" }
+          }
+        },
+        "verify": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "schedule"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "schedule": { "type": "string", "minLength": 1 },
+            "annotations": { "type": "object" },
+            "resources": { "type": "object" }
+          }
+        }
+      }
     },
     "config": {
       "type": "object",

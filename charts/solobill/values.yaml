@@ -552,6 +552,62 @@ migrationJob:
 
 # The S3 compatible store for receipts, imported originals and the logo
 # (docs/concepts/solobill.md, "Object store client and configuration").
-# Owned by issue #75 alone, together with templates/_objectstore.tpl.
-# Empty until then.
-objectStore: {}
+# Owned by issue #75 alone, together with templates/_objectstore.tpl and
+# templates/files-verify-cronjob.yaml.
+#
+# The bucket is not created here. What it must provide, set up in the
+# infrastructure repository:
+#   - object lock enabled, which S3 allows only when the bucket is created;
+#   - versioning enabled;
+#   - a user limited to this bucket, its key pair in a Secret (below);
+#   - a policy allowing s3:PutObject, s3:GetObject, s3:GetObjectVersion,
+#     s3:GetBucketVersioning, s3:GetBucketObjectLockConfiguration,
+#     s3:PutObjectRetention and s3:GetObjectRetention, and no delete action;
+#   - its own backup, since the database backup covers the metadata only.
+# The process starts in every case: while the bucket is missing,
+# unreachable, unversioned (with requireVersioning) or unlocked (with
+# objectLock), only the file routes answer 503 and GET /api/v1/status
+# reports it.
+objectStore:
+  # Base URL of the S3 API, scheme and host only, for example
+  # "http://s3.seaweedfs.svc:8333". Empty: no store is configured.
+  endpoint: ""
+  # Required when endpoint is set.
+  bucket: ""
+  region: "us-east-1"
+  # SeaweedFS needs path style addressing.
+  usePathStyle: true
+  # Request compliance mode retention per object (end of the upload year
+  # plus ten years) and gate the file routes while the bucket has no
+  # object lock. Set it to true once the bucket has object lock.
+  objectLock: false
+  # Gate the file routes while the bucket has no versioning.
+  requireVersioning: true
+  # The S3 key pair, from a Secret this chart does not create. name empty
+  # reads it from existingSecret.name. A key left empty is not rendered
+  # (an anonymous store, never in a real deployment).
+  existingSecret:
+    name: ""
+    accessKeyIdKey: "S3_ACCESS_KEY_ID"
+    secretAccessKeyKey: "S3_SECRET_ACCESS_KEY"
+  # NetworkPolicy destination of the object store egress rule, the same
+  # shape as networkPolicy.egress.postgres. The port is read from
+  # endpoint. Empty: any destination on that port.
+  egress:
+    namespaceSelector: {}
+    podSelector: {}
+    ipBlock: {}
+  # The CronJob running "solobill files verify", the weekly integrity
+  # scan. Rendered only while endpoint is set. A failed Job is a finding:
+  # alert on it.
+  verify:
+    enabled: true
+    # Sundays 03:17.
+    schedule: "17 3 * * 0"
+    annotations: {}
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi

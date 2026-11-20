@@ -243,6 +243,20 @@ services:
       # file sets them.
       SEED_TENANT_SLUG: "${SEED_TENANT_SLUG:-demo}"
       SEED_TENANT_NAME: "${SEED_TENANT_NAME:-Demo Tenant}"
+      # The seaweedfs service above (issue #75). No S3 key pair: the local
+      # gateway runs without identities on this private network, so the
+      # client signs anonymously. The local bucket has neither versioning
+      # nor object lock, so S3_REQUIRE_VERSIONING is off here and only
+      # here (docs/concepts/solobill.md, "Receipt storage and GoBD"): the
+      # file routes work, the warning in the log and the status stay. If
+      # the bucket step has not run yet, the file routes answer 503 until
+      # the next check a minute later.
+      S3_ENDPOINT: "http://seaweedfs:8333"
+      S3_BUCKET: solobill
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+      S3_REQUIRE_VERSIONING: "false"
+      S3_OBJECT_LOCK: "false"
     ports:
       # Bound to loopback only: "8080:8080" alone binds every interface,
       # which on a shared network (coffee shop wifi, office LAN) would
