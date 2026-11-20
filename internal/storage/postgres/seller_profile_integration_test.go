@@ -246,15 +246,42 @@ func TestVATRegimePeriodsAreIsolatedAndAppendOnly(t *testing.T) {
 				t.Errorf("tenant B supersedes A's row error = %v, want ErrNotFound", err)
 			}
 
-			// A row written for tenant A from B's scope is refused.
-			if _, err := repo.Create(ctx, storage.VATRegimePeriod{TenantID: env.a.ID, ValidFrom: day("2026-06-01"), Regime: storage.VATRegimeStandard}); err == nil {
-				t.Error("tenant B wrote a period row for tenant A")
-			}
-
 			return nil
 		})
 		if err != nil {
 			t.Fatalf("tenant B scope: %v", err)
+		}
+
+		// A row written for tenant A from B's scope is refused by the
+		// policy's WITH CHECK. Postgres aborts the transaction on that
+		// error, so it gets a scope of its own that returns the refusal
+		// and rolls back, instead of committing an aborted transaction.
+		err = env.store.WithTenant(ctx, env.b.ID, func(ctx context.Context) error {
+			_, err := env.store.VATRegimePeriods().Create(ctx, storage.VATRegimePeriod{
+				TenantID: env.a.ID, ValidFrom: day("2026-06-01"), Regime: storage.VATRegimeStandard,
+			})
+
+			return err
+		})
+		if err == nil {
+			t.Error("tenant B wrote a period row for tenant A")
+		}
+
+		// The refused row is not visible to tenant A either.
+		if err := env.store.WithTenant(ctx, env.a.ID, func(ctx context.Context) error {
+			list, err := env.store.VATRegimePeriods().List(ctx)
+			if err != nil {
+				return err
+			}
+			for _, p := range list {
+				if p.ValidFrom.Equal(day("2026-06-01")) {
+					t.Error("the refused row of tenant B exists")
+				}
+			}
+
+			return nil
+		}); err != nil {
+			t.Fatalf("tenant A scope: %v", err)
 		}
 	})
 
