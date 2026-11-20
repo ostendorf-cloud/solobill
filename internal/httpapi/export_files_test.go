@@ -11,5 +11,8 @@ func AttachmentDisposition(stored, contentType string) string {
 	return attachmentDisposition(stored, contentType)
 }
 
+// ReadStoredObject exposes readStoredObject to files_test.go.
+var ReadStoredObject = readStoredObject
+
 // VerifiedChunkSize exposes verifiedChunkSize to files_test.go.
 const VerifiedChunkSize = verifiedChunkSize

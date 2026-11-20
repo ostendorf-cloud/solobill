@@ -15,6 +15,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -387,7 +388,7 @@ func TestDownloadServesTheVerifiedBytesAsAnAttachment(t *testing.T) {
 	if got := h.Get("Content-Type"); got != "application/pdf" {
 		t.Errorf("Content-Type = %q, want application/pdf", got)
 	}
-	if got := h.Get("Content-Disposition"); got != "attachment; filename*=utf-8''Rechnung%20M%C3%A4rz.pdf" {
+	if got := h.Get("Content-Disposition"); got != "attachment; filename=\"Rechnung M_rz.pdf\"; filename*=utf-8''Rechnung%20M%C3%A4rz.pdf" {
 		t.Errorf("Content-Disposition = %q, want an attachment with the encoded name", got)
 	}
 	if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
@@ -873,15 +874,31 @@ func TestSniffContentType(t *testing.T) {
 		{"xml", "<?xml version=\"1.0\"?><Invoice/>", "application/xml"},
 		{"xml after bom and newline", "\xEF\xBB\xBF\n<?xml version=\"1.0\"?>\n<Invoice/>", "application/xml"},
 		{"xml declaration without a root", "<?xml version=\"1.0\"?>", ""},
-		{"xml with prolog, comment, doctype and namespaced root", "<?xml version=\"1.0\"?>\n<!-- c -->\n<!DOCTYPE x [<!ENTITY e \"v\">]>\n<rsm:CrossIndustryInvoice xmlns:rsm=\"urn:x\"/>", "application/xml"},
+		{"xml with comment, pi and namespaced root", "<?xml version=\"1.0\"?>\n<!-- c -->\n<?app x?>\n<rsm:CrossIndustryInvoice xmlns:rsm=\"urn:x\"/>", "application/xml"},
+		{"a long comment before the root", "<?xml version=\"1.0\"?><!--" + strings.Repeat("x", 5000) + "--><Invoice/>", "application/xml"},
+		// Without the SVG namespace a browser runs no script in it.
+		{"svgx root without a namespace is accepted", "<?xml version=\"1.0\"?><svgx/>", "application/xml"},
+		{"doctype with an internal subset", "<?xml version=\"1.0\"?>\n<!DOCTYPE x [<!ENTITY e \"v\">]>\n<rsm:CrossIndustryInvoice xmlns:rsm=\"urn:x\"/>", ""},
+		{"doctype whose entity value holds ]>", "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY e \"]><Invoice/>\">]><svg xmlns=\"x\"/>", ""},
 		{"svg root", "<?xml version=\"1.0\"?><svg xmlns=\"x\" onload=\"alert(1)\"/>", ""},
 		{"svg root upper case after a comment", "<?xml version=\"1.0\"?><!-- x --><SVG/>", ""},
 		{"prefixed svg root", "<?xml version=\"1.0\"?><s:svg xmlns:s=\"x\"/>", ""},
 		{"xhtml root after doctype", "<?xml version=\"1.0\"?><!DOCTYPE html><html><script>alert(1)</script></html>", ""},
 		{"svg namespace on another root", "<?xml version=\"1.0\"?><a xmlns=\"http://www.w3.org/2000/svg\"/>", ""},
 		{"xhtml namespace on another root", "<?xml version=\"1.0\"?><a><b xmlns=\"http://www.w3.org/1999/XHTML\"/></a>", ""},
+		{"xhtml namespace after 4 KiB", "<?xml version=\"1.0\"?><rsm:CrossIndustryInvoice xmlns:rsm=\"urn:x\"><!--" + strings.Repeat("x", 5000) +
+			"--><h:script xmlns:h=\"http://www.w3.org/1999/xhtml\">alert(1)</h:script></rsm:CrossIndustryInvoice>", ""},
+		{"xhtml namespace through a character reference", "<?xml version=\"1.0\"?><r><h:script xmlns:h=\"http://www.w3.org/1999/xht&#109;l\">alert(1)</h:script></r>", ""},
+		{"svg namespace through a character reference", "<?xml version=\"1.0\"?><r xmlns=\"http://www.w3.org/2000/&#115;vg\"/>", ""},
+		{"xhtml namespace through an entity", "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY ns \"http://www.w3.org/1999/xht&#109;l\">]><r xmlns=\"&ns;\"/>", ""},
+		{"unused xhtml namespace declaration", "<?xml version=\"1.0\"?><r xmlns:h=\"http://www.w3.org/1999/xhtml\"/>", ""},
+		{"undefined entity", "<?xml version=\"1.0\"?><r>&ns;</r>", ""},
+		{"xhtml attribute namespace", "<?xml version=\"1.0\"?><r xmlns:h=\"http://www.w3.org/1999/xhtml\" h:onload=\"x\"/>", ""},
+		{"xml-stylesheet pi", "<?xml version=\"1.0\"?><?xml-stylesheet type=\"text/xsl\" href=\"x.xsl\"?><Invoice/>", ""},
+		{"two roots", "<?xml version=\"1.0\"?><Invoice/><Invoice/>", ""},
+		{"not well formed", "<?xml version=\"1.0\"?><Invoice><a></Invoice>", ""},
+		{"latin-1 encoding", "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><Invoice/>", ""},
 		{"unterminated comment", "<?xml version=\"1.0\"?><!-- never closed", ""},
-		{"root beyond 4 KiB", "<?xml version=\"1.0\"?><!--" + strings.Repeat("x", 5000) + "--><Invoice/>", ""},
 		{"xml-stylesheet is not a declaration", "<?xml-stylesheet href=\"x\"?>", ""},
 		{"xml without declaration", "<Invoice/>", ""},
 		{"html", "<!doctype html>", ""},
@@ -893,6 +910,149 @@ func TestSniffContentType(t *testing.T) {
 		if got := httpapi.SniffContentType([]byte(tt.data)); got != tt.want {
 			t.Errorf("%s: SniffContentType() = %q, want %q", tt.name, got, tt.want)
 		}
+	}
+}
+
+// unversionedStore can read only the current object: it does not
+// implement storage.VersionedObjectReader. It counts Get calls.
+type unversionedStore struct{ gets int }
+
+func (s *unversionedStore) Put(context.Context, storage.PutObject) (storage.ObjectInfo, error) {
+	return storage.ObjectInfo{}, nil
+}
+
+func (s *unversionedStore) Get(context.Context, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	s.gets++
+
+	return io.NopCloser(bytes.NewReader(samplePDF)), storage.ObjectInfo{SizeBytes: int64(len(samplePDF))}, nil
+}
+
+func (s *unversionedStore) Stat(context.Context, string) (storage.ObjectInfo, error) {
+	return storage.ObjectInfo{}, nil
+}
+
+func (s *unversionedStore) BucketVersioning(context.Context) (bool, error) { return false, nil }
+
+func TestReadStoredObjectNeverFallsBackToTheCurrentObject(t *testing.T) {
+	t.Parallel()
+
+	store := &unversionedStore{}
+	version := "v1"
+	file := storage.File{ID: uuid.New(), ObjectKey: "t/f", ObjectVersionID: &version}
+
+	if _, _, err := httpapi.ReadStoredObject(context.Background(), store, file); err == nil {
+		t.Fatal("ReadStoredObject() with a version on a store without versions error = nil, want an error")
+	}
+	if store.gets != 0 {
+		t.Errorf("Get called %d times, want 0: no fall back to the current object", store.gets)
+	}
+
+	// Without a recorded version the current object is the right one.
+	file.ObjectVersionID = nil
+	body, _, err := httpapi.ReadStoredObject(context.Background(), store, file)
+	if err != nil {
+		t.Fatalf("ReadStoredObject() without a version error = %v", err)
+	}
+	_ = body.Close()
+	if store.gets != 1 {
+		t.Errorf("Get called %d times, want 1", store.gets)
+	}
+}
+
+// TestSniffAcceptsEInvoices proves the roots XML uploads exist for pass:
+// UBL Invoice and CreditNote, CII CrossIndustryInvoice, and a default
+// namespace Invoice.
+func TestSniffAcceptsEInvoices(t *testing.T) {
+	t.Parallel()
+
+	samples := map[string]string{
+		"ubl invoice": `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
+         xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:CustomizationID>urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0</cbc:CustomizationID>
+  <cbc:ID>RE-20260009</cbc:ID>
+  <cbc:IssueDate>2026-11-20</cbc:IssueDate>
+  <cac:LegalMonetaryTotal><cbc:PayableAmount currencyID="EUR">119.00</cbc:PayableAmount></cac:LegalMonetaryTotal>
+</Invoice>`,
+		"ubl credit note": `<?xml version="1.0" encoding="UTF-8"?>
+<CreditNote xmlns="urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2"
+            xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:ID>RE-20260009-1</cbc:ID>
+</CreditNote>`,
+		"cii invoice": `<?xml version="1.0" encoding="UTF-8"?>
+<!-- ZUGFeRD / Factur-X -->
+<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
+    xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
+    xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
+  <rsm:ExchangedDocument>
+    <ram:ID>RE-20260009</ram:ID>
+    <ram:IssueDateTime><udt:DateTimeString format="102">20261120</udt:DateTimeString></ram:IssueDateTime>
+    <ram:IncludedNote><ram:Content>Gem&#228;&#223; &amp; 19 UStG</ram:Content></ram:IncludedNote>
+  </rsm:ExchangedDocument>
+</rsm:CrossIndustryInvoice>`,
+		"default namespace invoice with bom": "\xEF\xBB\xBF<?xml version=\"1.0\"?>\n<Invoice xmlns=\"urn:example:invoice\"><Total>119.00</Total></Invoice>\n",
+	}
+	for name, data := range samples {
+		if got := httpapi.SniffContentType([]byte(data)); got != "application/xml" {
+			t.Errorf("%s: SniffContentType() = %q, want application/xml", name, got)
+		}
+	}
+}
+
+// TestSniffXMLIsBounded proves hostile XML is refused quickly: entity
+// expansion never happens, deep nesting stops at the depth cap, and a
+// 10 MiB body is parsed in linear time.
+func TestSniffXMLIsBounded(t *testing.T) {
+	t.Parallel()
+
+	var laughs strings.Builder
+	laughs.WriteString(`<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol">`)
+	for i := 1; i <= 9; i++ {
+		fmt.Fprintf(&laughs, `<!ENTITY lol%d "`, i)
+		for range 10 {
+			if i == 1 {
+				laughs.WriteString("&lol;")
+			} else {
+				fmt.Fprintf(&laughs, "&lol%d;", i-1)
+			}
+		}
+		laughs.WriteString(`">`)
+	}
+	laughs.WriteString(`]><lolz>&lol9;</lolz>`)
+
+	nested := "<?xml version=\"1.0\"?>" + strings.Repeat("<a>", 10<<20/3)
+	var attrs strings.Builder
+	attrs.WriteString("<?xml version=\"1.0\"?><a ")
+	for i := 0; attrs.Len() < 10<<20; i++ {
+		fmt.Fprintf(&attrs, "b%d=\"c\" ", i)
+	}
+	attrs.WriteString("/>")
+	manyElements := "<?xml version=\"1.0\"?><r>" + strings.Repeat("<a x=\"1\"/>", 10<<20/11) + "</r>"
+
+	tests := []struct {
+		name  string
+		data  string
+		want  string
+		bound time.Duration
+	}{
+		{"billion laughs", laughs.String(), "", 100 * time.Millisecond},
+		{"10 MiB of nesting", nested, "", 2 * time.Second},
+		{"10 MiB of distinct attributes on one element", attrs.String(), "", 20 * time.Second},
+		{"10 MiB of one repeated attribute", "<?xml version=\"1.0\"?><a " + strings.Repeat("b=\"c\" ", 10<<20/6) + "/>", "", 20 * time.Second},
+		{"10 MiB of small elements", manyElements, "application/xml", 20 * time.Second},
+	}
+	for _, tt := range tests {
+		start := time.Now()
+		got := httpapi.SniffContentType([]byte(tt.data))
+		elapsed := time.Since(start)
+		if got != tt.want {
+			t.Errorf("%s: SniffContentType() = %q, want %q", tt.name, got, tt.want)
+		}
+		if elapsed > tt.bound {
+			t.Errorf("%s: took %v, want at most %v", tt.name, elapsed, tt.bound)
+		}
+		t.Logf("%s: %d bytes in %v", tt.name, len(tt.data), elapsed)
 	}
 }
 
@@ -939,6 +1099,14 @@ func TestAttachmentDisposition(t *testing.T) {
 		{"quotes", `say "hi".pdf`, "application/pdf", `attachment; filename="say \"hi\".pdf"`},
 		{"path", `..\..\etc/passwd`, "application/xml", `attachment; filename=.._.._etc_passwd.xml`},
 		{"empty", "", "image/png", `attachment; filename=file.png`},
+		{
+			"non ascii gets an ascii fallback", "Quittung Bäcker.pdf", "application/pdf",
+			`attachment; filename="Quittung B_cker.pdf"; filename*=utf-8''Quittung%20B%C3%A4cker.pdf`,
+		},
+		{
+			"non ascii with quotes and cr lf", "Ä\"b\r\n.pdf", "application/pdf",
+			`attachment; filename="_\"b.pdf"; filename*=utf-8''%C3%84%22b.pdf`,
+		},
 		{"only an extension", ".pdf", "application/pdf", `attachment; filename=file.pdf`},
 	}
 	for _, tt := range tests {

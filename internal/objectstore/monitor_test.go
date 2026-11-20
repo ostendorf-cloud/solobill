@@ -180,16 +180,21 @@ func TestGuardedRefusesWhileGated(t *testing.T) {
 
 		return []error{err1, err2, err3}
 	}
+	versionCall := func() error {
+		_, _, err := g.GetVersion(ctx, "k", "v1")
+
+		return err
+	}
 
 	// Before the first check and after a failing one, every call is refused
 	// and never reaches the store.
-	for _, err := range call() {
+	for _, err := range append(call(), versionCall()) {
 		if !errors.Is(err, storage.ErrObjectStoreUnavailable) {
 			t.Errorf("unchecked: error = %v, want ErrObjectStoreUnavailable", err)
 		}
 	}
 	m.Check(ctx)
-	for _, err := range call() {
+	for _, err := range append(call(), versionCall()) {
 		if !errors.Is(err, storage.ErrObjectStoreUnavailable) {
 			t.Errorf("gated: error = %v, want ErrObjectStoreUnavailable", err)
 		}
@@ -207,5 +212,15 @@ func TestGuardedRefusesWhileGated(t *testing.T) {
 	}
 	if store.calls != 3 {
 		t.Errorf("store got %d calls while open, want 3", store.calls)
+	}
+
+	// fakeStore cannot read versions: GetVersion errors and never falls
+	// back to the current object.
+	err := versionCall()
+	if err == nil || errors.Is(err, storage.ErrObjectStoreUnavailable) {
+		t.Errorf("open GetVersion on a store without versions: error = %v, want a capability error", err)
+	}
+	if store.calls != 3 {
+		t.Errorf("store got %d calls after GetVersion, want still 3: no fall back to Get", store.calls)
 	}
 }

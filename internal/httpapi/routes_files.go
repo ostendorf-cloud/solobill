@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -428,16 +429,43 @@ func logIntegrity(r *http.Request, file storage.File, reason string) {
 }
 
 // attachmentDisposition is the Content-Disposition of a download: always
-// attachment, with downloadFilename (the extension of the sniffed type) as
-// a parameter that mime.FormatMediaType quotes or RFC 2231 encodes. A name
-// it cannot encode is dropped, never spliced in by hand.
+// attachment, with downloadFilename (the extension of the sniffed type).
+// Every parameter is built by mime.FormatMediaType, which quotes or RFC
+// 2231 encodes it, never spliced in by hand. A name with characters
+// outside printable ASCII gets both an ASCII "filename" fallback and the
+// encoded "filename*" (RFC 6266, section 4.3). A name it cannot encode is
+// dropped.
 func attachmentDisposition(stored, contentType string) string {
 	name := downloadFilename(stored, contentType)
-	if v := mime.FormatMediaType("attachment", map[string]string{"filename": name}); v != "" {
-		return v
+	fallback := asciiFilename(name)
+
+	plain := mime.FormatMediaType("attachment", map[string]string{"filename": fallback})
+	if plain == "" {
+		return "attachment"
+	}
+	if fallback == name {
+		return plain
 	}
 
-	return "attachment"
+	// FormatMediaType encodes a non ASCII value as filename*. Its parameter
+	// part is appended after the ASCII one.
+	encoded := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	if param, ok := strings.CutPrefix(encoded, "attachment"); ok && strings.HasPrefix(param, "; filename*=") {
+		return plain + param
+	}
+
+	return plain
+}
+
+// asciiFilename replaces every rune outside printable ASCII with "_".
+func asciiFilename(name string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7E {
+			return '_'
+		}
+
+		return r
+	}, name)
 }
 
 // upload is one parsed multipart upload, held in memory: nothing is
@@ -555,8 +583,8 @@ var (
 // or "" for anything outside the allowlist (PDF, JPEG, PNG, XML). The
 // client's file name and content type are never consulted. XML is
 // recognised by its declaration, optionally after a UTF-8 byte order mark
-// and whitespace, and only when xmlRootAllowed accepts its root; it is
-// stored, never parsed.
+// and whitespace, and only when xmlAllowed accepts the whole document. It
+// is parsed for that check only: nothing reads its content afterwards.
 func sniffContentType(data []byte) string {
 	switch {
 	case bytes.HasPrefix(data, magicPDF):
@@ -569,7 +597,7 @@ func sniffContentType(data []byte) string {
 
 	rest := bytes.TrimPrefix(data, utf8BOM)
 	rest = bytes.TrimLeft(rest, " \t\r\n")
-	if bytes.HasPrefix(rest, magicXML) && len(rest) > len(magicXML) && isXMLSpace(rest[len(magicXML)]) && xmlRootAllowed(rest) {
+	if bytes.HasPrefix(rest, magicXML) && len(rest) > len(magicXML) && isXMLSpace(rest[len(magicXML)]) && xmlAllowed(bytes.TrimPrefix(data, utf8BOM)) {
 		return contentTypeXML
 	}
 
@@ -580,88 +608,98 @@ func isXMLSpace(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
 }
 
-// xmlRootScanBytes bounds how far xmlRootAllowed looks for the root
-// element. A prolog longer than that is refused.
-const xmlRootScanBytes = 4 << 10
+// maxXMLDepth bounds the nesting of an accepted XML file. An e-invoice
+// nests a few dozen levels at most.
+const maxXMLDepth = 256
 
-// refusedXMLRoots are root elements a browser renders as a document with
-// script: an SVG or (X)HTML file declared as XML. Compared by local name,
-// without a namespace prefix, case insensitive.
+// maxXMLAttributes bounds the attributes of one element, namespace
+// declarations included.
+const maxXMLAttributes = 256
+
+// refusedXMLRoots are root local names a browser may treat as a document
+// with script even without a namespace. Compared case insensitively. A
+// root such as "svgx" is a different name and passes; without the SVG or
+// XHTML namespace a browser does not run script in it.
 var refusedXMLRoots = map[string]bool{"svg": true, "html": true}
 
-// refusedXMLNamespaces are the SVG and XHTML namespaces. An XML file that
-// names either within the scanned window is refused as well, whatever its
-// root is called. An e-invoice never uses them.
-var refusedXMLNamespaces = [][]byte{
-	[]byte("http://www.w3.org/2000/svg"),
-	[]byte("http://www.w3.org/1999/xhtml"),
+// refusedXMLNamespaces are the SVG and XHTML namespaces, in which a
+// browser renders elements with script. An e-invoice never uses them.
+var refusedXMLNamespaces = map[string]bool{
+	"http://www.w3.org/2000/svg":   true,
+	"http://www.w3.org/1999/xhtml": true,
 }
 
-// xmlRootAllowed skips the prolog of an XML document (processing
-// instructions, comments, a DOCTYPE with an optional internal subset and
-// whitespace) within its first xmlRootScanBytes and accepts it only when a
-// root element follows whose local name is not in refusedXMLRoots. This is
-// a bounded byte scan to keep script carrying documents out, not an XML
-// parser: anything it cannot follow is refused.
-func xmlRootAllowed(data []byte) bool {
-	if len(data) > xmlRootScanBytes {
-		data = data[:xmlRootScanBytes]
-	}
-	lower := bytes.ToLower(data)
-	for _, ns := range refusedXMLNamespaces {
-		if bytes.Contains(lower, ns) {
+func refusedXMLNamespace(uri string) bool {
+	return refusedXMLNamespaces[strings.ToLower(strings.TrimSpace(uri))]
+}
+
+// xmlAllowed parses the whole document with encoding/xml and accepts it
+// only when it is well formed UTF-8 with exactly one root element and
+// nothing a browser could run. It refuses:
+//
+//   - any parse error, which includes an encoding other than UTF-8 (no
+//     CharsetReader) and an entity other than the five predefined ones;
+//   - any directive, so no DOCTYPE and no internal subset, which also means
+//     no entity is ever defined, let alone expanded;
+//   - an xml-stylesheet processing instruction;
+//   - an element or attribute in the SVG or XHTML namespace, after
+//     namespace resolution, and an attribute whose value (character
+//     references resolved) is one of those namespaces;
+//   - a root whose local name is svg or html;
+//   - nesting deeper than maxXMLDepth, more than maxXMLAttributes on one
+//     element, a repeated attribute, and a body without a root.
+//
+// The work is linear in the body, which the upload limit already caps at
+// 10 MiB; the decoder keeps a stack, not a recursion. The file is still
+// only stored and served as an attachment with nosniff and a sandbox
+// policy: this check keeps script carrying documents out of the store, it
+// is not the only line.
+func xmlAllowed(data []byte) bool {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	dec.Strict = true
+	dec.CharsetReader = nil
+	dec.Entity = nil
+
+	depth := 0
+	sawRoot := false
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return sawRoot && depth == 0
+		}
+		if err != nil {
 			return false
 		}
-	}
 
-	rest := data
-	for {
-		rest = bytes.TrimLeft(rest, " \t\r\n")
-		switch {
-		case bytes.HasPrefix(rest, []byte("<?")):
-			end := bytes.Index(rest, []byte("?>"))
-			if end < 0 {
-				return false
-			}
-			rest = rest[end+2:]
-		case bytes.HasPrefix(rest, []byte("<!--")):
-			end := bytes.Index(rest[4:], []byte("-->"))
-			if end < 0 {
-				return false
-			}
-			rest = rest[4+end+3:]
-		case len(rest) >= 9 && bytes.EqualFold(rest[:9], []byte("<!DOCTYPE")):
-			i := bytes.IndexAny(rest, "[>")
-			if i < 0 {
-				return false
-			}
-			if rest[i] == '[' {
-				j := bytes.Index(rest[i:], []byte("]"))
-				if j < 0 {
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				if sawRoot || refusedXMLRoots[strings.ToLower(t.Name.Local)] {
 					return false
 				}
-				i += j
-				k := bytes.IndexByte(rest[i:], '>')
-				if k < 0 {
-					return false
-				}
-				i += k
+				sawRoot = true
 			}
-			rest = rest[i+1:]
-		case bytes.HasPrefix(rest, []byte("<")):
-			name := rest[1:]
-			end := bytes.IndexAny(name, " \t\r\n/>")
-			if end <= 0 {
+			depth++
+			if depth > maxXMLDepth || len(t.Attr) > maxXMLAttributes || refusedXMLNamespace(t.Name.Space) {
 				return false
 			}
-			local := name[:end]
-			if colon := bytes.LastIndexByte(local, ':'); colon >= 0 {
-				local = local[colon+1:]
+			// encoding/xml does not refuse a repeated attribute, which is
+			// not well formed XML.
+			seen := make(map[xml.Name]bool, len(t.Attr))
+			for _, attr := range t.Attr {
+				if seen[attr.Name] || refusedXMLNamespace(attr.Name.Space) || refusedXMLNamespace(attr.Value) {
+					return false
+				}
+				seen[attr.Name] = true
 			}
-
-			return len(local) > 0 && !refusedXMLRoots[strings.ToLower(string(local))]
-		default:
+		case xml.EndElement:
+			depth--
+		case xml.Directive:
 			return false
+		case xml.ProcInst:
+			if strings.EqualFold(t.Target, "xml-stylesheet") {
+				return false
+			}
 		}
 	}
 }
