@@ -109,7 +109,8 @@ func fieldMarker(path string, i int) (string, string) {
 	if m, ok := validMarkers[path]; ok {
 		return m[0], m[1]
 	}
-	m := fmt.Sprintf("QZX%dXZQ", i)
+	// Short and narrow, so it fits even the unit cell.
+	m := fmt.Sprintf("qx%dq", i)
 
 	return m, m
 }

@@ -77,6 +77,8 @@ type TotalRow struct {
 	Label  string `json:"label"`
 	Value  string `json:"value"`
 	Strong bool   `json:"strong"`
+	// path names the payload field the row prints, for error details.
+	path string
 }
 
 // Section is a titled block of text below the totals. An empty title
@@ -84,6 +86,8 @@ type TotalRow struct {
 type Section struct {
 	Title string   `json:"title"`
 	Lines []string `json:"lines"`
+	// path names the payload field the section prints.
+	path string
 }
 
 // Errors of BuildInput and Render.
@@ -181,7 +185,11 @@ func buildData(p docpayload.FrozenPayloadV1, draft bool) (Input, []byte, error) 
 		return Input{}, nil, err
 	}
 
-	pr, err := newPrinter(limitsByTemplate[version])
+	lim, ok := limitsByTemplate[version]
+	if !ok {
+		return Input{}, nil, fmt.Errorf("%w: %q has no limits", ErrUnknownTemplate, version)
+	}
+	pr, err := newPrinter(lim)
 	if err != nil {
 		return Input{}, nil, err
 	}
@@ -227,12 +235,19 @@ func finish(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, 
 	if len(p.Lines) > pr.lim.Lines {
 		pr.add("lines", fmt.Sprintf("at most %d lines can be printed", pr.lim.Lines))
 	}
-	if pr.rows > pr.lim.Rows {
-		pr.add("lines", fmt.Sprintf("the descriptions need %d rows of %d characters, at most %d can be printed",
-			pr.rows, pr.lim.RowChars, pr.lim.Rows))
+	if len(pr.problems) > 0 {
+		return Input{}, nil, &InvalidPayloadError{Details: pr.problems}
 	}
+	// Only now, with every field fine: a hit here is a renderer bug.
 	if err := pr.checkData(in); err != nil {
 		return Input{}, nil, err
+	}
+	pages, tooTall := pr.m.estimatePages(in)
+	for _, path := range tooTall {
+		pr.add(path, "too long to fit on one page")
+	}
+	if pages > pr.lim.Pages {
+		pr.add("lines", fmt.Sprintf("the document needs up to %d pages, at most %d can be printed", pages, pr.lim.Pages))
 	}
 	if len(pr.problems) > 0 {
 		return Input{}, nil, &InvalidPayloadError{Details: pr.problems}
@@ -254,14 +269,21 @@ func finish(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, 
 func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, pr *printer) Input {
 	lang := p.Language
 	money := func(c int64) string { return formatCents(c, p.Currency, lang) }
-	date := func(path, s string) string { return formatDate(pr.line(path, s), lang) }
+	// A date is checked as entered and fitted as printed.
+	date := func(path, s string, c cell) string {
+		v := formatDate(pr.line(path, s), lang)
+		pr.fit(path, v, c)
+
+		return v
+	}
 	isOffer := p.Type == docpayload.TypeOffer
 	showVAT := p.VATRegime == docpayload.RegimeStandard
+	pr.showVAT = showVAT
 	title := l.Title[p.Type]
 
 	seller := checkedSeller(p.Seller, pr)
 	customer := checkedCustomer(p.Customer, pr)
-	number := pr.line("number", p.Number)
+	number := pr.line("number", p.Number, cellMetaValue)
 
 	in := Input{
 		TemplateVersion: version,
@@ -301,11 +323,11 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		in.Meta = append(in.Meta, Pair{l.Number[p.Type], number})
 	}
 	if p.IssueDate != "" {
-		in.Meta = append(in.Meta, Pair{l.Date, date("issue_date", p.IssueDate)})
+		in.Meta = append(in.Meta, Pair{l.Date, date("issue_date", p.IssueDate, cellMetaValue)})
 	}
 	if sp := p.ServicePeriod; sp != nil {
-		from := date("service_period.from", sp.From)
-		to := date("service_period.to", sp.To)
+		from := date("service_period.from", sp.From, cellMetaValue)
+		to := date("service_period.to", sp.To, cellMetaValue)
 		if sp.From == sp.To {
 			in.Meta = append(in.Meta, Pair{l.ServiceDate, from})
 		} else {
@@ -316,56 +338,66 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		in.Meta = append(in.Meta, Pair{l.CustomerNumber, customer.Number})
 	}
 	if p.CustomerReference != "" {
-		in.Meta = append(in.Meta, Pair{l.CustomerReference, pr.line("customer_reference", p.CustomerReference)})
+		in.Meta = append(in.Meta, Pair{l.CustomerReference, pr.line("customer_reference", p.CustomerReference, cellMetaValue)})
 	}
 	if customer.VATID != "" {
 		in.Meta = append(in.Meta, Pair{l.CustomerVATID, customer.VATID})
 	}
 	if isOffer && p.ValidUntil != "" {
-		in.Meta = append(in.Meta, Pair{l.ValidUntil, date("valid_until", p.ValidUntil)})
+		in.Meta = append(in.Meta, Pair{l.ValidUntil, date("valid_until", p.ValidUntil, cellMetaValue)})
 	}
 	if !isOffer && p.DueDate != "" {
-		in.Meta = append(in.Meta, Pair{l.DueDate, date("due_date", p.DueDate)})
+		in.Meta = append(in.Meta, Pair{l.DueDate, date("due_date", p.DueDate, cellMetaValue)})
 	}
 	if c := p.Corrects; c != nil {
-		in.CorrectsLine = l.Corrects + " " + pr.line("corrects.number", c.Number) + " " + l.CorrectsOf + " " +
-			date("corrects.issue_date", c.IssueDate) + "."
+		in.CorrectsLine = l.Corrects + " " + pr.line("corrects.number", c.Number, cellFullText) + " " + l.CorrectsOf + " " +
+			date("corrects.issue_date", c.IssueDate, cellFullText) + "."
 	}
 
-	// Nr. 5 and Nr. 7: quantity, kind and the reductions per line.
+	// Nr. 5 and Nr. 7: quantity, kind and the reductions per line. The
+	// figures never wrap: each must fit its fixed column on one line.
 	for i, line := range p.Lines {
 		path := fmt.Sprintf("lines[%d].", i)
 		row := LineRow{
-			Position:    fmt.Sprint(line.Position),
+			Position:    pr.fitWhole(path+"position", fmt.Sprint(line.Position), cellPosition),
 			Description: pr.description(path+"description", line.Description),
-			Quantity:    formatQuantity(line.QuantityThousandths, lang),
+			Quantity:    pr.fitWhole(path+"quantity_thousandths", formatQuantity(line.QuantityThousandths, lang), cellQuantity),
 			Unit:        pr.unit(path+"unit", line.Unit),
-			UnitPrice:   money(line.UnitPriceCents),
-			Amount:      money(line.NetAfterLineDiscountCents),
+			UnitPrice:   pr.fitWhole(path+"unit_price_cents", money(line.UnitPriceCents), cellUnitPrice),
+			Amount:      pr.fitWhole(path+"net_after_line_discount_cents", money(line.NetAfterLineDiscountCents), cellAmount),
 		}
 		if showVAT {
-			row.VATRate = formatPercent(int64(line.VATRatePermyriad), lang)
+			row.VATRate = pr.fitWhole(path+"vat_rate_permyriad", formatPercent(int64(line.VATRatePermyriad), lang), cellVAT)
 		}
 		if d := discountText(line.LineDiscount, p.Currency, lang); d != "" {
 			row.Discount = l.Discount + " " + d
+			pr.fit(path+"line_discount", row.Discount, cellDiscount(showVAT))
 		}
 		in.Lines = append(in.Lines, row)
 	}
 
 	in.Totals = totalRows(p, l, isOffer, showVAT)
+	for _, t := range in.Totals {
+		label, value := cellTotalLabel, cellTotalValue
+		if t.Strong {
+			label, value = cellTotalStrongLabel, cellTotalStrong
+		}
+		pr.fit(t.path, t.Label, label)
+		pr.fitWhole(t.path, t.Value, value)
+	}
 
 	// Nr. 8 note (exemption, reverse charge) or the section 19 note, as
 	// frozen, then payment terms (never on an offer) and free notes.
 	if lines := pr.note("tax_note", p.TaxNote); len(lines) > 0 {
-		in.Sections = append(in.Sections, Section{Lines: lines})
+		in.Sections = append(in.Sections, Section{Lines: lines, path: "tax_note"})
 	}
 	if !isOffer {
 		if lines := pr.note("payment_terms", p.PaymentTerms); len(lines) > 0 {
-			in.Sections = append(in.Sections, Section{Title: l.PaymentTerms, Lines: lines})
+			in.Sections = append(in.Sections, Section{Title: l.PaymentTerms, Lines: lines, path: "payment_terms"})
 		}
 	}
 	if lines := pr.note("notes", p.Notes); len(lines) > 0 {
-		in.Sections = append(in.Sections, Section{Title: l.Notes, Lines: lines})
+		in.Sections = append(in.Sections, Section{Title: l.Notes, Lines: lines, path: "notes"})
 	}
 
 	return in
@@ -373,12 +405,12 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 
 // checkedSeller passes every printed seller string through pr.
 func checkedSeller(s docpayload.SellerSnapshot, pr *printer) docpayload.SellerSnapshot {
-	s.LegalName = pr.seller("seller.legal_name", s.LegalName)
+	s.LegalName = pr.seller("seller.legal_name", s.LegalName, cellLetterhead, cellSender)
 	s.Address = docpayload.Address{
-		Street:     pr.seller("seller.address.street", s.Address.Street),
+		Street:     pr.seller("seller.address.street", s.Address.Street, cellSender),
 		Line2:      pr.seller("seller.address.line2", s.Address.Line2),
-		PostalCode: pr.seller("seller.address.postal_code", s.Address.PostalCode),
-		City:       pr.seller("seller.address.city", s.Address.City),
+		PostalCode: pr.seller("seller.address.postal_code", s.Address.PostalCode, cellSender),
+		City:       pr.seller("seller.address.city", s.Address.City, cellSender),
 		// Never printed: it only decides whether the customer's country
 		// line is printed.
 		CountryCode: s.Address.CountryCode,
@@ -392,7 +424,7 @@ func checkedSeller(s docpayload.SellerSnapshot, pr *printer) docpayload.SellerSn
 	pr.limit("seller.iban", s.IBAN, pr.lim.SellerChars)
 	s.IBAN = groupIBAN(s.IBAN)
 	pr.check("seller.iban", s.IBAN, false)
-	pr.tokens("seller.iban", s.IBAN, pr.lim.FooterTokenChars)
+	pr.fit("seller.iban", s.IBAN, cellFooter)
 	s.BIC = pr.seller("seller.bic", s.BIC)
 	s.Email = pr.seller("seller.email", s.Email)
 	s.Phone = pr.seller("seller.phone", s.Phone)
@@ -403,19 +435,19 @@ func checkedSeller(s docpayload.SellerSnapshot, pr *printer) docpayload.SellerSn
 
 // checkedCustomer passes every printed customer string through pr.
 func checkedCustomer(c docpayload.CustomerSnapshot, pr *printer) docpayload.CustomerSnapshot {
-	c.Number = pr.line("customer.number", c.Number)
-	c.Name = pr.line("customer.name", c.Name)
+	c.Number = pr.line("customer.number", c.Number, cellMetaValue)
+	c.Name = pr.line("customer.name", c.Name, cellAddress)
 	c.Address = checkedAddress("customer.address", c.Address, pr)
-	c.VATID = pr.line("customer.vat_id", c.VATID)
+	c.VATID = pr.line("customer.vat_id", c.VATID, cellMetaValue)
 
 	return c
 }
 
 func checkedAddress(path string, a docpayload.Address, pr *printer) docpayload.Address {
-	a.Street = pr.line(path+".street", a.Street)
-	a.Line2 = pr.line(path+".line2", a.Line2)
-	a.PostalCode = pr.line(path+".postal_code", a.PostalCode)
-	a.City = pr.line(path+".city", a.City)
+	a.Street = pr.line(path+".street", a.Street, cellAddress)
+	a.Line2 = pr.line(path+".line2", a.Line2, cellAddress)
+	a.PostalCode = pr.line(path+".postal_code", a.PostalCode, cellAddress)
+	a.City = pr.line(path+".city", a.City, cellAddress)
 	a.CountryCode = pr.country(path+".country_code", a.CountryCode)
 
 	return a
@@ -455,7 +487,7 @@ func totalRows(p docpayload.FrozenPayloadV1, l labels, isOffer, showVAT bool) []
 	var rows []TotalRow
 	hasDiscount := t.DocumentDiscountCents != 0
 	if showVAT || hasDiscount {
-		rows = append(rows, TotalRow{Label: l.NetTotal, Value: money(t.NetTotalCents)})
+		rows = append(rows, TotalRow{Label: l.NetTotal, Value: money(t.NetTotalCents), path: "totals.net_total_cents"})
 	}
 	if hasDiscount {
 		label := l.DocumentDiscount
@@ -463,15 +495,19 @@ func totalRows(p docpayload.FrozenPayloadV1, l labels, isOffer, showVAT bool) []
 			label += " " + formatPercent(int64(*d), lang)
 		}
 		rows = append(rows,
-			TotalRow{Label: label, Value: money(-t.DocumentDiscountCents)},
-			TotalRow{Label: l.NetAfterDiscount, Value: money(t.NetAfterDocumentDiscountCents)},
+			TotalRow{Label: label, Value: money(-t.DocumentDiscountCents), path: "totals.document_discount_cents"},
+			TotalRow{
+				Label: l.NetAfterDiscount, Value: money(t.NetAfterDocumentDiscountCents),
+				path: "totals.net_after_document_discount_cents",
+			},
 		)
 	}
 	if showVAT {
-		for _, b := range t.VAT {
+		for i, b := range t.VAT {
 			rows = append(rows, TotalRow{
 				Label: l.VAT + " " + formatPercent(int64(b.RatePermyriad), lang) + " " + l.VATOn + " " + money(b.NetCents),
 				Value: money(b.VATCents),
+				path:  fmt.Sprintf("totals.vat[%d]", i),
 			})
 		}
 	}
@@ -479,7 +515,7 @@ func totalRows(p docpayload.FrozenPayloadV1, l labels, isOffer, showVAT bool) []
 	if isOffer {
 		total = l.OfferTotal
 	}
-	rows = append(rows, TotalRow{Label: total, Value: money(t.GrandTotalCents), Strong: true})
+	rows = append(rows, TotalRow{Label: total, Value: money(t.GrandTotalCents), Strong: true, path: "totals.grand_total_cents"})
 
 	return rows
 }
@@ -504,7 +540,7 @@ func recipientLines(c docpayload.CustomerSnapshot, sellerCountry string, l label
 		if !ok {
 			name = cc
 		}
-		lines = append(lines, pr.printed("customer.address.country_code", strings.ToUpper(name)))
+		lines = append(lines, pr.printed("customer.address.country_code", strings.ToUpper(name), cellAddress))
 	}
 
 	return lines

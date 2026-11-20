@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,10 @@ var (
 	// ErrCompile is a Typst run that failed. The wrapped message carries
 	// Typst's diagnostics.
 	ErrCompile = errors.New("pdf: typst compile failed")
+	// ErrTooManyPages is a PDF with more pages than its template
+	// version's Limits.Pages. CheckPrintable refuses such a payload
+	// before Typst runs; this is the check after it.
+	ErrTooManyPages = errors.New("pdf: too many pages")
 )
 
 // Options configure a Renderer. A zero field takes its default.
@@ -137,6 +142,8 @@ type Source struct {
 	// CreationTime is the PDF creation timestamp: the issue date at
 	// midnight UTC, so the bytes are the same on every render.
 	CreationTime time.Time
+	// MaxPages is the template version's page limit, checked in the PDF.
+	MaxPages int
 }
 
 // BuildSource resolves the template and formats the payload into the
@@ -155,7 +162,7 @@ func BuildSource(p docpayload.FrozenPayloadV1, draft bool) (Source, error) {
 		created = t
 	}
 
-	return Source{Template: tmpl, Data: data, CreationTime: created}, nil
+	return Source{Template: tmpl, Data: data, CreationTime: created, MaxPages: limitsByTemplate[in.TemplateVersion].Pages}, nil
 }
 
 // templateVersion returns the version to render: the payload's, or the
@@ -220,7 +227,40 @@ func (r *Renderer) compile(ctx context.Context, src Source) ([]byte, error) {
 		return nil, fmt.Errorf("%w: output is no PDF", ErrCompile)
 	}
 
-	return out.buf.Bytes(), nil
+	pdf := out.buf.Bytes()
+	if src.MaxPages > 0 {
+		pages, err := pageCount(pdf)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrCompile, err)
+		}
+		if pages > src.MaxPages {
+			return nil, fmt.Errorf("%w: %d pages, at most %d", ErrTooManyPages, pages, src.MaxPages)
+		}
+	}
+
+	return pdf, nil
+}
+
+// pagesCount matches the /Count of a page tree node; the root's is the
+// largest.
+var pagesCount = regexp.MustCompile(`/Type\s*/Pages\b[^>]*?/Count\s+(\d+)|/Count\s+(\d+)[^>]*?/Type\s*/Pages\b`)
+
+// pageCount reads a PDF's page count from its page tree root. Typst
+// writes the page tree uncompressed.
+func pageCount(pdf []byte) (int, error) {
+	count := -1
+	for _, m := range pagesCount.FindAllSubmatch(pdf, -1) {
+		n, err := strconv.Atoi(string(m[1]) + string(m[2]))
+		if err != nil {
+			return 0, fmt.Errorf("page count: %w", err)
+		}
+		count = max(count, n)
+	}
+	if count < 0 {
+		return 0, errors.New("no page tree in the PDF")
+	}
+
+	return count, nil
 }
 
 // minimalEnv is Typst's whole environment: no TYPST_* variable from the

@@ -144,9 +144,11 @@ func groupIBAN(s string) string {
 }
 
 // splitLines splits free text into printed lines. Carriage returns are
-// dropped and trailing blank lines removed.
+// dropped, a tab prints as a space (so the layout check measures exactly
+// what is printed) and trailing blank lines are removed.
 func splitLines(s string) []string {
 	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\t", " ")
 	s = strings.TrimRight(s, "\n ")
 	if s == "" {
 		return []string{}

@@ -2,6 +2,7 @@ package pdf
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -27,12 +28,14 @@ import (
 //   - Control characters are refused. A free text field (description,
 //     notes, payment terms, tax note, footer text) may hold a line feed,
 //     a carriage return and a tab: the line feed breaks the line, the
-//     carriage return is dropped and the tab prints as white space.
+//     carriage return is dropped and the tab prints as a space.
 //   - Bidirectional formatting controls (U+202A to U+202E and U+2066 to
 //     U+2069) are refused: they can reorder what a reader sees, for
 //     example the digits of an IBAN.
-//   - Lengths, line counts and the longest run without a space are
-//     bounded by the Limits of the template version.
+//   - Every word must fit the cell it is printed in, measured with the
+//     fonts' advances (layout.go).
+//   - Lengths, line counts and pages are bounded by the Limits of the
+//     template version.
 //
 // Refusing is chosen over stripping: an issued document's frozen
 // payload must print exactly what it holds, and #70 runs CheckPrintable
@@ -51,10 +54,6 @@ type Limits struct {
 	UnitChars int
 	// SellerChars bounds a seller field, printed in the footer.
 	SellerChars int
-	// FooterTokenChars bounds the longest run without a space in a seller
-	// field and the footer text: the footer never breaks a word, and a
-	// run this long fits a footer column at 7 pt in the widest glyphs.
-	FooterTokenChars int
 	// FooterTextChars and FooterTextLines bound the footer text.
 	FooterTextChars int
 	FooterTextLines int
@@ -62,46 +61,34 @@ type Limits struct {
 	// tax note, the payment terms and the notes.
 	TextChars int
 	TextLines int
-	// NoteTokenChars bounds the longest run without a space in the tax
-	// note, the payment terms and the notes: those are never broken
-	// inside a word, and a run this long fits the text width.
-	NoteTokenChars int
-	// RowChars and Rows bound the descriptions: every description line
-	// counts one row per RowChars characters, at least one, and the sum
-	// over all item lines is at most Rows. Together with the other
-	// limits this bounds the page count.
-	RowChars int
-	Rows     int
+	// Pages bounds the page count. CheckPrintable computes the pages from
+	// the measured rows before Typst runs, and Render counts them in the
+	// PDF afterwards.
+	Pages int
 	// DataBytes bounds data.json.
 	DataBytes int
 }
 
-// documentV1Limits are document-v1's limits. TestWorstCaseRender
-// renders the largest payload they allow and checks it stays below
-// 5 MiB and MaxPages pages.
+// documentV1Limits are document-v1's limits. Every word must also fit
+// its cell (layout.go). TestWorstCaseRender renders the largest
+// payloads they allow and checks they stay below 5 MiB and Pages.
 var documentV1Limits = Limits{
-	Lines:            1000,
-	LineChars:        200,
-	UnitChars:        16,
-	SellerChars:      80,
-	FooterTokenChars: 32,
-	FooterTextChars:  300,
-	FooterTextLines:  4,
-	TextChars:        1000,
-	TextLines:        20,
-	NoteTokenChars:   48,
-	// The description cell breaks a run of more than 32 characters every
-	// 16 and holds at least 16 characters a row otherwise, so 16 per row
-	// is an upper bound of the rows a description takes.
-	RowChars:  16,
-	Rows:      4000,
-	DataBytes: 2 << 20,
+	Lines:           1000,
+	LineChars:       200,
+	UnitChars:       16,
+	SellerChars:     80,
+	FooterTextChars: 300,
+	FooterTextLines: 4,
+	TextChars:       1000,
+	TextLines:       20,
+	Pages:           MaxPages,
+	DataBytes:       2 << 20,
 }
 
-// MaxPages is the page count the largest document-v1 payload stays
-// below, measured by TestWorstCaseRender with typst 0.14.2: 147 pages
-// and 1.9 MB for 1000 lines of four one character rows each, with every
-// seller field and note at its limit.
+// MaxPages is the most pages a document-v1 PDF has. The largest payloads
+// the limits allow render to about 18 KB a page with typst 0.14.2
+// (TestWorstCaseRender), so MaxPages pages stay far below the 10 MiB
+// output limit.
 const MaxPages = 200
 
 // limitsByTemplate pins the limits per template version.
@@ -159,9 +146,11 @@ func isBidiControl(r rune) bool {
 type printer struct {
 	cov      *fontCoverage
 	buf      sfnt.Buffer
+	m        *metrics
 	lim      Limits
 	problems map[string]string
-	rows     int
+	// showVAT selects the description cell's width.
+	showVAT bool
 }
 
 func newPrinter(lim Limits) (*printer, error) {
@@ -169,8 +158,12 @@ func newPrinter(lim Limits) (*printer, error) {
 	if err != nil {
 		return nil, err
 	}
+	m, err := loadMetrics()
+	if err != nil {
+		return nil, err
+	}
 
-	return &printer{cov: cov, lim: lim, problems: map[string]string{}}, nil
+	return &printer{cov: cov, m: m, lim: lim, problems: map[string]string{}}, nil
 }
 
 func (pr *printer) add(path, reason string) {
@@ -214,29 +207,39 @@ func (pr *printer) limit(path, s string, maxChars int) {
 	}
 }
 
-// tokens records a run longer than maxChars characters that Typst cannot
-// break: Typst breaks a line at a space and after "-" or "/".
-func (pr *printer) tokens(path, s string, maxChars int) {
-	breaks := func(r rune) bool { return unicode.IsSpace(r) || r == '-' || r == '/' }
-	for _, tok := range strings.FieldsFunc(s, breaks) {
-		if utf8.RuneCountInString(tok) > maxChars {
-			pr.add(path, fmt.Sprintf("a word of at most %d characters without a space can be printed", maxChars))
-
-			return
-		}
-	}
-}
-
 func (pr *printer) lineCount(path string, lines []string, maxLines int) {
 	if len(lines) > maxLines {
 		pr.add(path, fmt.Sprintf("at most %d lines can be printed", maxLines))
 	}
 }
 
-// line checks a single line field and returns it unchanged.
-func (pr *printer) line(path, s string) string {
+// fit records the first word of s wider than one of the cells it is
+// printed in.
+func (pr *printer) fit(path, s string, cells ...cell) {
+	for _, c := range cells {
+		if w := pr.m.tooWide(s, c); w != "" {
+			pr.add(path, tooWideReason(w, c))
+
+			return
+		}
+	}
+}
+
+// fitWhole records a value that does not fit its cell on one line: the
+// figures of the item table and the totals never wrap.
+func (pr *printer) fitWhole(path, s string, c cell) string {
+	if pr.m.widthMM(s, c) > c.widthMM {
+		pr.add(path, fmt.Sprintf("value too wide for the cell: %q needs more than %.0f mm", shortWord(s), c.widthMM))
+	}
+
+	return s
+}
+
+// line checks a single line field printed in the given cells.
+func (pr *printer) line(path, s string, cells ...cell) string {
 	pr.check(path, s, false)
 	pr.limit(path, s, pr.lim.LineChars)
+	pr.fit(path, s, cells...)
 
 	return s
 }
@@ -245,41 +248,43 @@ func (pr *printer) line(path, s string) string {
 func (pr *printer) unit(path, s string) string {
 	pr.check(path, s, false)
 	pr.limit(path, s, pr.lim.UnitChars)
+	pr.fit(path, s, cellUnit)
 
 	return s
 }
 
-// seller checks a seller field printed in the header or the footer.
-func (pr *printer) seller(path, s string) string {
+// seller checks a seller field printed in the footer and the given
+// cells.
+func (pr *printer) seller(path, s string, cells ...cell) string {
 	pr.check(path, s, false)
 	pr.limit(path, s, pr.lim.SellerChars)
-	pr.tokens(path, s, pr.lim.FooterTokenChars)
+	pr.fit(path, s, append(cells, cellFooter)...)
 
 	return s
 }
 
-// description checks a line's description and counts its rows.
+// description checks a line's description.
 func (pr *printer) description(path, s string) []string {
 	lines := pr.freeText(path, s, pr.lim.TextChars, pr.lim.TextLines)
-	for _, l := range lines {
-		pr.rows += max(1, (utf8.RuneCountInString(l)+pr.lim.RowChars-1)/pr.lim.RowChars)
-	}
+	pr.fit(path, strings.Join(lines, "\n"), cellDescription(pr.showVAT))
 
 	return lines
 }
 
 // note checks the tax note, the payment terms or the notes.
 func (pr *printer) note(path, s string) []string {
-	pr.tokens(path, s, pr.lim.NoteTokenChars)
+	lines := pr.freeText(path, s, pr.lim.TextChars, pr.lim.TextLines)
+	pr.fit(path, strings.Join(lines, "\n"), cellFullText)
 
-	return pr.freeText(path, s, pr.lim.TextChars, pr.lim.TextLines)
+	return lines
 }
 
 // footerText checks the seller's footer text.
 func (pr *printer) footerText(path, s string) []string {
-	pr.tokens(path, s, pr.lim.FooterTokenChars)
+	lines := pr.freeText(path, s, pr.lim.FooterTextChars, pr.lim.FooterTextLines)
+	pr.fit(path, strings.Join(lines, "\n"), cellFooterText)
 
-	return pr.freeText(path, s, pr.lim.FooterTextChars, pr.lim.FooterTextLines)
+	return lines
 }
 
 func (pr *printer) freeText(path, s string, maxChars, maxLines int) []string {
@@ -309,16 +314,22 @@ func (pr *printer) country(path, s string) string {
 	return s
 }
 
-// printed checks a string as the renderer transformed it.
-func (pr *printer) printed(path, s string) string {
+// printed checks a string as the renderer transformed it, in its cell.
+func (pr *printer) printed(path, s string, c cell) string {
 	pr.check(path, s, false)
+	pr.fit(path, s, c)
 
 	return s
 }
 
+// ErrTemplateData is template data that holds a character the fonts
+// cannot show although every payload field passed: a renderer bug, never
+// a payload error.
+var ErrTemplateData = errors.New("pdf: template data cannot be printed")
+
 // checkData checks every string of the template data once more, so a
-// transformation or a label the field checks above miss can never reach
-// Typst. A problem here is a renderer bug, reported under "template.".
+// transformation or a label the field checks miss can never reach
+// Typst. It runs only after the field checks found nothing.
 func (pr *printer) checkData(in Input) error {
 	b, err := json.Marshal(in)
 	if err != nil {
@@ -328,24 +339,27 @@ func (pr *printer) checkData(in Input) error {
 	if err := json.Unmarshal(b, &v); err != nil {
 		return fmt.Errorf("pdf: decode input: %w", err)
 	}
-	pr.walkData("template", v)
+	if path, reason := pr.walkData("template", v); path != "" {
+		return fmt.Errorf("%w: %s: %s", ErrTemplateData, path, reason)
+	}
 
 	return nil
 }
 
-func (pr *printer) walkData(path string, v any) {
+// walkData returns the first string below v that cannot be printed.
+func (pr *printer) walkData(path string, v any) (string, string) {
 	switch t := v.(type) {
 	case string:
 		for _, r := range t {
 			if reason := pr.runeProblem(r, true); reason != "" {
-				pr.add(path, reason)
-
-				return
+				return path, reason
 			}
 		}
 	case []any:
 		for i, e := range t {
-			pr.walkData(fmt.Sprintf("%s[%d]", path, i), e)
+			if p, reason := pr.walkData(fmt.Sprintf("%s[%d]", path, i), e); p != "" {
+				return p, reason
+			}
 		}
 	case map[string]any:
 		keys := make([]string, 0, len(t))
@@ -354,7 +368,11 @@ func (pr *printer) walkData(path string, v any) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			pr.walkData(path+"."+k, t[k])
+			if p, reason := pr.walkData(path+"."+k, t[k]); p != "" {
+				return p, reason
+			}
 		}
 	}
+
+	return "", ""
 }
