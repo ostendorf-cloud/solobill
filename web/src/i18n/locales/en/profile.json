@@ -1,1 +1,73 @@
-{}
+{
+  "nav": "Settings",
+  "title": "Seller profile",
+  "lead": "Your details as they appear on every invoice and offer.",
+  "loading": "Loading the profile.",
+  "loadError": "The profile could not be loaded.",
+  "ownerOnly": "Only the owner can change the seller profile.",
+  "save": "Save",
+  "saving": "Saving the profile",
+  "saved": "The profile is saved.",
+  "saveError": "The profile could not be saved. Check the marked fields.",
+  "issueReady": "Ready to issue under",
+  "ready": "complete",
+  "incomplete": "incomplete",
+  "sections": {
+    "seller": "Name and address",
+    "tax": "Tax",
+    "bank": "Bank account",
+    "contact": "Contact and texts",
+    "numbering": "Numbering"
+  },
+  "fields": {
+    "legalName": "Name or company name",
+    "street": "Street and number",
+    "addressLine2": "Address line 2",
+    "postalCode": "Postal code",
+    "city": "City",
+    "countryCode": "Country code",
+    "countryCodeHint": "Two letters, for example DE.",
+    "taxNumber": "Steuernummer",
+    "vatId": "USt-IdNr",
+    "kleinunternehmerId": "Kleinunternehmer-Identifikationsnummer",
+    "kleinunternehmerHint": "Section 34a UStDV: a small business invoice may carry it instead of the other two.",
+    "defaultVatRegime": "Default VAT regime",
+    "defaultVatRegimeHint": "Only prefills a new draft while no period below exists.",
+    "defaultLanguage": "Default document language",
+    "bankName": "Bank",
+    "iban": "IBAN",
+    "bic": "BIC",
+    "email": "Email",
+    "phone": "Phone",
+    "website": "Website",
+    "footerText": "Footer text",
+    "numberFormatHint": "A change applies to the next issued document only. After the first issued document of a type only the prefix may change. Tokens: {'{year}'}, {'{yy}'}, {'{seq}'}, {'{seq:4}'}.",
+    "invoiceFormat": "Invoice number format",
+    "offerFormat": "Offer number format"
+  },
+  "regime": {
+    "kleinunternehmer": "Small business (section 19 UStG)",
+    "standard": "Standard taxation"
+  },
+  "language": {
+    "de": "German",
+    "en": "English"
+  },
+  "vat": {
+    "title": "VAT regime history",
+    "lead": "The regime on a date is the one of the latest period that started on or before it. A period is never edited: a wrong one is corrected by a new one that names it.",
+    "empty": "No period yet.",
+    "superseded": "(corrected)",
+    "validFrom": "Valid from",
+    "validFromHint": "A date such as 2026-10-14.",
+    "regimeLabel": "Regime",
+    "note": "Note",
+    "supersedes": "Corrects",
+    "supersedesHint": "Choose the wrong period this one replaces, if any.",
+    "supersedesNone": "No correction",
+    "add": "Add period",
+    "adding": "Adding the period",
+    "conflict": "A period from this date exists already, or the chosen period was corrected already.",
+    "addError": "The period could not be added."
+  }
+}

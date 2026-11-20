@@ -133,10 +133,45 @@ type PasskeyUserHandle struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type SellerProfile struct {
+	TenantID           uuid.UUID
+	LegalName          string
+	Street             string
+	AddressLine2       pgtype.Text
+	PostalCode         string
+	City               string
+	CountryCode        string
+	TaxNumber          pgtype.Text
+	VatID              pgtype.Text
+	KleinunternehmerID pgtype.Text
+	DefaultVatRegime   string
+	DefaultLanguage    string
+	BankName           pgtype.Text
+	Iban               pgtype.Text
+	Bic                pgtype.Text
+	Email              pgtype.Text
+	Phone              pgtype.Text
+	Website            pgtype.Text
+	FooterText         pgtype.Text
+	NumberFormats      []byte
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type Tenant struct {
 	ID        uuid.UUID
 	Slug      string
 	Name      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type VatRegimePeriod struct {
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	ValidFrom    pgtype.Date
+	Regime       string
+	Note         pgtype.Text
+	SupersedesID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
 }
