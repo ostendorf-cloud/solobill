@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/ostendorf-cloud/solobill/internal/money"
+	"github.com/ostendorf-cloud/solobill/internal/numbering"
 )
 
 // Validate reports every field the payload lacks or gets wrong for its
@@ -46,6 +47,13 @@ func Validate(p FrozenPayloadV1) map[string]string {
 	// Nr. 3 and Nr. 4.
 	v.date("issue_date", p.IssueDate)
 	v.required("number", p.Number)
+	if p.Number != "" && (p.Type != TypeCorrection || p.Imported) {
+		// A rendered or imported number; a correction solobill issues is
+		// checked through the suffix rule below instead.
+		if err := numbering.ValidNumber(p.Number); err != nil {
+			v.add("number", err.Error())
+		}
+	}
 	if p.NumberValue <= 0 {
 		v.add("number_value", "must be positive")
 	}
@@ -208,8 +216,10 @@ func (v validator) taxIdentity(p FrozenPayloadV1) {
 // original's number plus "-" and that sequence.
 //
 // An imported historic correction keeps the number it was issued under,
-// so the suffix rule is not checked for it, and the original's id may
-// be empty when the original itself was never imported.
+// so the suffix rule is not checked for it. Its original must exist in
+// solobill (issued, or imported earlier or in the same batch), so the id
+// is required for it too: the import refuses a correction whose original
+// is unknown.
 func (v validator) correction(p FrozenPayloadV1) {
 	if p.Type != TypeCorrection {
 		if p.Corrects != nil {
@@ -227,9 +237,7 @@ func (v validator) correction(p FrozenPayloadV1) {
 
 		return
 	}
-	if !p.Imported {
-		v.required("corrects.id", p.Corrects.ID)
-	}
+	v.required("corrects.id", p.Corrects.ID)
 	v.required("corrects.number", p.Corrects.Number)
 	v.date("corrects.issue_date", p.Corrects.IssueDate)
 	if p.CorrectionSeq < 1 {

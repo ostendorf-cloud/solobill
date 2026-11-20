@@ -3,6 +3,7 @@ package docchain_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -84,12 +85,55 @@ func TestEffectiveStatusAndNextSeq(t *testing.T) {
 	}
 }
 
+// TestEffectiveOn checks the VAT ratio rule: a payment uses the document
+// effective on its own day, the newest correction issued on or before it.
+func TestEffectiveOn(t *testing.T) {
+	t.Parallel()
+
+	day := func(s string) time.Time {
+		d, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			t.Fatalf("parse %q: %v", s, err)
+		}
+
+		return d
+	}
+
+	c := mustChain(t,
+		docchain.Member{ID: second, Seq: 2, IssuedOn: day("2026-12-20")},
+		docchain.Member{ID: original, Seq: 0, IssuedOn: day("2026-11-01")},
+		docchain.Member{ID: first, Seq: 1, IssuedOn: day("2026-12-05")},
+	)
+
+	tests := []struct {
+		on   time.Time
+		want uuid.UUID
+	}{
+		{day("2026-10-15"), original}, // before the original itself
+		{day("2026-11-01"), original},
+		{day("2026-12-04"), original},
+		{day("2026-12-05"), first}, // the issue day counts
+		{day("2026-12-05").Add(23 * time.Hour), first},
+		{day("2026-12-19"), first},
+		{day("2026-12-20"), second},
+		{day("2027-01-10"), second},
+	}
+	for _, tt := range tests {
+		if got := c.EffectiveOn(tt.on); got.ID != tt.want {
+			t.Errorf("EffectiveOn(%s) = %s, want %s", tt.on.Format(time.RFC3339), got.ID, tt.want)
+		}
+	}
+}
+
 func TestNewRefusesBrokenChains(t *testing.T) {
 	t.Parallel()
 
 	for name, members := range map[string][]docchain.Member{
+		// An imported correction whose original solobill does not know
+		// forms exactly this chain: the import refuses the row.
 		"no original":       {{ID: first, Seq: 1}},
 		"duplicate seq":     {{ID: original, Seq: 0}, {ID: first, Seq: 1}, {ID: second, Seq: 1}},
+		"duplicate id":      {{ID: original, Seq: 0}, {ID: first, Seq: 1}, {ID: first, Seq: 2}},
 		"negative sequence": {{ID: original, Seq: 0}, {ID: first, Seq: -1}},
 		"empty":             nil,
 	} {

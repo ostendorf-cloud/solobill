@@ -17,6 +17,9 @@ const (
 	// FilePurposeImportOriginal is the original PDF of an imported
 	// historic document.
 	FilePurposeImportOriginal FilePurpose = "import_original"
+	// FilePurposeDocumentPDF is the PDF solobill rendered for an issued
+	// document, stored on its first download (issue #74).
+	FilePurposeDocumentPDF FilePurpose = "document_pdf"
 )
 
 // File is the metadata row of one object in the S3 compatible store.

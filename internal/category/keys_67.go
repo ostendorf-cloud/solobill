@@ -6,7 +6,10 @@ package category
 // Keys of the Betriebseinnahmen.
 const (
 	// IncomeKleinunternehmer is Zeile 12: Betriebseinnahmen als
-	// Kleinunternehmer.
+	// Kleinunternehmer. Caveat: the read copy also shows a printed 111
+	// next to Zeile 10; whether Kz 111 belongs to Zeile 10, Zeile 12 or
+	// both is open and resolved by issue #80 in
+	// docs/concepts/euer-keys/80.md. The key names the line, not the Kz.
 	IncomeKleinunternehmer Key = "euer.z12"
 	// IncomeTaxable is Zeile 15: umsatzsteuerpflichtige
 	// Betriebseinnahmen.

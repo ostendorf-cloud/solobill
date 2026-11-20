@@ -8,6 +8,47 @@ import (
 
 type build func(*testing.T) docpayload.FrozenPayloadV1
 
+// TestImportedRoundingEdges checks the one rounding an imported document
+// is still checked for: each bucket's VAT rounded half away from zero
+// once, at exactly half a cent and for negative amounts.
+func TestImportedRoundingEdges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		net  int64
+		rate int32
+		vat  int64
+		ok   bool
+	}{
+		{"half a cent rounds up", 5, 1000, 1, true},
+		{"half a cent never rounds down", 5, 1000, 0, false},
+		{"below half a cent rounds down", 4, 1000, 0, true},
+		{"below half a cent never rounds up", 4, 1000, 1, false},
+		{"negative half a cent rounds away from zero", -5, 1000, -1, true},
+		{"negative half a cent never rounds toward zero", -5, 1000, 0, false},
+		{"negative below half a cent rounds toward zero", -4, 1000, 0, true},
+		{"negative below half a cent never rounds away", -4, 1000, -1, false},
+		{"negative credit at 19 percent", -10050, 1900, -1910, true},
+		{"negative credit at 19 percent off by one", -10050, 1900, -1909, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			problems := docpayload.Validate(importedTotals(t, tt.net, tt.rate, tt.vat))
+			_, flagged := problems["totals.vat[0].vat_cents"]
+			if tt.ok && len(problems) != 0 {
+				t.Errorf("Validate() = %v, want none", docpayload.SortedPaths(problems))
+			}
+			if !tt.ok && !flagged {
+				t.Errorf("Validate() = %v, want totals.vat[0].vat_cents", docpayload.SortedPaths(problems))
+			}
+		})
+	}
+}
+
 func TestCompletePayloadsValidate(t *testing.T) {
 	t.Parallel()
 
@@ -129,6 +170,29 @@ func TestValidateReports(t *testing.T) {
 			p.Totals.GrandTotalCents++
 		}), "totals.vat_total_cents"},
 		{"imported grand total", importedInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.Totals.GrandTotalCents++ }), "totals.grand_total_cents"},
+		{"imported original without sha256", importedInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.Original.SHA256 = "" }), "original"},
+		{"imported original without file id", importedInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.Original.FileID = "" }), "original"},
+		{"imported number outside the character set", importedInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.Number = `RE 2024 "17"` }), "number"},
+		{"imported correction keeps the suffix rule off but needs the original id", importedCorrection, p(func(p *docpayload.FrozenPayloadV1) { p.Corrects.ID = "" }), "corrects.id"},
+		// Shape, the rest.
+		{"number value zero", standardInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.NumberValue = 0 }), "number_value"},
+		{"number year zero", standardInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.NumberYear = 0 }), "number_year"},
+		{"rendered number outside the character set", standardInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.Number = "RE 18" }), "number"},
+		{"offer with a service period", offerOf, p(func(p *docpayload.FrozenPayloadV1) {
+			p.ServicePeriod = &docpayload.ServicePeriod{From: "2026-11-01", To: "2026-11-30"}
+		}), "service_period"},
+		{"offer valid until is a date", offerOf, p(func(p *docpayload.FrozenPayloadV1) { p.ValidUntil = "31.12.2026" }), "valid_until"},
+		{"due date is a date", standardInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.DueDate = "15.12.2026" }), "due_date"},
+		{"service period to is a date", standardInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.ServicePeriod.To = "end" }), "service_period.to"},
+		{"service period from is a date", standardInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.ServicePeriod.From = "start" }), "service_period.from"},
+		{"original on a document solobill issued", standardInvoice, p(func(p *docpayload.FrozenPayloadV1) {
+			p.Original = &docpayload.OriginalDocument{FileID: "x", SHA256: "y"}
+		}), "original"},
+		{"one bucket more than rates", standardInvoice, p(func(p *docpayload.FrozenPayloadV1) {
+			p.Totals.VAT = append(p.Totals.VAT, docpayload.VATBucket{RatePermyriad: 700})
+			p.TaxNote = "x"
+		}), "totals.vat"},
+		{"one bucket fewer than rates", mixedInvoice, p(func(p *docpayload.FrozenPayloadV1) { p.Totals.VAT = p.Totals.VAT[:1] }), "totals.vat"},
 		{"imported 34a VAT total is 0", importedInvoice, p(func(p *docpayload.FrozenPayloadV1) {
 			p.VATRegime = docpayload.RegimeKleinunternehmer
 			p.Seller.KleinunternehmerID = "DE-KU-0000000"

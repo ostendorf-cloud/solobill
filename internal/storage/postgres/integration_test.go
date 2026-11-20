@@ -1354,8 +1354,9 @@ var tablesWithoutTenantID = map[string]string{
 }
 
 // TestEveryTableIsTenantScopedOrAllowlisted closes the gap the test above
-// leaves: every table in the public schema either carries tenant_id (and
-// is then checked for row level security above) or is listed in
+// leaves: every table in the public schema, ordinary or partitioned (the
+// parent, not its partitions), either carries tenant_id (and is then
+// checked for row level security above) or is listed in
 // tablesWithoutTenantID with a reason.
 func TestEveryTableIsTenantScopedOrAllowlisted(t *testing.T) {
 	adminURL := os.Getenv("DATABASE_URL")
@@ -1376,7 +1377,8 @@ SELECT c.relname
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
-  AND c.relkind = 'r'
+  AND c.relkind IN ('r', 'p')
+  AND NOT c.relispartition
   AND NOT EXISTS (
       SELECT 1 FROM information_schema.columns col
       WHERE col.table_schema = 'public'
@@ -1438,6 +1440,27 @@ func TestAppRoleCannotChangeFiles(t *testing.T) {
 		if got != want {
 			t.Errorf("%s on files = %v, want %v", privilege, got, want)
 		}
+	}
+
+	// has_table_privilege answers for the whole table only. A column
+	// level grant ("GRANT UPDATE (sha256) ON files") would still let the
+	// role change that column, so every column is checked too.
+	rows, err := adminPool.Query(ctx, `
+SELECT a.attname
+FROM pg_attribute a
+WHERE a.attrelid = 'public.files'::regclass
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+  AND has_column_privilege($1, 'public.files', a.attname, 'UPDATE')`, testAppRole)
+	if err != nil {
+		t.Fatalf("check column privileges on files: %v", err)
+	}
+	columns, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("scan column privileges on files: %v", err)
+	}
+	if len(columns) != 0 {
+		t.Errorf("the app role can UPDATE files columns %v, want none", columns)
 	}
 }
 

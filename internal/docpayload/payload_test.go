@@ -164,9 +164,40 @@ func importedInvoice(t *testing.T) docpayload.FrozenPayloadV1 {
 	return p
 }
 
+// offerOf is a complete offer: no service period, a validity date.
+func offerOf(t *testing.T) docpayload.FrozenPayloadV1 {
+	t.Helper()
+
+	p := standardInvoice(t)
+	p.Type = docpayload.TypeOffer
+	p.Number = "AN-20260003"
+	p.ServicePeriod = nil
+	p.ValidUntil = "2026-12-31"
+
+	return p
+}
+
+// importedTotals is an imported invoice whose totals are given by hand:
+// net, one bucket at rate, the bucket's VAT, and the grand total derived
+// from them. Used for the rounding edges an import can bring in.
+func importedTotals(t *testing.T, net int64, rate int32, vat int64) docpayload.FrozenPayloadV1 {
+	t.Helper()
+
+	p := importedInvoice(t)
+	p.Totals = docpayload.Totals{
+		NetTotalCents:                 net,
+		NetAfterDocumentDiscountCents: net,
+		VAT:                           []docpayload.VATBucket{{RatePermyriad: rate, NetCents: net, VATCents: vat}},
+		VATTotalCents:                 vat,
+		GrandTotalCents:               net + vat,
+	}
+
+	return p
+}
+
 // importedCorrection is a historic correction: it keeps the number it
-// was issued under, which follows no suffix rule, and its original was
-// never imported, so it has no id.
+// was issued under, which follows no suffix rule. Its original is in
+// solobill, imported in the same batch, so it has an id.
 func importedCorrection(t *testing.T) docpayload.FrozenPayloadV1 {
 	t.Helper()
 
@@ -174,7 +205,11 @@ func importedCorrection(t *testing.T) docpayload.FrozenPayloadV1 {
 	p.Type = docpayload.TypeCorrection
 	p.Number = "GS-2024-3"
 	p.CorrectionSeq = 1
-	p.Corrects = &docpayload.DocumentReference{Number: "RE-2024-017", IssueDate: "2024-05-02"}
+	p.Corrects = &docpayload.DocumentReference{
+		ID:        "6f1c2a4e-0000-4000-8000-000000000004",
+		Number:    "RE-2024-017",
+		IssueDate: "2024-05-02",
+	}
 
 	return p
 }

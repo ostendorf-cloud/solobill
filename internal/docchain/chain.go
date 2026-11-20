@@ -11,6 +11,7 @@ package docchain
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -26,6 +27,9 @@ var ErrCorrectionBaseChanged = errors.New("docchain: the chain's effective docum
 type Member struct {
 	ID  uuid.UUID
 	Seq int
+	// IssuedOn is the document's issue date, used by EffectiveOn. Only its
+	// calendar date counts.
+	IssuedOn time.Time
 }
 
 // Status is the derived state of a member. It is never stored.
@@ -43,10 +47,11 @@ type Chain struct {
 	members []Member
 }
 
-// New builds a chain. It needs exactly one original (Seq 0) and distinct
-// sequences.
+// New builds a chain. It needs exactly one original (Seq 0), distinct
+// sequences and distinct ids.
 func New(members []Member) (Chain, error) {
 	seen := map[int]bool{}
+	ids := map[uuid.UUID]bool{}
 	for _, m := range members {
 		if m.Seq < 0 {
 			return Chain{}, fmt.Errorf("docchain: negative sequence %d", m.Seq)
@@ -54,7 +59,11 @@ func New(members []Member) (Chain, error) {
 		if seen[m.Seq] {
 			return Chain{}, fmt.Errorf("docchain: sequence %d appears twice", m.Seq)
 		}
+		if ids[m.ID] {
+			return Chain{}, fmt.Errorf("docchain: document %s appears twice", m.ID)
+		}
 		seen[m.Seq] = true
+		ids[m.ID] = true
 	}
 	if !seen[0] {
 		return Chain{}, errors.New("docchain: the chain has no original invoice")
@@ -73,6 +82,36 @@ func (c Chain) Effective() Member {
 	}
 
 	return best
+}
+
+// EffectiveOn is the member that was effective on day: the one with the
+// highest sequence issued on or before that calendar day. Before the
+// original's own issue date it is the original. This is the document
+// whose VAT ratio a payment received on day uses (docs/concepts/
+// solobill.md, "Payments"), for issue #71 and the EÜR report (#80).
+func (c Chain) EffectiveOn(day time.Time) Member {
+	cut := dateOnly(day)
+	var best Member
+	for _, m := range c.members {
+		if m.Seq == 0 {
+			if best.Seq == 0 {
+				best = m
+			}
+
+			continue
+		}
+		if !dateOnly(m.IssuedOn).After(cut) && m.Seq > best.Seq {
+			best = m
+		}
+	}
+
+	return best
+}
+
+func dateOnly(t time.Time) time.Time {
+	y, m, d := t.Date()
+
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 // StatusOf is the derived status of the member with id, and whether id

@@ -181,6 +181,11 @@ type Handlers struct {
 	// routes_<resource>.go that registered it, read by the tests through
 	// export_test.go.
 	reserved map[string]string
+
+	// repos is the Repositories the handlers were built with, read by
+	// the tests through export_test.go to prove the test hooks reach
+	// NewHandler.
+	repos Repositories
 }
 
 // NewHandler builds both handlers, returning every construction problem at
@@ -374,7 +379,7 @@ func NewHandler(d Deps) (Handlers, error) {
 		middleware.RequestID(d.Logger),
 	)
 
-	return Handlers{Public: public, Admin: admin, reserved: a.reserved}, nil
+	return Handlers{Public: public, Admin: admin, reserved: a.reserved, repos: a.repos}, nil
 }
 
 // corsMiddleware returns cors.Middleware as a one element slice, or an

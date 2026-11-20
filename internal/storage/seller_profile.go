@@ -59,7 +59,8 @@ type SellerProfile struct {
 	// (numbering.ValidateSet). A missing type uses numbering.Defaults.
 	NumberFormats map[DocumentType]string
 	// LogoFileID references the logo in files. The column lands with
-	// issue #75 (I9), not with issue #68.
+	// issue #75 (I9), not with issue #68. SellerProfileRepository.Put
+	// ignores it; only SellerProfileLogoRepository.SetLogo writes it.
 	LogoFileID *uuid.UUID
 	CreatedAt  time.Time
 	UpdatedAt  time.Time

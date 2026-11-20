@@ -30,9 +30,12 @@ import (
 )
 
 func main() {
-	if err := dispatch(os.Args[1:], run); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	code, msg := exitWith(dispatch(os.Args[1:], os.Stdout, run))
+	if msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+	}
+	if code != 0 {
+		os.Exit(code)
 	}
 }
 

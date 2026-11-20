@@ -13,7 +13,9 @@ type SellerProfileRepository interface {
 	// saved yet.
 	Get(ctx context.Context) (SellerProfile, error)
 
-	// Put creates or replaces the tenant's profile as a whole.
+	// Put creates or replaces the tenant's profile as a whole, except
+	// LogoFileID: the query never writes the logo column, so saving the
+	// profile never drops the logo (see SellerProfileLogoRepository).
 	Put(ctx context.Context, profile SellerProfile) (SellerProfile, error)
 }
 

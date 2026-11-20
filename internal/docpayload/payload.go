@@ -37,7 +37,8 @@ const DateLayout = "2006-01-02"
 
 // Document types, regimes and languages as they appear in a payload.
 // They equal the values of internal/storage, duplicated here so this
-// package imports nothing but internal/money.
+// package imports nothing but the pure packages internal/money and
+// internal/numbering.
 const (
 	TypeInvoice    = "invoice"
 	TypeCorrection = "correction"

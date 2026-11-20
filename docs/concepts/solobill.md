@@ -60,6 +60,8 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
   id instead of holding a second copy that drifts.
 - Rendering is separated from the ledger: a document's stored, frozen payload plus a template
   version produces the same PDF forever, which is what makes reproduction after years possible.
+  The PDF of an issued document is rendered once, on its first download, and stored as a file;
+  see "PDF and the object store".
 - The e-invoice layer is one port with two adapters, ZUGFeRD and XRechnung, in both directions.
 - The tax engine takes ledger entries and a period and returns labelled figures. Elster field
   mapping is data, versioned per tax year, not code.
@@ -177,6 +179,7 @@ the milestone (#68 to #82) builds against. Only #67 edits this document in the m
   assumption the owner confirms in issue #71.
 - Which document sets that ratio: the chain's effective document on the payment's
   `received_on`, that is the newest correction issued on or before that day, or the original.
+  `docchain.Chain.EffectiveOn(day)` computes it; #71 and #80 call it and do not reimplement it.
 - A later correction does not recompute the VAT share of payments received before it. The EÜR
   counts each payment's amount with the ratio of its own day. A difference the correction
   causes shows up only through the refund or the additional payment that follows it.
@@ -222,10 +225,14 @@ The owner's decision: a correction replaces the invoice.
   differ. Example: draft A is created while correction 1 is effective, correction 2 is issued
   meanwhile, A is refused, because it would replace lines it never saw. The owner discards A
   and starts a new correction from correction 2.
-- The rules are `internal/docchain`: effective, superseded, next sequence, base check. Pure and
-  tested, called by #70.
+- The rules are `internal/docchain`: effective, effective on a day, superseded, next sequence,
+  base check. Pure and tested, called by #70, #71 and #80. A chain needs exactly one original,
+  distinct sequences and distinct ids.
 - An imported historic correction keeps the number it was issued under. The suffix rule does
-  not apply to it, and its original may be unknown to solobill.
+  not apply to it.
+- Its original must be known: issued in solobill, imported earlier, or a row earlier in the same
+  import batch. Otherwise the dry run reports the correction row as an error and the commit is
+  refused. A chain without its original is exactly what `docchain.New` refuses.
 
 Not verified, and not claimed:
 
@@ -242,15 +249,21 @@ The owner's decision: the display number format is a template per document type.
 
 - The profile holds `number_formats`, one template for `invoice` and one for `offer`.
 - Tokens: `{year}` is the four digit number year, `{yy}` its last two digits, `{seq}` the
-  number without padding, `{seq:N}` the number padded with zeros to at least N digits (N from 1
-  to 9).
+  number without padding, `{seq:N}` the number padded with zeros to at least N digits. N is a
+  single digit from 1 to 9: no sign, no leading zero, no second digit.
 - `{{` and `}}` are a literal `{` and `}`. A single `}` and an unknown token are errors at save.
 - Every other character must be an ASCII letter, a digit, `-`, `_`, `.` or `/`. No space, no
   control character, no quote, no backslash, nothing outside ASCII.
 - A template must contain exactly one `{seq}` or `{seq:N}` and exactly one `{year}` or `{yy}`,
-  so a number is unique per year, and it must start with a literal prefix.
+  so a number is unique per year. It must start with a literal prefix whose first character is
+  a letter, a digit or `_`, never `.`, `-` or `/`, and its literals never contain `..` or `//`.
 - A rendered number is at most 36 characters, checked at save against a nine digit counter. A
-  correction suffix of up to four characters keeps every display number within 40.
+  correction suffix of up to four characters (`-1` to `-999`, the highest sequence) keeps every
+  display number within 40.
+- After the first issued document of a type only the prefix of its template may change, and
+  the new prefix must not overlap the old one (`numbering.ValidateChange`). Changing tokens or
+  the literals after the prefix is refused: `RE-{year}{seq}` and `RE-{seq}{year}` can render the
+  same string. The unique index on `display_number` stays the last guard.
 - The owner's format is `RE-{year}{seq:4}`: number 9 of 2026 renders as `RE-20260009`.
 - Defaults when no template is saved: `RE-{year}{seq:4}` for an invoice, `AN-{year}{seq:4}` for
   an offer. They differ in their prefix.
@@ -264,15 +277,23 @@ The owner's decision: the display number format is a template per document type.
 - A correction has no template: it is the original's number plus `-1`, `-2` and so on.
 - An imported document stores its original number in `display_number` as well, so the unique
   index also catches a collision between an imported and a new number.
+- An imported original number must pass `numbering.ValidNumber`: the same character set, at
+  most 36 characters, not starting with `.`, `-` or `/`. A number outside it is a row error in
+  the dry run; the owner fixes it in the import file (the rule in `docs/import.md` may map
+  spaces to `-`). `RE 2024 "17"` is therefore refused, never stored.
+- So every stored display number is inside the character set: rendered, imported, or a
+  correction of either.
 - The numeric counter in `document_numbers` stays gapless per tenant, type and year. The
   template only renders it.
-- Where a number leaves solobill it needs no escaping beyond one rule, because the character
-  set excludes quotes, backslashes, spaces and control characters:
-  - File name (`Content-Disposition`): `numbering.FileName`, `/` becomes `_`, plus `.pdf`.
+- Where a number leaves solobill:
+  - File name (`Content-Disposition`): `numbering.FileName` replaces every character outside the
+    set, and `/`, by `_` and appends `.pdf`. This is defence in depth: the stored numbers are
+    already inside the set, but a quoted filename stays intact even if one were not.
   - Typst: the number is passed as data in the JSON input, never spliced into markup.
   - CSV: every field is quoted by the CSV writer as usual; the number needs nothing more.
-- `internal/numbering` holds the parser, the renderer, the set check, the defaults and the file
-  name rule, with tests. Issue #68 calls it on save, issue #70 at issue.
+- `internal/numbering` holds the parser, the renderer, the set check, the change check, the
+  number check for imports, the defaults and the file name rule, with tests against hostile
+  strings. Issue #68 calls it on save, issue #70 at issue, issue #81 in the dry run.
 
 ### Imported documents and original numbers
 
@@ -292,6 +313,9 @@ The owner's decision: the display number format is a template per document type.
 - Order of the import: first every original PDF is uploaded through `POST /api/v1/files` with
   purpose `import_original`. The import rows then reference those file ids. The dry run checks
   that each file exists. The commit freezes the payload with the file id and its hash.
+- The dry run reports a row as an error, and the commit refuses the batch, when its original
+  number fails `numbering.ValidNumber`, or when it is a correction whose original is neither in
+  solobill nor a row earlier in the same batch.
 - That link lives only inside the frozen payload, which no trigger on `files` can see. The
   grant protects it: the application role cannot update or delete a `files` row.
 - For 2026 the counter of each type is raised to the highest imported number in the commit
@@ -399,21 +423,30 @@ So the store side is a production requirement:
   requested per object when `S3_OBJECT_LOCK` is on. A locked object cannot be deleted or
   overwritten before that date, even with admin credentials.
 - Both are set up by the owner in the infrastructure repository: a new bucket created with
-  object lock enabled (SeaweedFS allows it only at bucket creation), versioning on, and a bucket
-  policy that adds the versioning, retention and legal hold actions.
+  object lock enabled, versioning on, and a bucket policy that adds the versioning, retention
+  and legal hold actions. That SeaweedFS allows object lock only at bucket creation comes from
+  the SeaweedFS wiki and is not verified against 4.47.
+
 The owner's decision on what happens while that protection is missing: only the file routes
 are gated.
 
 - solobill checks the bucket at startup and then periodically (every minute): is it
   reachable, is versioning on, is object lock configured.
-- When the bucket is unreachable, or reports no versioning while `S3_REQUIRE_VERSIONING=true`
-  (the default), the file routes answer `503 object_store_unavailable`: upload, download, the
-  logo, and the attachment of an import original. Every other route keeps working: invoices,
-  customers, payments, expenses without a new receipt, the report.
+- The file routes answer `503 object_store_unavailable` when the bucket is unreachable, when it
+  reports no versioning while `S3_REQUIRE_VERSIONING=true` (the default), or when it has no
+  object lock while `S3_OBJECT_LOCK=true`. The file routes are: upload, download, the logo, the
+  PDF download, and the attachment of an import original. Every other route keeps working:
+  invoices and their issue, customers, payments, expenses without a new receipt, the report.
+- The process always starts. A missing lock or versioning at startup and one that goes missing
+  at runtime behave the same: the file routes are gated, the status reports it.
 - `/readyz` stays about the database only. The pod keeps taking traffic.
 - Every check that finds the protection missing logs a warning at level `WARN` with the reason.
 - `GET /api/v1/status` reports `object_store.reachable`, `versioning`, `object_lock` and
-  `gobd_protection_active`. The UI shows a banner while `gobd_protection_active` is false.
+  `gobd_protection_active`.
+- The banner while `gobd_protection_active` is false belongs to the app shell of issue #72. It
+  uses `web/src/status.ts` (`StatusResponse`, `gobdBannerVisible`): an unknown status, such as
+  the 501 before #75 merges, shows no banner. #72 tests it with a stubbed fetch. #75 only
+  serves the endpoint.
 - Local development sets `S3_REQUIRE_VERSIONING=false`: the file routes work against the
   unversioned compose bucket, the warning and the banner stay.
 - An integrity scan reads every object, recomputes its SHA-256 and compares it with the
@@ -431,6 +464,32 @@ What remains unverified:
 - Whether this design satisfies an auditor. The GoBD letter (BMF, 28 November 2019, amended
   2024 and 2025) was not read in full. Nothing here claims GoBD conformity.
 - Whether the cluster backup of the bucket exists and covers ten years.
+
+### PDF and the object store
+
+- Issuing never touches the bucket. It freezes the payload, which holds the logo by SHA-256.
+- The first download of an issued document's PDF renders it once from the frozen payload, the
+  template version it names and the logo file that SHA-256 names, then stores the PDF as a
+  `files` row of purpose `document_pdf`. Every later download returns those stored bytes and
+  never renders again, so the logo is never read again after that first rendering.
+- Rendering refuses when the logo file's SHA-256 differs from the payload's.
+- The PDF download is therefore a file route: while the bucket is gated it answers `503
+  object_store_unavailable`, for the first and for every later download.
+- A draft renders live, with the watermark and the current logo; it is a file route as well.
+- Issue #74 builds this; the file and its purpose are #75's storage.
+
+### Seller profile and logo
+
+- Issue #68 owns `SellerProfileRepository`, the profile queries (`seller_profiles.sql`), the
+  store file and `Put`. `Put` names its columns and never writes `logo_file_id`, so saving the
+  profile never drops the logo.
+- Issue #75 owns the logo: the `logo_file_id` column, `SellerProfileLogoRepository` (`Logo`,
+  `SetLogo`) in its own query and store files (`seller_profile_logo.sql`,
+  `store_seller_profile_logo.go`), and the logo routes.
+- The interface is split so #68 can implement its half before the column exists.
+- `has_logo` in the profile JSON is computed by #68's handler from
+  `Repositories.SellerProfileLogos`: false while that field is nil, the logo state once #75 wires
+  it. #68 writes that check once; #75 changes nothing in #68's files.
 
 ### Object store client and configuration
 
@@ -451,7 +510,7 @@ What remains unverified:
 | `S3_USE_PATH_STYLE` | `true` for SeaweedFS |
 | `S3_ACCESS_KEY_ID`, `S3_ACCESS_KEY_ID_FILE` | Key id, or a file holding it |
 | `S3_SECRET_ACCESS_KEY`, `S3_SECRET_ACCESS_KEY_FILE` | Secret, or a file holding it |
-| `S3_OBJECT_LOCK` | `true` requests retention per object and fails startup without a lock |
+| `S3_OBJECT_LOCK` | `true` requests retention per object; the file routes answer 503 while the bucket has no lock |
 | `S3_REQUIRE_VERSIONING` | `true` (default): the file routes answer 503 while the bucket has no versioning |
 
 - In the cluster the bucket, the user and the key come from the infrastructure repository and
@@ -558,7 +617,10 @@ Every file that several issues would otherwise edit, and the rule that keeps the
 - `internal/httpapi` test fakes: `buildTestApp` and `fake_store_test.go` are not edited again.
   A feature adds its fakes in its own `fake_<resource>_test.go`, whose `init` appends a hook to
   `repositoryHooks` (`testhooks_test.go`). Its tests read the fake back through
-  `testApp.repos`.
+  `testApp.repos`. `buildTestApp` sets `Scope` to the fake store before the hooks run, and a
+  test proves the hooks' result reaches `NewHandler`.
+- Command line: the server takes no flags. `-h` and `--help` print the usage and exit 0, any
+  other argument starting with `-` prints the usage and exits 2, an unknown subcommand exits 2.
 - `internal/storage`: one domain file and one interface file per resource.
 - `internal/storage/postgres`: every `func (s *Store) X()` accessor lives in its own
   `store_<resource>.go`. `store.go` is not edited again.

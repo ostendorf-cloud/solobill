@@ -34,9 +34,12 @@ type Repositories struct {
 	// Issue #74 (I8).
 	Renderer DocumentRenderer
 
-	// Issue #75 (I9).
-	Files   storage.FileRepository
-	Objects storage.ObjectStore
+	// Issue #75 (I9). SellerProfileLogos also backs the profile's
+	// has_logo: the #68 profile handler reads it when it is non-nil and
+	// reports false otherwise.
+	Files              storage.FileRepository
+	Objects            storage.ObjectStore
+	SellerProfileLogos storage.SellerProfileLogoRepository
 
 	// Issue #76 (I10a).
 	Expenses    storage.ExpenseRepository

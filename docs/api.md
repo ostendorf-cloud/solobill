@@ -105,15 +105,20 @@ The profile JSON:
 ```
 
 - `issue_ready` is computed by the seller validation function per regime. Read only.
-- `has_logo` is read only. The logo has its own endpoint.
+- `has_logo` is read only. #68's handler computes it from `SellerProfileLogoRepository.Logo`
+  when #75 has wired that repository, and reports `false` before. The logo has its own endpoint.
 - `number_formats` holds one template for `invoice` and one for `offer`, parsed by
   `internal/numbering`: `{year}`, `{yy}`, `{seq}`, `{seq:N}`, `{{` and `}}` for a literal brace,
-  every other character from `A-Z a-z 0-9 - _ . /`, a literal prefix first, at most 36 rendered
+  every other character from `A-Z a-z 0-9 - _ . /`, a literal prefix first that starts with a
+  letter, a digit or `_`, no `..` or `//`, N a single digit 1 to 9, at most 36 rendered
   characters. `RE-{year}{seq:4}` renders number 9 of 2026 as `RE-20260009`.
 - A missing type uses its default: `RE-{year}{seq:4}` for an invoice, `AN-{year}{seq:4}` for an
   offer. A correction has no template.
 - A changed template applies to the next issue only. Issued documents keep their stored
   `display_number`.
+- Once a type has an issued document, only the prefix of its template may change, to one that
+  does not overlap the old prefix (`numbering.ValidateChange`). Any other change is `400` with
+  `details` on `number_formats.<type>`.
 
 ### `GET /api/v1/profile`
 
@@ -136,7 +141,8 @@ The profile JSON:
 
 ## Seller logo
 
-Registered in `internal/httpapi/routes_profile_logo.go`. Owned by issue #75.
+Registered in `internal/httpapi/routes_profile_logo.go`. Owned by issue #75, through
+`SellerProfileLogoRepository` (`Logo`, `SetLogo`). `PUT /api/v1/profile` never changes the logo.
 
 ### `GET /api/v1/profile/logo`
 
@@ -509,12 +515,19 @@ Registered in `internal/httpapi/routes_pdf.go`. Owned by issue #74.
 
 - Who: any.
 - Response `200`: `application/pdf`, `Content-Disposition: attachment;
-  filename="<numbering.FileName(display_number)>"`: the stored display number with `/` replaced
-  by `_`, plus `.pdf`. A draft is named `draft-<id>.pdf`.
-- An issued document renders from its frozen payload and the template version it names.
-- A draft renders with an "Entwurf" or "Draft" watermark and without a number.
+  filename="<numbering.FileName(display_number)>"`: the stored display number with every
+  character outside the number set, and `/`, replaced by `_`, plus `.pdf`. A draft is named
+  `draft-<id>.pdf`.
+- An issued document: the first download renders once from the frozen payload, the template
+  version it names and the logo file its SHA-256 names, and stores the PDF as a file of
+  purpose `document_pdf`. Every later download returns the stored bytes; the logo is never
+  read again.
+- A draft renders live with an "Entwurf" or "Draft" watermark and without a number.
+- This is a file route: `503 object_store_unavailable` while the bucket is gated, for the
+  first and every later download. Issuing a document never depends on the bucket.
 - `400` with `details` when a draft lacks data the template needs.
-- `503` when the renderer is not available.
+- `409 conflict` when the logo file's SHA-256 differs from the one frozen in the payload.
+- `503 unavailable` when the renderer is not available.
 
 ## Files
 
@@ -878,8 +891,12 @@ Registered in `internal/httpapi/routes_status.go`. Owned by issue #75.
 
 - The values are the last periodic check, never a check per request.
 - `gobd_protection_active` is true only when the bucket is reachable and has versioning and
-  object lock. The UI shows a banner while it is false.
-- `file_routes_available` is false while the file routes answer `503 object_store_unavailable`.
+  object lock. The app shell of #72 shows a banner while it is false, decided by
+  `gobdBannerVisible` in `web/src/status.ts`. A failed request (the 501 before #75, a 401)
+  counts as unknown and shows no banner.
+- `file_routes_available` is false while the file routes answer `503 object_store_unavailable`:
+  the bucket is unreachable, has no versioning while `S3_REQUIRE_VERSIONING` is on, or has no
+  object lock while `S3_OBJECT_LOCK` is on. The process starts in every case.
 - `/readyz` does not depend on any of this. It reports the database only.
 
 ## Historic import
@@ -919,6 +936,10 @@ Order of an import:
   is limited to 10 MiB (10,485,760 bytes) by `http.MaxBytesReader`. The import files hold rows,
   never PDFs.
 - Runs the dry run. Nothing is written to the ledger. The batch and its findings are kept.
+- The dry run reports as an error of its row: an original number that fails
+  `numbering.ValidNumber` (character set, at most 36 characters, no leading `.`, `-` or `/`), and
+  a correction whose original is neither in solobill nor a row earlier in the same batch. A
+  batch with any error cannot be committed.
 - The dry run reports a referenced file id that does not exist, or whose purpose is not
   `import_original`, as an error of its row.
 - Response `201`: the batch in state `dry_run`.
