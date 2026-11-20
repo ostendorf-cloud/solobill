@@ -14,34 +14,29 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
+// fakeLocation is a zone other than UTC. The fakes stamp their rows in
+// it, the way a database driver returns a timestamptz in the session
+// zone, so a test sees whether the API converts to UTC.
+var fakeLocation = time.FixedZone("CET", 3600)
+
 // fakeCustomerRepository is an in memory storage.CustomerRepository that
 // mirrors the postgres one: FindByID answers a soft deleted row, List,
 // Update and Delete do not, and a number is unique per tenant among
 // active customers, case insensitively.
 //
-// fakeStore.WithTenant does not carry the tenant into the context, so the
-// fake cannot read it back the way row level security does. A test names
-// the tenant the next requests run as through actAs, the same tenant it
-// logged in with. Create still stores the tenant the handler put on the
-// customer, so a test can see that it came from the session.
+// It filters by the tenant the handler opened the scope for, read back
+// through httpapi.ScopedTenant, the way row level security filters by the
+// tenant of the transaction. A context without one fails like the real
+// repository does.
 type fakeCustomerRepository struct {
-	mu     sync.Mutex
-	rows   map[uuid.UUID]storage.Customer
-	acting uuid.UUID
+	mu   sync.Mutex
+	rows map[uuid.UUID]storage.Customer
 }
 
 func init() {
 	repositoryHooks = append(repositoryHooks, func(_ *testing.T, repos *httpapi.Repositories) {
 		repos.Customers = &fakeCustomerRepository{rows: map[uuid.UUID]storage.Customer{}}
 	})
-}
-
-// actAs sets the tenant every following call is filtered to.
-func (r *fakeCustomerRepository) actAs(tenantID uuid.UUID) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.acting = tenantID
 }
 
 // row reads a stored row back, whatever its tenant or state.
@@ -66,10 +61,19 @@ func (r *fakeCustomerRepository) numberTaken(c storage.Customer) bool {
 	return false
 }
 
-func (r *fakeCustomerRepository) Create(_ context.Context, c storage.Customer) (storage.Customer, error) {
+func (r *fakeCustomerRepository) Create(ctx context.Context, c storage.Customer) (storage.Customer, error) {
+	tenant, ok := httpapi.ScopedTenant(ctx)
+	if !ok {
+		return storage.Customer{}, storage.ErrNoTenantScope
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// The row level security policy refuses a row of another tenant.
+	if c.TenantID != tenant {
+		return storage.Customer{}, storage.ErrNotFound
+	}
 	if c.ID == uuid.Nil {
 		c.ID = uuid.New()
 	}
@@ -79,32 +83,42 @@ func (r *fakeCustomerRepository) Create(_ context.Context, c storage.Customer) (
 	if r.numberTaken(c) {
 		return storage.Customer{}, storage.ErrConflict
 	}
-	now := time.Now().UTC()
+	now := time.Now().In(fakeLocation)
 	c.CreatedAt, c.UpdatedAt = now, now
 	r.rows[c.ID] = c
 
 	return c, nil
 }
 
-func (r *fakeCustomerRepository) FindByID(_ context.Context, id uuid.UUID) (storage.Customer, error) {
+func (r *fakeCustomerRepository) FindByID(ctx context.Context, id uuid.UUID) (storage.Customer, error) {
+	tenant, ok := httpapi.ScopedTenant(ctx)
+	if !ok {
+		return storage.Customer{}, storage.ErrNoTenantScope
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	c, ok := r.rows[id]
-	if !ok || c.TenantID != r.acting {
+	if !ok || c.TenantID != tenant {
 		return storage.Customer{}, storage.ErrNotFound
 	}
 
 	return c, nil
 }
 
-func (r *fakeCustomerRepository) List(_ context.Context) ([]storage.Customer, error) {
+func (r *fakeCustomerRepository) List(ctx context.Context) ([]storage.Customer, error) {
+	tenant, ok := httpapi.ScopedTenant(ctx)
+	if !ok {
+		return nil, storage.ErrNoTenantScope
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	var list []storage.Customer
 	for _, c := range r.rows {
-		if c.TenantID == r.acting && c.DeletedAt == nil {
+		if c.TenantID == tenant && c.DeletedAt == nil {
 			list = append(list, c)
 		}
 	}
@@ -113,12 +127,17 @@ func (r *fakeCustomerRepository) List(_ context.Context) ([]storage.Customer, er
 	return list, nil
 }
 
-func (r *fakeCustomerRepository) Update(_ context.Context, c storage.Customer) (storage.Customer, error) {
+func (r *fakeCustomerRepository) Update(ctx context.Context, c storage.Customer) (storage.Customer, error) {
+	tenant, ok := httpapi.ScopedTenant(ctx)
+	if !ok {
+		return storage.Customer{}, storage.ErrNoTenantScope
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	existing, ok := r.rows[c.ID]
-	if !ok || existing.TenantID != r.acting || existing.DeletedAt != nil {
+	if !ok || existing.TenantID != tenant || existing.DeletedAt != nil {
 		return storage.Customer{}, storage.ErrNotFound
 	}
 	if c.DocumentLanguage == "" {
@@ -129,21 +148,26 @@ func (r *fakeCustomerRepository) Update(_ context.Context, c storage.Customer) (
 		return storage.Customer{}, storage.ErrConflict
 	}
 	c.CreatedAt = existing.CreatedAt
-	c.UpdatedAt = time.Now().UTC()
+	c.UpdatedAt = time.Now().In(fakeLocation)
 	r.rows[c.ID] = c
 
 	return c, nil
 }
 
-func (r *fakeCustomerRepository) Delete(_ context.Context, id uuid.UUID) error {
+func (r *fakeCustomerRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	tenant, ok := httpapi.ScopedTenant(ctx)
+	if !ok {
+		return storage.ErrNoTenantScope
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	c, ok := r.rows[id]
-	if !ok || c.TenantID != r.acting || c.DeletedAt != nil {
+	if !ok || c.TenantID != tenant || c.DeletedAt != nil {
 		return storage.ErrNotFound
 	}
-	now := time.Now().UTC()
+	now := time.Now().In(fakeLocation)
 	c.DeletedAt = &now
 	r.rows[id] = c
 

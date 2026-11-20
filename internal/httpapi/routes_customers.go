@@ -75,10 +75,21 @@ func toCustomerJSON(c storage.Customer) customerJSON {
 		City:             c.City,
 		CountryCode:      c.CountryCode,
 		DocumentLanguage: lang,
-		DeletedAt:        c.DeletedAt,
-		CreatedAt:        c.CreatedAt,
-		UpdatedAt:        c.UpdatedAt,
+		DeletedAt:        masterDataUTC(c.DeletedAt),
+		CreatedAt:        c.CreatedAt.UTC(),
+		UpdatedAt:        c.UpdatedAt.UTC(),
 	}
+}
+
+// masterDataUTC converts an optional timestamp to UTC: docs/api.md
+// requires RFC 3339 in UTC.
+func masterDataUTC(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+
+	return &u
 }
 
 // customer validates the request and builds the domain value, without
@@ -173,6 +184,20 @@ func masterDataError(err error, conflict string) error {
 	}
 }
 
+// scopedTenantKey carries the tenant inTenant opened the scope for. The
+// real repositories read the tenant from the database transaction, not
+// from here. The key exists so a test fake can see which tenant the
+// handler asked for: the fake store's WithTenant does not record it.
+type scopedTenantKey struct{}
+
+// inTenant runs fn inside the tenant scope of tenantID and tags fn's
+// context with that same tenant.
+func (a *app) inTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context) error) error {
+	return a.repos.Scope.WithTenant(ctx, tenantID, func(ctx context.Context) error {
+		return fn(context.WithValue(ctx, scopedTenantKey{}, tenantID))
+	})
+}
+
 func (a *app) handleListCustomers(w http.ResponseWriter, r *http.Request) error {
 	c, err := a.requireSession(r)
 	if err != nil {
@@ -183,7 +208,7 @@ func (a *app) handleListCustomers(w http.ResponseWriter, r *http.Request) error 
 	}
 
 	var list []storage.Customer
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
 		list, err = a.repos.Customers.List(ctx)
 
@@ -222,7 +247,7 @@ func (a *app) handleCreateCustomer(w http.ResponseWriter, r *http.Request) error
 	customer.TenantID = c.tenantID
 
 	var created storage.Customer
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
 		created, err = a.repos.Customers.Create(ctx, customer)
 
@@ -249,7 +274,7 @@ func (a *app) handleGetCustomer(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	var found storage.Customer
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
 		found, err = a.repos.Customers.FindByID(ctx, id)
 
@@ -287,7 +312,7 @@ func (a *app) handleUpdateCustomer(w http.ResponseWriter, r *http.Request) error
 	customer.TenantID = c.tenantID
 
 	var updated storage.Customer
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
 		updated, err = a.repos.Customers.Update(ctx, customer)
 
@@ -313,7 +338,7 @@ func (a *app) handleDeleteCustomer(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		return a.repos.Customers.Delete(ctx, id)
 	})
 	if err != nil {

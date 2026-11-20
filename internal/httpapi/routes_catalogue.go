@@ -53,9 +53,9 @@ func toCatalogueItemJSON(i storage.CatalogueItem) catalogueItemJSON {
 		SKU:            i.SKU,
 		UnitPriceCents: i.UnitPriceCents,
 		Unit:           i.Unit,
-		DeletedAt:      i.DeletedAt,
-		CreatedAt:      i.CreatedAt,
-		UpdatedAt:      i.UpdatedAt,
+		DeletedAt:      masterDataUTC(i.DeletedAt),
+		CreatedAt:      i.CreatedAt.UTC(),
+		UpdatedAt:      i.UpdatedAt.UTC(),
 	}
 }
 
@@ -107,7 +107,7 @@ func (a *app) handleListCatalogueItems(w http.ResponseWriter, r *http.Request) e
 	}
 
 	var list []storage.CatalogueItem
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
 		list, err = a.repos.CatalogueItems.List(ctx)
 
@@ -146,7 +146,7 @@ func (a *app) handleCreateCatalogueItem(w http.ResponseWriter, r *http.Request) 
 	item.TenantID = c.tenantID
 
 	var created storage.CatalogueItem
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
 		created, err = a.repos.CatalogueItems.Create(ctx, item)
 
@@ -173,7 +173,7 @@ func (a *app) handleGetCatalogueItem(w http.ResponseWriter, r *http.Request) err
 	}
 
 	var found storage.CatalogueItem
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
 		found, err = a.repos.CatalogueItems.FindByID(ctx, id)
 
@@ -211,7 +211,7 @@ func (a *app) handleUpdateCatalogueItem(w http.ResponseWriter, r *http.Request) 
 	item.TenantID = c.tenantID
 
 	var updated storage.CatalogueItem
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
 		updated, err = a.repos.CatalogueItems.Update(ctx, item)
 
@@ -237,7 +237,7 @@ func (a *app) handleDeleteCatalogueItem(w http.ResponseWriter, r *http.Request) 
 		return err
 	}
 
-	err = a.repos.Scope.WithTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		return a.repos.CatalogueItems.Delete(ctx, id)
 	})
 	if err != nil {
