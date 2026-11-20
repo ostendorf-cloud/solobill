@@ -60,6 +60,8 @@ Open `http://localhost:8080`, not `127.0.0.1`: compose configures passkeys for t
 migrations: see the comment on `docker-compose.yaml`'s `postgres` service for why there are two
 separate database roles, and `AGENTS.md` for the one-line summary.
 
+The published image `ghcr.io/ostendorf-cloud/solobill` is one manifest list for `linux/amd64` and `linux/arm64`.
+
 `task dev:up` and `task dev:down` wrap `docker compose up --build -d` and `docker compose down`.
 
 ## Development
