@@ -192,9 +192,7 @@ func TestDocumentNumbering_ConcurrentIssueIsGapless(t *testing.T) {
 					return err
 				}
 
-				payload, payloadHash := testFrozenPayload()
-
-				issued, err := store.Documents().Issue(ctx, document.ID, storage.DocumentTypeInvoice, year, issuedAtForTest(year), payload, payloadHash)
+				issued, err := issueDraftForTest(ctx, store, document.ID, storage.DocumentTypeInvoice, year)
 				if err != nil {
 					return err
 				}
