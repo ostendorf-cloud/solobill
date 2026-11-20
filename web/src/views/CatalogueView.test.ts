@@ -7,6 +7,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { apiClient } from '../api'
 import { de, en } from '../i18n/locales'
+import { me } from '../session'
 import CatalogueView from './CatalogueView.vue'
 
 vi.mock('../api', () => ({
@@ -44,6 +45,7 @@ describe('CatalogueView', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     useToasts().dismissAll()
+    me.value = { email: 'a@b.test', name: 'Ada', role: 'owner', csrf_token: 'csrf' }
   })
 
   it('lists the items with the price written from cents', async () => {
@@ -117,7 +119,11 @@ describe('CatalogueView', () => {
     await user.type(within(dialog).getByLabelText(/^Price per unit/), 'abc')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-    expect(await within(dialog).findByText('Enter an amount such as 95 or 95.50.')).toBeVisible()
+    expect(
+      await within(dialog).findByText(
+        'Enter the amount without thousands separators, for example 1234.56.',
+      ),
+    ).toBeVisible()
     expect(apiClient.post).not.toHaveBeenCalled()
   })
 
@@ -141,8 +147,84 @@ describe('CatalogueView', () => {
       '/catalogue-items/i-1',
       expect.objectContaining({ unit_price_cents: 9500 }),
     )
-    expect(await within(dialog).findByText('required')).toBeVisible()
-    expect(within(dialog).getByText('must be piece, hour or day')).toBeVisible()
+    expect(await within(dialog).findByText('This field is required.')).toBeVisible()
+    expect(within(dialog).getByText('Choose piece, hour or day.')).toBeVisible()
+    expect(within(dialog).queryByText('must be piece, hour or day')).toBeNull()
+  })
+
+  it('translates the negative price reason', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ items: [item] })
+    vi.mocked(apiClient.put).mockRejectedValue(
+      apiError(400, ErrorCode.invalidArgument, { unit_price_cents: 'must not be negative' }),
+    )
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Consulting hour' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await within(dialog).findByText('The value must not be negative.')).toBeVisible()
+  })
+
+  it('requires a price instead of saving a blank one as zero', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ items: [] })
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Add item' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText(/^Name/), 'X')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await within(dialog).findByText('This field is required.')).toBeVisible()
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('fills the price with the German decimal comma', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ items: [{ ...item, unit_price_cents: 9550 }] })
+    const user = userEvent.setup()
+    renderView('de')
+
+    await user.click(await screen.findByRole('button', { name: 'Consulting hour bearbeiten' }))
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByDisplayValue('95,50')).toBeVisible()
+  })
+
+  it('names a server failure without the marked fields text', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ items: [item] })
+    vi.mocked(apiClient.put).mockRejectedValue(apiError(500, ErrorCode.internal))
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Consulting hour' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(
+      await within(dialog).findByText('The server had an error. Try again later.'),
+    ).toBeVisible()
+    expect(within(dialog).queryByText(/marked fields/)).toBeNull()
+  })
+
+  it('keeps save disabled until the shell loaded the session', async () => {
+    me.value = null
+    vi.mocked(apiClient.get).mockResolvedValue({ items: [item] })
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Consulting hour' }))
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('clears the shell session on a 401', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(apiError(401, ErrorCode.unauthenticated))
+    renderView()
+
+    await vi.waitFor(() => expect(me.value).toBeNull())
   })
 
   it('shows a duplicate sku from a 409 on the sku field', async () => {
@@ -155,6 +237,7 @@ describe('CatalogueView', () => {
     const dialog = await screen.findByRole('dialog')
     await user.type(within(dialog).getByLabelText(/^Name/), 'X')
     await user.type(within(dialog).getByLabelText('SKU'), 'CONS-H')
+    await user.type(within(dialog).getByLabelText(/^Price per unit/), '10')
     await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
     expect(await within(dialog).findByText('This SKU is already in use.')).toBeVisible()

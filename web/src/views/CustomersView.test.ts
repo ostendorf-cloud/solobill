@@ -7,6 +7,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { apiClient } from '../api'
 import { de, en } from '../i18n/locales'
+import { me } from '../session'
 import CustomersView from './CustomersView.vue'
 
 vi.mock('../api', () => ({
@@ -49,6 +50,7 @@ describe('CustomersView', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     useToasts().dismissAll()
+    me.value = { email: 'a@b.test', name: 'Ada', role: 'owner', csrf_token: 'csrf' }
   })
 
   it('lists the customers', async () => {
@@ -136,9 +138,12 @@ describe('CustomersView', () => {
 
     expect(apiClient.put).toHaveBeenCalledWith('/customers/c-1', expect.any(Object))
     const countryField = within(dialog).getByLabelText(/^Country code/)
-    expect(await within(dialog).findByText('must be an ISO 3166-1 alpha-2 code')).toBeVisible()
+    expect(
+      await within(dialog).findByText('Enter a two letter country code, for example DE.'),
+    ).toBeVisible()
     expect(countryField).toHaveAttribute('aria-invalid', 'true')
-    expect(within(dialog).getByText('required')).toBeVisible()
+    expect(within(dialog).getByText('This field is required.')).toBeVisible()
+    expect(within(dialog).queryByText('required')).toBeNull()
     expect(screen.getByRole('dialog')).toBeVisible()
   })
 
@@ -174,6 +179,79 @@ describe('CustomersView', () => {
 
     expect(apiClient.del).toHaveBeenCalledWith('/customers/c-1')
     expect(await screen.findByText('No customers yet')).toBeVisible()
+  })
+
+  it('edits through PUT with the changed name and blank optionals as null', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ customers: [customer] })
+    vi.mocked(apiClient.put).mockResolvedValue(customer)
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Customer Ltd' }))
+    const dialog = await screen.findByRole('dialog')
+    const name = within(dialog).getByLabelText(/^Name/)
+    await user.clear(name)
+    await user.type(name, 'Renamed Ltd')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/customers/c-1',
+      expect.objectContaining({ name: 'Renamed Ltd', number: 'K-0042', email: null }),
+    )
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+
+  it('shows a generic text for an unknown reason', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ customers: [customer] })
+    vi.mocked(apiClient.put).mockRejectedValue(
+      apiError(400, ErrorCode.invalidArgument, { city: 'something new' }),
+    )
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Customer Ltd' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await within(dialog).findByText('Invalid value.')).toBeVisible()
+    expect(within(dialog).queryByText('something new')).toBeNull()
+  })
+
+  it.each([
+    [403, ErrorCode.permissionDenied, 'You do not have permission for this.'],
+    [500, ErrorCode.internal, 'The server had an error. Try again later.'],
+    [0, ErrorCode.network, 'The server cannot be reached. Check the connection.'],
+  ])('names a %i failure without the marked fields text', async (status, code, text) => {
+    vi.mocked(apiClient.get).mockResolvedValue({ customers: [customer] })
+    vi.mocked(apiClient.put).mockRejectedValue(apiError(status, code))
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Customer Ltd' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await within(dialog).findByText(text)).toBeVisible()
+    expect(within(dialog).queryByText(/marked fields/)).toBeNull()
+  })
+
+  it('keeps save disabled until the shell loaded the session', async () => {
+    me.value = null
+    vi.mocked(apiClient.get).mockResolvedValue({ customers: [customer] })
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Customer Ltd' }))
+    const dialog = await screen.findByRole('dialog')
+
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('clears the shell session on a 401', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(apiError(401, ErrorCode.unauthenticated))
+    renderView()
+
+    await vi.waitFor(() => expect(me.value).toBeNull())
   })
 
   it('does not delete when the confirm dialog is cancelled', async () => {

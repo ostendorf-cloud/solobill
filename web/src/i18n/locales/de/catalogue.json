@@ -21,7 +21,7 @@
   "saved": "Der Eintrag ist gespeichert.",
   "saveError": "Der Eintrag konnte nicht gespeichert werden. Prüfe die markierten Felder.",
   "skuTaken": "Diese Artikelnummer ist schon vergeben.",
-  "priceInvalid": "Gib einen Betrag wie 95 oder 95,50 ein.",
+  "priceInvalid": "Gib den Betrag ohne Tausendertrennzeichen ein, zum Beispiel 1234,56.",
   "deleteTitle": "Eintrag löschen?",
   "deleteMessage": "Der Eintrag verschwindet aus dem Katalog. Ausgestellte Dokumente bleiben unverändert.",
   "deleted": "Der Eintrag ist gelöscht.",

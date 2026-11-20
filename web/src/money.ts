@@ -29,9 +29,9 @@ export function formatCents(cents: number, locale: string): string {
   return `${negative ? '-' : ''}${grouped}${decimal}${fraction} EUR`
 }
 
-/** centsToInput writes cents as editable text, the shape parseCents reads
- *  back: "95.00" with a point, whatever the locale. */
-export function centsToInput(cents: number): string {
+/** centsToInput writes cents as editable text in the locale's decimal
+ *  separator ("95,00" in German, "95.00" otherwise). parseCents reads both. */
+export function centsToInput(cents: number, locale = 'en'): string {
   const digits = String(Math.max(0, Math.trunc(cents))).padStart(3, '0')
-  return `${digits.slice(0, -2)}.${digits.slice(-2)}`
+  return `${digits.slice(0, -2)}${locale.startsWith('de') ? ',' : '.'}${digits.slice(-2)}`
 }

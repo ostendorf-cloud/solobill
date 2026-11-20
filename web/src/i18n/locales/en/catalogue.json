@@ -21,7 +21,7 @@
   "saved": "The item is saved.",
   "saveError": "The item could not be saved. Check the marked fields.",
   "skuTaken": "This SKU is already in use.",
-  "priceInvalid": "Enter an amount such as 95 or 95.50.",
+  "priceInvalid": "Enter the amount without thousands separators, for example 1234.56.",
   "deleteTitle": "Delete this item?",
   "deleteMessage": "The item disappears from the catalogue. Issued documents stay unchanged.",
   "deleted": "The item is deleted.",

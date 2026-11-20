@@ -31,4 +31,10 @@ describe('centsToInput', () => {
     expect(centsToInput(9550)).toBe('95.50')
     expect(parseCents(centsToInput(7))).toBe(7)
   })
+
+  it('writes the decimal separator of the locale and reads it back', () => {
+    expect(centsToInput(9550, 'de')).toBe('95,50')
+    expect(centsToInput(9550, 'en')).toBe('95.50')
+    expect(parseCents(centsToInput(123456, 'de'))).toBe(123456)
+  })
 })

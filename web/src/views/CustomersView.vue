@@ -22,6 +22,8 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { apiClient } from '../api'
+import { saveErrorText, translateDetails } from '../fieldErrors'
+import { clearSession, sessionReady } from '../session'
 
 interface Customer {
   id: string
@@ -87,6 +89,7 @@ async function load(showSkeleton = true): Promise<void> {
     customers.value = response.customers
   } catch (error) {
     if (isApiError(error) && error.isUnauthenticated) {
+      clearSession()
       await router.push({ name: 'login' })
       return
     }
@@ -142,12 +145,17 @@ async function save(): Promise<void> {
     notify({ kind: 'success', title: t('customers.saved') })
     await load(false)
   } catch (error) {
+    if (isApiError(error) && error.isUnauthenticated) {
+      clearSession()
+      await router.push({ name: 'login' })
+      return
+    }
     if (isApiError(error) && error.status === 400) {
-      errors.value = error.details
+      errors.value = translateDetails(error.details, t)
     } else if (isApiError(error) && error.status === 409) {
       errors.value = { number: t('customers.numberTaken') }
     }
-    saveError.value = t('customers.saveError')
+    saveError.value = saveErrorText(error, t, 'customers.saveError')
   } finally {
     saving.value = false
   }
@@ -320,6 +328,7 @@ async function confirmDelete(): Promise<void> {
           type="submit"
           form="customer-form"
           variant="primary"
+          :disabled="!sessionReady"
           :loading="saving"
           :loading-label="t('customers.saving')"
         >

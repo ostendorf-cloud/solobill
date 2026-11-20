@@ -1,12 +1,14 @@
 import { ApiError, createGovueI18n } from '@ostendorf-cloud/govue'
 import { render, screen } from '@testing-library/vue'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { apiClient } from './api'
-import { en } from './i18n/locales'
+import { de, en } from './i18n/locales'
 import App from './App.vue'
+import { clearSession, me } from './session'
 import type { StatusResponse } from './status'
 
 vi.mock('./api', () => ({
@@ -64,16 +66,73 @@ async function renderApp(path: string) {
       },
     ],
   })
-  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+  const i18n = createI18n({ legacy: false, locale: 'en', messages: { en, de } })
   await router.push(path)
   await router.isReady()
   const govueI18n = createGovueI18n({ i18n })
   render(App, { global: { plugins: [router, i18n, govueI18n] } })
+  return { router, i18n }
 }
 
 describe('App', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    vi.restoreAllMocks()
+    clearSession()
+    localStorage.clear()
+  })
+
+  it('stores the chosen language and survives blocked storage', async () => {
+    mockApi('owner', status(true))
+    const user = userEvent.setup()
+    const { i18n } = await renderApp('/')
+    const select = await screen.findByRole('combobox', { name: 'Language' })
+
+    await user.selectOptions(select, 'de')
+
+    expect(localStorage.getItem('solobill-locale')).toBe('de')
+    expect(i18n.global.locale.value).toBe('de')
+
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    await user.selectOptions(select, 'en')
+
+    expect(i18n.global.locale.value).toBe('en')
+  })
+
+  it('signs out through the shell button and drops the header', async () => {
+    mockApi('owner', status(true))
+    vi.mocked(apiClient.post).mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    const { router } = await renderApp('/')
+
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(apiClient.post).toHaveBeenCalledWith('/auth/logout')
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+    expect(screen.queryByRole('navigation')).toBeNull()
+    expect(me.value).toBeNull()
+  })
+
+  it('shows no stale user after another sign out and a different sign in', async () => {
+    mockApi('owner', status(false))
+    const { router } = await renderApp('/')
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeVisible()
+    expect(await screen.findByTestId('gobd-banner')).toBeVisible()
+
+    // A view's own sign out ends the session without the shell's button.
+    await router.push('/login')
+    await vi.waitFor(() => expect(me.value).toBeNull())
+    expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull()
+
+    mockApi('member', status(true))
+    await router.push('/')
+
+    expect(await screen.findByRole('link', { name: 'Customers' })).toBeVisible()
+    expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull()
+    expect(screen.queryByTestId('gobd-banner')).toBeNull()
+    expect(screen.getByText('Signed in as Ada')).toBeInTheDocument()
   })
 
   it('renders the skip link ahead of the current route view', async () => {

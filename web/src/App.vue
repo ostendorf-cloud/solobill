@@ -16,16 +16,10 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
-import { apiClient, csrfToken } from './api'
+import { apiClient } from './api'
 import AppNav from './components/AppNav.vue'
-import { gobdBannerVisible, type StatusResponse } from './status'
-
-interface MeResponse {
-  email: string
-  name: string
-  role: string
-  csrf_token: string
-}
+import { clearSession, loadSession, me, status } from './session'
+import { gobdBannerVisible } from './status'
 
 const BARE_ROUTES = ['login', 'accept-invite']
 
@@ -33,37 +27,25 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
-const me = ref<MeResponse | null>(null)
-const status = ref<StatusResponse | null>(null)
 const loggingOut = ref(false)
 const logoutError = ref('')
 
 const bare = computed(() => typeof route.name === 'string' && BARE_ROUTES.includes(route.name))
 const showBanner = computed(() => me.value !== null && gobdBannerVisible(status.value))
 
-async function loadSession(): Promise<void> {
-  try {
-    const response = await apiClient.get<MeResponse>('/me')
-    csrfToken.value = response.csrf_token
-    me.value = response
-  } catch {
-    // Not signed in. The views send the visitor to the login themselves.
-    me.value = null
-    status.value = null
-    return
-  }
-  try {
-    status.value = await apiClient.get<StatusResponse>('/status')
-  } catch {
-    // 501 before the status endpoint exists, 401: unknown, no banner.
-    status.value = null
-  }
-}
-
+// Entering a bare route ends the session in the shell, whoever ended it: the
+// shell's own button, a view's own sign out or a 401. Stepping from there to
+// a shell route loads the session again, so a second user never sees the
+// first one's name, links or banner.
 watch(
-  () => [route.name, bare.value] as const,
-  () => {
-    if (!bare.value && route.name !== undefined && me.value === null) {
+  () => route.name,
+  (name) => {
+    if (name === undefined) {
+      return
+    }
+    if (bare.value) {
+      clearSession()
+    } else if (me.value === null) {
       void loadSession()
     }
   },
@@ -83,9 +65,7 @@ async function logout(): Promise<void> {
   logoutError.value = ''
   try {
     await apiClient.post('/auth/logout')
-    csrfToken.value = undefined
-    me.value = null
-    status.value = null
+    clearSession()
     await router.push({ name: 'login' })
   } catch {
     logoutError.value = t('common.logoutError')

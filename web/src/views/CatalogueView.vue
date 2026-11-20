@@ -24,6 +24,8 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { apiClient } from '../api'
+import { saveErrorText, translateDetails } from '../fieldErrors'
+import { clearSession, sessionReady } from '../session'
 import { centsToInput, formatCents, parseCents } from '../money'
 
 interface CatalogueItem {
@@ -75,6 +77,7 @@ async function load(showSkeleton = true): Promise<void> {
     items.value = response.items
   } catch (error) {
     if (isApiError(error) && error.isUnauthenticated) {
+      clearSession()
       await router.push({ name: 'login' })
       return
     }
@@ -92,7 +95,7 @@ function openForm(item: CatalogueItem | null): void {
   form.name = item?.name ?? ''
   form.description = item?.description ?? ''
   form.sku = item?.sku ?? ''
-  form.price = item ? centsToInput(item.unit_price_cents) : ''
+  form.price = item ? centsToInput(item.unit_price_cents, locale.value) : ''
   form.unit = item?.unit ?? 'piece'
   errors.value = {}
   saveError.value = ''
@@ -102,9 +105,13 @@ function openForm(item: CatalogueItem | null): void {
 async function save(): Promise<void> {
   errors.value = {}
   saveError.value = ''
-  const cents = form.price.trim() === '' ? 0 : parseCents(form.price)
+  // The price is required: a blank one would save silently as 0 cents.
+  const cents = parseCents(form.price)
   if (cents === null) {
-    errors.value = { unit_price_cents: t('catalogue.priceInvalid') }
+    errors.value = {
+      unit_price_cents:
+        form.price.trim() === '' ? t('common.fieldErrors.required') : t('catalogue.priceInvalid'),
+    }
     saveError.value = t('catalogue.saveError')
     return
   }
@@ -126,12 +133,17 @@ async function save(): Promise<void> {
     notify({ kind: 'success', title: t('catalogue.saved') })
     await load(false)
   } catch (error) {
+    if (isApiError(error) && error.isUnauthenticated) {
+      clearSession()
+      await router.push({ name: 'login' })
+      return
+    }
     if (isApiError(error) && error.status === 400) {
-      errors.value = error.details
+      errors.value = translateDetails(error.details, t)
     } else if (isApiError(error) && error.status === 409) {
       errors.value = { sku: t('catalogue.skuTaken') }
     }
-    saveError.value = t('catalogue.saveError')
+    saveError.value = saveErrorText(error, t, 'catalogue.saveError')
   } finally {
     saving.value = false
   }
@@ -286,6 +298,7 @@ async function confirmDelete(): Promise<void> {
           type="submit"
           form="catalogue-form"
           variant="primary"
+          :disabled="!sessionReady"
           :loading="saving"
           :loading-label="t('catalogue.saving')"
         >
