@@ -1018,9 +1018,14 @@ func TestSniffAcceptsEInvoices(t *testing.T) {
 func TestSniffXMLIsBounded(t *testing.T) {
 	// Not parallel: the time bounds would otherwise measure the other
 	// tests too.
-	large := 2 * time.Second
+	// The bounds are far above the measured times on purpose. A shared CI
+	// runner with the race detector is about 2.5 times slower than a laptop
+	// (12.5 s against 5 s for the slowest case), and a 12 s bound failed
+	// there. A quadratic parse of 10 MiB would take hours, so these bounds
+	// still catch the regression this test exists for.
+	large := 10 * time.Second
 	if raceEnabled {
-		large = 12 * time.Second
+		large = 60 * time.Second
 	}
 
 	var laughs strings.Builder
@@ -1053,8 +1058,8 @@ func TestSniffXMLIsBounded(t *testing.T) {
 		want  string
 		bound time.Duration
 	}{
-		// About 0.3 s without and 5 s with the race detector were
-		// measured; the bounds catch a tenfold regression.
+		// About 0.3 s without the race detector and 5 s with it were
+		// measured on a laptop, 12.5 s with it on a CI runner.
 		{"billion laughs", laughs.String(), "", 100 * time.Millisecond},
 		{"10 MiB of nesting", nested, "", large},
 		{"10 MiB of distinct attributes on one element", attrs.String(), "", large},
