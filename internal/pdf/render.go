@@ -142,11 +142,7 @@ type Source struct {
 // BuildSource resolves the template and formats the payload into the
 // data file, without running Typst. The golden tests compare its Data.
 func BuildSource(p docpayload.FrozenPayloadV1, draft bool) (Source, error) {
-	in, err := BuildInput(p, draft)
-	if err != nil {
-		return Source{}, err
-	}
-	data, err := MarshalInput(in)
+	in, data, err := buildData(p, draft)
 	if err != nil {
 		return Source{}, err
 	}
@@ -243,8 +239,9 @@ const TypstVersion = "0.14.2"
 var ErrTypstVersion = errors.New("pdf: unexpected typst version")
 
 // CheckVersion runs "typst --version" and compares it with TypstVersion.
-// The wiring calls it at startup: another Typst release may lay out a
-// stored payload differently.
+// Nothing calls it yet: the wiring of #74 part 2 must call it at
+// startup, because another Typst release may lay out a stored payload
+// differently.
 func (r *Renderer) CheckVersion(ctx context.Context) error {
 	bin, err := exec.LookPath(r.opts.Binary)
 	if err != nil {

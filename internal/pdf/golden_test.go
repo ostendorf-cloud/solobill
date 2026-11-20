@@ -93,7 +93,7 @@ func TestGolden(t *testing.T) {
 // templateHashes pins every shipped template version. A stored payload
 // names its version forever, so a shipped template never changes.
 var templateHashes = map[string]string{
-	"document-v1": "b837618a528708f90ecdc7c30df51e88de32ef664724d9169f71d09d9779d9e7",
+	"document-v1": "4fdf18d4d1145ae9444a533cad7a41ac5a1dd7fb42373f6aa40b20a9c6d3f10e",
 }
 
 func TestTemplateHashes(t *testing.T) {
@@ -141,10 +141,7 @@ func renderAll(t *testing.T) map[string][]byte {
 // TestTextGolden compares the text pdftotext extracts in layout mode
 // with a golden file per case: what a reader sees, not only the data.
 func TestTextGolden(t *testing.T) {
-	pdftotext, err := exec.LookPath("pdftotext")
-	if err != nil {
-		t.Skip("pdftotext (poppler) is not on PATH: the extracted text golden files are not compared")
-	}
+	pdftotext := toolOrSkip(t, "pdftotext")
 	pdfs := renderAll(t)
 	dir := t.TempDir()
 	for _, c := range renderCases() {

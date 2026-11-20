@@ -86,19 +86,6 @@ type Section struct {
 	Lines []string `json:"lines"`
 }
 
-// Size limits checked before Typst runs, so a payload can never make
-// Typst write an unbounded file. Measured with typst 0.14.2: MaxLines
-// lines with a long description each, at MaxDataBytes, render to about
-// 4.4 MB, below DefaultMaxOutputBytes (see TestCapsKeepOutputSmall).
-const (
-	// MaxLines is the most item lines a document can print.
-	MaxLines = 1000
-	// MaxDataBytes bounds data.json. The API limits a JSON body to 1 MiB
-	// (docs/api.md), and the formatted data of such a body stays below
-	// this.
-	MaxDataBytes = 2 << 20
-)
-
 // Errors of BuildInput and Render.
 var (
 	// ErrUnsupported is a payload type, language, regime or currency this
@@ -112,7 +99,7 @@ var (
 	// PDF must never silently lack it.
 	ErrLogoUnsupported = errors.New("pdf: the renderer cannot print a logo yet")
 	// ErrPayloadTooLarge is a payload whose template data exceeds
-	// MaxDataBytes.
+	// Limits.DataBytes.
 	ErrPayloadTooLarge = errors.New("pdf: payload too large to render")
 )
 
@@ -136,31 +123,35 @@ var draftExempt = map[string]bool{
 	"template_version": true,
 }
 
-// CheckPrintable reports whether the template can print every string
-// of p with the bundled fonts, within MaxLines and MaxDataBytes. It
-// returns *InvalidPayloadError naming each field that cannot be
-// printed, ErrPayloadTooLarge, or ErrUnsupported for an unknown
-// language. The issuing code (#70) calls it before it freezes a
-// payload, so an issued document can never become unrenderable. It
-// ignores the logo: that is a renderer gap, not a payload problem.
+// CheckPrintable reports whether the payload's template version can
+// print every string of p with the bundled fonts, within that version's
+// Limits. It returns *InvalidPayloadError naming each field that cannot
+// be printed, ErrPayloadTooLarge, ErrUnknownTemplate, or ErrUnsupported
+// for an unknown language. The issuing code (#70) must call it before it
+// freezes a payload, so an issued document can never become
+// unrenderable. It ignores the logo: that is a renderer gap, not a
+// payload problem.
 func CheckPrintable(p docpayload.FrozenPayloadV1) error {
 	if p.Imported {
 		return nil
 	}
-	l, ok := labelsByLanguage[p.Language]
-	if !ok {
-		return fmt.Errorf("%w: language %q", ErrUnsupported, p.Language)
-	}
-	pr, err := newPrinter()
+	l, err := supported(p)
 	if err != nil {
 		return err
 	}
-	in := build(p, l, false, p.TemplateVersion, pr)
-	capLines(p, pr.problems)
-	if len(pr.problems) > 0 {
-		return &InvalidPayloadError{Details: pr.problems}
+	version := p.TemplateVersion
+	if version == "" {
+		version = CurrentTemplateVersion
 	}
-	_, err = MarshalInput(in)
+	lim, ok := limitsByTemplate[version]
+	if !ok {
+		return fmt.Errorf("%w: %q", ErrUnknownTemplate, version)
+	}
+	pr, err := newPrinter(lim)
+	if err != nil {
+		return err
+	}
+	_, _, err = finish(p, l, false, version, pr)
 
 	return err
 }
@@ -168,36 +159,31 @@ func CheckPrintable(p docpayload.FrozenPayloadV1) error {
 // BuildInput turns a payload into the template's data. It formats and
 // never computes. draft prints the watermark and no number.
 func BuildInput(p docpayload.FrozenPayloadV1, draft bool) (Input, error) {
+	in, _, err := buildData(p, draft)
+
+	return in, err
+}
+
+// buildData is BuildInput plus the encoded data file.
+func buildData(p docpayload.FrozenPayloadV1, draft bool) (Input, []byte, error) {
 	if p.Imported {
-		return Input{}, ErrImported
+		return Input{}, nil, ErrImported
 	}
-	if p.Version != docpayload.Version1 {
-		return Input{}, fmt.Errorf("%w: version %d", ErrUnsupported, p.Version)
-	}
-	l, ok := labelsByLanguage[p.Language]
-	if !ok {
-		return Input{}, fmt.Errorf("%w: language %q", ErrUnsupported, p.Language)
-	}
-	if _, ok := l.Title[p.Type]; !ok {
-		return Input{}, fmt.Errorf("%w: type %q", ErrUnsupported, p.Type)
-	}
-	if p.VATRegime != docpayload.RegimeStandard && p.VATRegime != docpayload.RegimeKleinunternehmer {
-		return Input{}, fmt.Errorf("%w: vat regime %q", ErrUnsupported, p.VATRegime)
-	}
-	if p.Currency != docpayload.CurrencyEUR {
-		return Input{}, fmt.Errorf("%w: currency %q", ErrUnsupported, p.Currency)
+	l, err := supported(p)
+	if err != nil {
+		return Input{}, nil, err
 	}
 	if p.Seller.LogoSHA256 != "" {
-		return Input{}, ErrLogoUnsupported
+		return Input{}, nil, ErrLogoUnsupported
 	}
 	version, err := templateVersion(p, draft)
 	if err != nil {
-		return Input{}, err
+		return Input{}, nil, err
 	}
 
-	pr, err := newPrinter()
+	pr, err := newPrinter(limitsByTemplate[version])
 	if err != nil {
-		return Input{}, err
+		return Input{}, nil, err
 	}
 	if draft {
 		for path, reason := range docpayload.Validate(p) {
@@ -206,19 +192,60 @@ func BuildInput(p docpayload.FrozenPayloadV1, draft bool) (Input, error) {
 			}
 		}
 	}
-	in := build(p, l, draft, version, pr)
-	capLines(p, pr.problems)
-	if len(pr.problems) > 0 {
-		return Input{}, &InvalidPayloadError{Details: pr.problems}
-	}
 
-	return in, nil
+	return finish(p, l, draft, version, pr)
 }
 
-func capLines(p docpayload.FrozenPayloadV1, problems map[string]string) {
-	if len(p.Lines) > MaxLines {
-		problems["lines"] = fmt.Sprintf("at most %d lines can be printed", MaxLines)
+// supported returns the labels of p's language, or ErrUnsupported for a
+// version, language, type, regime or currency the templates cannot
+// print.
+func supported(p docpayload.FrozenPayloadV1) (labels, error) {
+	if p.Version != docpayload.Version1 {
+		return labels{}, fmt.Errorf("%w: version %d", ErrUnsupported, p.Version)
 	}
+	l, ok := labelsByLanguage[p.Language]
+	if !ok {
+		return labels{}, fmt.Errorf("%w: language %q", ErrUnsupported, p.Language)
+	}
+	if _, ok := l.Title[p.Type]; !ok {
+		return labels{}, fmt.Errorf("%w: type %q", ErrUnsupported, p.Type)
+	}
+	if p.VATRegime != docpayload.RegimeStandard && p.VATRegime != docpayload.RegimeKleinunternehmer {
+		return labels{}, fmt.Errorf("%w: vat regime %q", ErrUnsupported, p.VATRegime)
+	}
+	if p.Currency != docpayload.CurrencyEUR {
+		return labels{}, fmt.Errorf("%w: currency %q", ErrUnsupported, p.Currency)
+	}
+
+	return l, nil
+}
+
+// finish builds the template data, applies the version's limits and
+// checks the data as printed. Every problem is reported at once.
+func finish(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, pr *printer) (Input, []byte, error) {
+	in := build(p, l, draft, version, pr)
+	if len(p.Lines) > pr.lim.Lines {
+		pr.add("lines", fmt.Sprintf("at most %d lines can be printed", pr.lim.Lines))
+	}
+	if pr.rows > pr.lim.Rows {
+		pr.add("lines", fmt.Sprintf("the descriptions need %d rows of %d characters, at most %d can be printed",
+			pr.rows, pr.lim.RowChars, pr.lim.Rows))
+	}
+	if err := pr.checkData(in); err != nil {
+		return Input{}, nil, err
+	}
+	if len(pr.problems) > 0 {
+		return Input{}, nil, &InvalidPayloadError{Details: pr.problems}
+	}
+	data, err := MarshalInput(in)
+	if err != nil {
+		return Input{}, nil, err
+	}
+	if len(data) > pr.lim.DataBytes {
+		return Input{}, nil, fmt.Errorf("%w: %d bytes of template data, limit %d", ErrPayloadTooLarge, len(data), pr.lim.DataBytes)
+	}
+
+	return in, data, nil
 }
 
 // build formats p. Every payload string passes through pr, which records
@@ -244,7 +271,7 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		Title:           title,
 		SenderLine:      senderLine(seller),
 		SellerName:      seller.LegalName,
-		RecipientLines:  recipientLines(customer, seller.Address.CountryCode, l),
+		RecipientLines:  recipientLines(customer, seller.Address.CountryCode, l, pr),
 		ShowVAT:         showVAT,
 		Columns: ColumnHeaders{
 			Position:    l.Position,
@@ -261,7 +288,7 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		PageLabel:   l.Page,
 		PageOfLabel: l.PageOf,
 		Footer:      footerColumns(seller, l),
-		FooterText:  pr.text("seller.footer_text", p.Seller.FooterText),
+		FooterText:  pr.footerText("seller.footer_text", p.Seller.FooterText),
 	}
 	if draft {
 		in.DocumentTitle = title + " (" + l.Watermark + ")"
@@ -310,7 +337,7 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		path := fmt.Sprintf("lines[%d].", i)
 		row := LineRow{
 			Position:    fmt.Sprint(line.Position),
-			Description: pr.text(path+"description", line.Description),
+			Description: pr.description(path+"description", line.Description),
 			Quantity:    formatQuantity(line.QuantityThousandths, lang),
 			Unit:        pr.unit(path+"unit", line.Unit),
 			UnitPrice:   money(line.UnitPriceCents),
@@ -329,15 +356,15 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 
 	// Nr. 8 note (exemption, reverse charge) or the section 19 note, as
 	// frozen, then payment terms (never on an offer) and free notes.
-	if lines := pr.text("tax_note", p.TaxNote); len(lines) > 0 {
+	if lines := pr.note("tax_note", p.TaxNote); len(lines) > 0 {
 		in.Sections = append(in.Sections, Section{Lines: lines})
 	}
 	if !isOffer {
-		if lines := pr.text("payment_terms", p.PaymentTerms); len(lines) > 0 {
+		if lines := pr.note("payment_terms", p.PaymentTerms); len(lines) > 0 {
 			in.Sections = append(in.Sections, Section{Title: l.PaymentTerms, Lines: lines})
 		}
 	}
-	if lines := pr.text("notes", p.Notes); len(lines) > 0 {
+	if lines := pr.note("notes", p.Notes); len(lines) > 0 {
 		in.Sections = append(in.Sections, Section{Title: l.Notes, Lines: lines})
 	}
 
@@ -348,22 +375,28 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 func checkedSeller(s docpayload.SellerSnapshot, pr *printer) docpayload.SellerSnapshot {
 	s.LegalName = pr.seller("seller.legal_name", s.LegalName)
 	s.Address = docpayload.Address{
-		Street:      pr.seller("seller.address.street", s.Address.Street),
-		Line2:       pr.seller("seller.address.line2", s.Address.Line2),
-		PostalCode:  pr.seller("seller.address.postal_code", s.Address.PostalCode),
-		City:        pr.seller("seller.address.city", s.Address.City),
-		CountryCode: pr.seller("seller.address.country_code", s.Address.CountryCode),
+		Street:     pr.seller("seller.address.street", s.Address.Street),
+		Line2:      pr.seller("seller.address.line2", s.Address.Line2),
+		PostalCode: pr.seller("seller.address.postal_code", s.Address.PostalCode),
+		City:       pr.seller("seller.address.city", s.Address.City),
+		// Never printed: it only decides whether the customer's country
+		// line is printed.
+		CountryCode: s.Address.CountryCode,
 	}
 	s.TaxNumber = pr.seller("seller.tax_number", s.TaxNumber)
 	s.VATID = pr.seller("seller.vat_id", s.VATID)
 	s.KleinunternehmerID = pr.seller("seller.kleinunternehmer_id", s.KleinunternehmerID)
 	s.BankName = pr.seller("seller.bank_name", s.BankName)
-	s.IBAN = groupIBAN(pr.seller("seller.iban", s.IBAN))
+	// The IBAN prints in groups of four, so its words are checked as
+	// grouped and its length as entered.
+	pr.limit("seller.iban", s.IBAN, pr.lim.SellerChars)
+	s.IBAN = groupIBAN(s.IBAN)
+	pr.check("seller.iban", s.IBAN, false)
+	pr.tokens("seller.iban", s.IBAN, pr.lim.FooterTokenChars)
 	s.BIC = pr.seller("seller.bic", s.BIC)
 	s.Email = pr.seller("seller.email", s.Email)
 	s.Phone = pr.seller("seller.phone", s.Phone)
 	s.Website = pr.seller("seller.website", s.Website)
-	pr.limit("seller.footer_text", s.FooterText, MaxFooterTextChars)
 
 	return s
 }
@@ -383,14 +416,13 @@ func checkedAddress(path string, a docpayload.Address, pr *printer) docpayload.A
 	a.Line2 = pr.line(path+".line2", a.Line2)
 	a.PostalCode = pr.line(path+".postal_code", a.PostalCode)
 	a.City = pr.line(path+".city", a.City)
-	a.CountryCode = pr.line(path+".country_code", a.CountryCode)
+	a.CountryCode = pr.country(path+".country_code", a.CountryCode)
 
 	return a
 }
 
 // MarshalInput encodes the template data as data.json, indented so a
-// golden file diff reads line by line. It refuses data over
-// MaxDataBytes.
+// golden file diff reads line by line.
 func MarshalInput(in Input) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -401,10 +433,6 @@ func MarshalInput(in Input) ([]byte, error) {
 	if err := enc.Encode(in); err != nil {
 		return nil, fmt.Errorf("pdf: encode input: %w", err)
 	}
-	if buf.Len() > MaxDataBytes {
-		return nil, fmt.Errorf("%w: %d bytes of template data, limit %d", ErrPayloadTooLarge, buf.Len(), MaxDataBytes)
-	}
-
 	return buf.Bytes(), nil
 }
 
@@ -467,15 +495,16 @@ func senderLine(s docpayload.SellerSnapshot) string {
 }
 
 // recipientLines is the address field. The country line is printed only
-// when it differs from the seller's, in the document language.
-func recipientLines(c docpayload.CustomerSnapshot, sellerCountry string, l labels) []string {
+// when it differs from the seller's, in the document language, upper
+// case, and checked as printed.
+func recipientLines(c docpayload.CustomerSnapshot, sellerCountry string, l labels, pr *printer) []string {
 	lines := nonEmpty([]string{c.Name, c.Address.Street, c.Address.Line2, cityLine(c.Address)})
 	if cc := c.Address.CountryCode; cc != "" && cc != sellerCountry {
 		name, ok := l.Countries[cc]
 		if !ok {
 			name = cc
 		}
-		lines = append(lines, strings.ToUpper(name))
+		lines = append(lines, pr.printed("customer.address.country_code", strings.ToUpper(name)))
 	}
 
 	return lines

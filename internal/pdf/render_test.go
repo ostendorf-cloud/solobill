@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,38 +79,85 @@ func TestInjectionStaysData(t *testing.T) {
 	}
 }
 
-// fileAccess matches every Typst function or keyword that reads a file
-// or evaluates code.
-var fileAccess = regexp.MustCompile(`\b(?:json|yaml|csv|toml|xml|cbor|read|image|plugin|eval|bytes)\s*\([^)]*\)?|\b(?:include|import)\b`)
+// fileAccess matches every Typst name that reads a file, embeds one or
+// evaluates code, whether it is called or only referenced: a reference
+// is how an alias such as "#let rd = read" starts. It also matches the
+// raw element's file parameters.
+var fileAccess = regexp.MustCompile(
+	`\b(?:json|yaml|csv|toml|xml|cbor|read|image|plugin|eval|bytes|bibliography|embed|include|import)\b(?:\s*\("[^"]*"\))?` +
+		`|\b(?:syntaxes|theme)\s*:`)
 
 // TestTemplateFileAccess allows exactly one file access in a template:
-// json("data.json"). Nothing else may read a file or evaluate code, so
-// no data value can ever name a path or become code.
+// json("data.json"). Any other occurrence of a file access name, called
+// or bound to another name, fails, so no data value can ever name a path
+// or become code. This is a second line: the real guard is the SHA-256
+// pin of every shipped template in TestTemplateHashes, which a review of
+// any template change has to pass.
 func TestTemplateFileAccess(t *testing.T) {
 	for version, file := range templates {
 		b, err := assets.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var found []string
-		for _, line := range strings.Split(string(b), "\n") {
-			code, _, _ := strings.Cut(line, "//")
-			found = append(found, fileAccess.FindAllString(code, -1)...)
-		}
+		found := fileAccessIn(string(b))
 		if want := []string{`json("data.json")`}; !slices.Equal(found, want) {
 			t.Errorf("template %s: file access %q, want exactly %q", version, found, want)
 		}
 	}
 }
 
-func typstOrSkip(t *testing.T) string {
+func fileAccessIn(src string) []string {
+	var found []string
+	for _, line := range strings.Split(src, "\n") {
+		code, _, _ := strings.Cut(line, "//")
+		found = append(found, fileAccess.FindAllString(code, -1)...)
+	}
+
+	return found
+}
+
+// TestFileAccessGuard pins what the guard catches.
+func TestFileAccessGuard(t *testing.T) {
+	for _, src := range []string{
+		`#let y = yaml("data.json")`,
+		`#let rd = read`,
+		`#rd("main.typ")` + "\n" + `#let rd = read`,
+		`#pdf.embed("data.json")`,
+		`#bibliography("refs.bib")`,
+		`#raw("x", syntaxes: "a.sublime-syntax")`,
+		`#raw("x", theme: "t.tmTheme")`,
+		`#image("logo.png")`,
+		`#include "other.typ"`,
+		`#import "@preview/x:0.1.0": *`,
+		`#eval("1")`,
+		`#let j = json`,
+	} {
+		if found := fileAccessIn(src); len(found) == 0 {
+			t.Errorf("guard misses %q", src)
+		}
+	}
+}
+
+// toolOrSkip finds a tool on PATH. Without it the test skips, except in
+// CI (CI=true), where a missing tool fails the test: mise.toml pins
+// typst and poppler, so CI always has both.
+func toolOrSkip(t *testing.T, name string) string {
 	t.Helper()
-	bin, err := exec.LookPath("typst")
+	bin, err := exec.LookPath(name)
 	if err != nil {
-		t.Skip("typst is not on PATH: install it with mise (mise.toml pins it) to run the compile tests")
+		if os.Getenv("CI") == "true" {
+			t.Fatalf("%s is not on PATH in CI: mise.toml pins it", name)
+		}
+		t.Skipf("%s is not on PATH: install it with mise (mise.toml pins it) to run this test", name)
 	}
 
 	return bin
+}
+
+func typstOrSkip(t *testing.T) string {
+	t.Helper()
+
+	return toolOrSkip(t, "typst")
 }
 
 // TestCompile renders every case with the real Typst binary and checks
@@ -203,11 +251,33 @@ func TestCompileInjection(t *testing.T) {
 	}
 }
 
-// TestLongTokens renders 5000 character tokens in the fields that have
-// overrun their columns. The PDFs are written to SOLOBILL_PDF_OUT for a
+// token is n characters without a space.
+func token(n int) string { return strings.Repeat("ABCDEFGHIJ", n/10+1)[:n] }
+
+// words is n characters of words of the given length, one space apart,
+// in the widest glyph "W": the worst case for the footer, the letterhead
+// and the notes, which never break a word.
+func words(n, word int) string {
+	w := strings.Repeat("W", word) + " "
+
+	return strings.TrimRight(strings.Repeat(w, n/len(w)+1)[:n], " ")
+}
+
+// lowerWords is words in lower case letters: an ordinary word of up to
+// 32 characters, which the narrow cells do not break either. 32 of the
+// widest glyphs would not fit the description cell, 32 ordinary letters
+// do.
+func lowerWords(n, word int) string {
+	w := strings.Repeat("abcdefghijklmnopqrstuvwxyz", word/26+1)[:word] + " "
+
+	return strings.TrimRight(strings.Repeat(w, n/len(w)+1)[:n], " ")
+}
+
+// TestLongTokens refuses tokens beyond the limits and renders the
+// longest allowed ones. The PDFs are written to SOLOBILL_PDF_OUT for a
 // visual check; here the render must succeed and keep the text.
 func TestLongTokens(t *testing.T) {
-	token := func(n int) string { return strings.Repeat("ABCDEFGHIJ", n/10) }
+	lim := documentV1Limits
 	long := token(5000)
 	p := loadFixture(t, "invoice-standard-de")
 	p.Lines = p.Lines[28:]
@@ -219,29 +289,34 @@ func TestLongTokens(t *testing.T) {
 	refused.Seller.IBAN = long
 	refused.Seller.FooterText = long
 	refused.Lines = slices.Clone(p.Lines)
-	refused.Lines[0].Unit = token(MaxUnitChars + 10)
+	refused.Lines[0].Unit = token(lim.UnitChars + 10)
+	refused.Lines[1].Description = long
+	refused.Notes = "Wort " + token(lim.NoteTokenChars+2)
+	refused.Seller.Email = token(lim.FooterTokenChars + 8)
 	var invalid *InvalidPayloadError
 	if err := CheckPrintable(refused); !errors.As(err, &invalid) {
 		t.Fatalf("CheckPrintable = %v, want *InvalidPayloadError", err)
 	}
-	for _, path := range []string{"customer.name", "seller.iban", "seller.footer_text", "lines[0].unit"} {
+	for _, path := range []string{
+		"customer.name", "seller.iban", "seller.footer_text", "lines[0].unit",
+		"lines[1].description", "notes", "seller.email",
+	} {
 		if invalid.Details[path] == "" {
 			t.Errorf("%s is not refused: %v", path, invalid.Details)
 		}
 	}
 
-	// Free text has no cap of its own; the longest allowed values must
-	// wrap inside their columns.
+	// The longest allowed values must wrap inside their columns.
 	bin := typstOrSkip(t)
 	r := New(Options{Binary: bin, TempDir: t.TempDir()})
-	p.Lines[0].Description = long
-	p.Lines[1].Unit = "ABCDEFGHIJKLMNOP"[:MaxUnitChars]
-	p.Customer.Name = token(MaxLineChars)
-	p.Seller.LegalName = token(MaxSellerChars)
-	p.Seller.Email = token(MaxSellerChars)
-	p.Seller.IBAN = token(MaxSellerChars)
-	p.Seller.FooterText = token(MaxFooterTextChars)
-	p.CustomerReference = token(MaxLineChars)
+	p.Lines[0].Description = token(lim.TextChars)
+	p.Lines[1].Unit = "ABCDEFGHIJKLMNOP"[:lim.UnitChars]
+	p.Customer.Name = token(lim.LineChars)
+	p.Seller.LegalName = words(lim.SellerChars, lim.FooterTokenChars)
+	p.Seller.Email = token(lim.FooterTokenChars - 2)
+	p.Seller.IBAN = token(lim.SellerChars)
+	p.Seller.FooterText = words(lim.FooterTextChars, lim.FooterTokenChars)
+	p.CustomerReference = token(lim.LineChars)
 	if err := CheckPrintable(p); err != nil {
 		t.Fatal(err)
 	}
@@ -267,9 +342,8 @@ func TestLongTokens(t *testing.T) {
 	}
 	// The wrapped tokens interleave with their neighbour columns in the
 	// extracted text, so the check counts their letters: the
-	// description's 500 "J", the unit's, the name's and the reference's
-	// 20 each, and the footer's on every page.
-	if n, want := strings.Count(string(out), "J"), 500+2*20+30; n < want {
+	// description's 100 "J", the name's and the reference's 20 each.
+	if n, want := strings.Count(string(out), "J"), 100+2*20; n < want {
 		t.Errorf("the extracted text holds %d of the long tokens' letters, want at least %d", n, want)
 	}
 }
@@ -349,7 +423,7 @@ func TestPrintableCompiles(t *testing.T) {
 // TestLabelsPrintable checks the template's own texts against the
 // bundled fonts.
 func TestLabelsPrintable(t *testing.T) {
-	pr, err := newPrinter()
+	pr, err := newPrinter(documentV1Limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,64 +455,261 @@ func TestLogoUnsupported(t *testing.T) {
 	}
 }
 
-func TestCaps(t *testing.T) {
-	p := loadFixture(t, "offer-de")
-	line := p.Lines[1]
-	p.Lines = make([]docpayload.Line, MaxLines+1)
+func withLines(p docpayload.FrozenPayloadV1, n int, desc string) docpayload.FrozenPayloadV1 {
+	line := p.Lines[len(p.Lines)-1]
+	p.Lines = make([]docpayload.Line, n)
 	for i := range p.Lines {
 		p.Lines[i] = line
-	}
-	var invalid *InvalidPayloadError
-	if err := CheckPrintable(p); !errors.As(err, &invalid) || invalid.Details["lines"] == "" {
-		t.Errorf("%d lines: CheckPrintable = %v", len(p.Lines), err)
-	}
-	if _, err := BuildInput(p, false); !errors.As(err, &invalid) || invalid.Details["lines"] == "" {
-		t.Errorf("%d lines: BuildInput = %v", len(p.Lines), err)
+		p.Lines[i].Position = int32(i + 1)
+		p.Lines[i].Description = desc
 	}
 
-	p.Lines = p.Lines[:10]
-	p.Lines[0].Description = strings.Repeat("Lorem ipsum ", MaxDataBytes/12+1)
-	if err := CheckPrintable(p); !errors.Is(err, ErrPayloadTooLarge) {
-		t.Errorf("large data: CheckPrintable = %v", err)
+	return p
+}
+
+func TestCaps(t *testing.T) {
+	lim := documentV1Limits
+	base := loadFixture(t, "offer-de")
+	cases := []struct {
+		name string
+		p    docpayload.FrozenPayloadV1
+		path string
+	}{
+		{"too many lines", withLines(base, lim.Lines+1, "x"), "lines"},
+		// 400 lines of 16 rows each: 6400 rows.
+		{"too many rows", withLines(base, 400, token(16*16)), "lines"},
+		{"too many description lines", withLines(base, 1, strings.Repeat("x\n", lim.TextLines)+"x"), "lines[0].description"},
+		{"description too long", withLines(base, 1, token(lim.TextChars+1)), "lines[0].description"},
 	}
-	if _, err := BuildSource(p, false); !errors.Is(err, ErrPayloadTooLarge) {
-		t.Errorf("large data: BuildSource = %v", err)
+	notes := base
+	notes.Notes = strings.Repeat("Zeile\n", lim.TextLines) + "Zeile"
+	cases = append(cases, struct {
+		name string
+		p    docpayload.FrozenPayloadV1
+		path string
+	}{"too many note lines", notes, "notes"})
+	footer := base
+	footer.Seller.FooterText = strings.Repeat("Zeile\n", lim.FooterTextLines) + "Zeile"
+	cases = append(cases, struct {
+		name string
+		p    docpayload.FrozenPayloadV1
+		path string
+	}{"too many footer lines", footer, "seller.footer_text"})
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var invalid *InvalidPayloadError
+			if err := CheckPrintable(c.p); !errors.As(err, &invalid) || invalid.Details[c.path] == "" {
+				t.Errorf("CheckPrintable = %v, want %s refused", err, c.path)
+			}
+			if _, err := BuildSource(c.p, false); !errors.As(err, &invalid) || invalid.Details[c.path] == "" {
+				t.Errorf("BuildSource = %v, want %s refused", err, c.path)
+			}
+		})
+	}
+
+	// The data limit is a backstop the other limits keep out of reach; it
+	// is tested with a tiny limit.
+	pr, err := newPrinter(Limits{
+		Lines: 10, LineChars: 200, UnitChars: 16, SellerChars: 80, FooterTokenChars: 32,
+		FooterTextChars: 300, FooterTextLines: 4, TextChars: 1000, TextLines: 20,
+		NoteTokenChars: 48, RowChars: 16, Rows: 100, DataBytes: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := finish(base, labelsByLanguage["de"], false, CurrentTemplateVersion, pr); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Errorf("data limit: %v, want ErrPayloadTooLarge", err)
 	}
 }
 
-// TestCapsKeepOutputSmall renders the largest payload the caps allow:
-// MaxLines lines whose descriptions fill MaxDataBytes. It must stay
-// below DefaultMaxOutputBytes. Skipped with -short.
-func TestCapsKeepOutputSmall(t *testing.T) {
+// pageCount reads the page count from a PDF's page tree root.
+func pageCount(t *testing.T, pdf []byte) int {
+	t.Helper()
+	m := regexp.MustCompile(`/Type\s*/Pages\b[^>]*?/Count\s+(\d+)|/Count\s+(\d+)[^>]*?/Type\s*/Pages\b`).FindSubmatch(pdf)
+	if m == nil {
+		t.Fatal("no page tree root with a count in the PDF")
+	}
+	n := string(m[1]) + string(m[2])
+	var count int
+	if _, err := fmt.Sscan(n, &count); err != nil {
+		t.Fatal(err)
+	}
+
+	return count
+}
+
+// TestWorstCaseRender renders the largest payloads document-v1's limits
+// allow and checks each stays below 5 MiB and MaxPages pages, so an
+// issued payload that passes CheckPrintable always renders below the
+// output limit. Skipped with -short.
+func TestWorstCaseRender(t *testing.T) {
 	if testing.Short() {
-		t.Skip("renders several hundred pages")
+		t.Skip("renders more than a hundred pages per case")
 	}
 	bin := typstOrSkip(t)
-	p := loadFixture(t, "offer-de")
-	line := p.Lines[1]
-	p.Lines = make([]docpayload.Line, MaxLines)
-	// Each line's share of the data limit, minus the formatted fields.
-	desc := strings.Repeat("Wartung und Betrieb ", (MaxDataBytes/MaxLines-400)/20)
-	for i := range p.Lines {
-		p.Lines[i] = line
-		p.Lines[i].Description = desc
-	}
-	src, err := BuildSource(p, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(src.Data) < MaxDataBytes*9/10 {
-		t.Fatalf("data is %d bytes, want close to %d", len(src.Data), MaxDataBytes)
-	}
+	lim := documentV1Limits
 	r := New(Options{Binary: bin, TempDir: t.TempDir(), Timeout: 5 * time.Minute})
-	pdf, err := r.compile(context.Background(), src)
+	base := maxSeller(loadFixture(t, "invoice-standard-de"))
+	base.CustomerReference = token(lim.LineChars)
+	base.Customer.Name = lowerWords(lim.LineChars, 32)
+	base.TaxNote = maxNote()
+	base.PaymentTerms = maxNote()
+	base.Notes = maxNote()
+
+	perLine := lim.Rows / lim.Lines
+	cases := map[string]string{
+		// Every line uses its share of the rows, as short lines.
+		"newlines": strings.TrimSuffix(strings.Repeat("x\n", perLine), "\n"),
+		// As one unbroken token, broken every 16 characters.
+		"token": token(perLine * lim.RowChars),
+		// As words of the longest ordinary length.
+		"words": lowerWords(perLine*lim.RowChars, 32),
+	}
+	for name, desc := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := withLines(base, lim.Lines, desc)
+			if err := CheckPrintable(p); err != nil {
+				t.Fatal(err)
+			}
+			pdf, err := r.RenderPayload(context.Background(), p, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pages := pageCount(t, pdf)
+			t.Logf("%s: %d bytes, %d pages", name, len(pdf), pages)
+			if len(pdf) > 5<<20 {
+				t.Errorf("PDF is %d bytes, over 5 MiB", len(pdf))
+			}
+			if pages > MaxPages {
+				t.Errorf("PDF has %d pages, over %d", pages, MaxPages)
+			}
+			writeOut(t, os.Getenv("SOLOBILL_PDF_OUT"), "worst-"+name, pdf)
+		})
+	}
+}
+
+// maxNote is a free text note at its limits: the most lines and
+// characters, in words of the longest allowed length.
+func maxNote() string {
+	lim := documentV1Limits
+	line := words(lim.TextChars/lim.TextLines, lim.NoteTokenChars)
+	lines := make([]string, lim.TextLines)
+	for i := range lines {
+		lines[i] = line
+	}
+
+	return strings.Join(lines, "\n")[:lim.TextChars]
+}
+
+// maxSeller sets every seller field to its limit, each with a marker the
+// footer tests look for.
+func maxSeller(p docpayload.FrozenPayloadV1) docpayload.FrozenPayloadV1 {
+	lim := documentV1Limits
+	field := func(marker string) string {
+		return marker + " " + words(lim.SellerChars-len(marker)-1, lim.FooterTokenChars)
+	}
+	s := &p.Seller
+	s.LegalName = field("MKNAME")
+	s.Address.Street = field("MKSTREET")
+	s.Address.Line2 = field("MKLINE2")
+	s.Address.PostalCode = field("MKPOSTAL")
+	s.Address.City = field("MKCITY")
+	s.Phone = field("MKPHONE")
+	s.Email = field("MKEMAIL")
+	s.Website = field("MKWEB")
+	s.TaxNumber = field("MKTAXNO")
+	s.VATID = field("MKVATID")
+	s.KleinunternehmerID = field("MKKUID")
+	s.BankName = field("MKBANK")
+	s.IBAN = "DE00" + strings.Repeat("0", lim.SellerChars-8) + "9999"
+	s.BIC = field("MKBIC")
+	ft := make([]string, lim.FooterTextLines)
+	for i := range ft {
+		ft[i] = words(lim.FooterTextChars/lim.FooterTextLines-1, lim.FooterTokenChars)
+	}
+	ft[0] = "MKFOOT" + ft[0][6:]
+	s.FooterText = strings.Join(ft, "\n")
+
+	return p
+}
+
+// sellerMarkers are the markers maxSeller sets, each of which the footer
+// must print on every page.
+var sellerMarkers = []string{
+	"MKNAME", "MKSTREET", "MKLINE2", "MKPOSTAL", "MKCITY", "MKPHONE", "MKEMAIL", "MKWEB",
+	"MKTAXNO", "MKVATID", "MKKUID", "MKBANK", "9999", "MKBIC", "MKFOOT",
+}
+
+// TestFooterNeverClips renders every seller field at its limit and a
+// realistic seller with a 291 character footer text, and checks through
+// pdftotext that every seller value is printed on every page.
+func TestFooterNeverClips(t *testing.T) {
+	bin := typstOrSkip(t)
+	pdftotext := toolOrSkip(t, "pdftotext")
+	r := New(Options{Binary: bin, TempDir: t.TempDir()})
+
+	maxed := maxSeller(loadFixture(t, "invoice-standard-de"))
+	realistic := loadFixture(t, "invoice-standard-de")
+	realistic.Seller.LegalName = "Mustermann IT-Beratung und Softwareentwicklung"
+	realistic.Seller.Address.Line2 = "Hinterhaus, 2. Obergeschoss"
+	realistic.Seller.KleinunternehmerID = "DE000000000-00001"
+	realistic.Seller.BankName = "Sparkasse Musterstadt-Beispielhausen"
+	realistic.Seller.FooterText = "Geschäftsführer: Max Mustermann, Erika Musterfrau · Sitz der Gesellschaft: Musterstadt · " +
+		"Registergericht: Amtsgericht Musterstadt HRB 000000 · Bitte geben Sie bei Zahlung stets die Rechnungsnummer an. " +
+		"Es gelten unsere Allgemeinen Geschäftsbedingungen in der jeweils gültigen Fassung. ENDMARK"
+	if n := len([]rune(realistic.Seller.FooterText)); n != 291 {
+		t.Fatalf("realistic footer text has %d characters, want 291", n)
+	}
+	realisticMarkers := []string{
+		"Mustermann IT-Beratung und Softwareentwicklung", "Hinterhaus, 2. Obergeschoss", "DE000000000-00001",
+		"Sparkasse Musterstadt-Beispielhausen", "HRB 000000", "ENDMARK", "12/345/67890", "DE000000000",
+		"DE00 0000 0000 0000 0000 00", "MUSTDEXXXXX",
+	}
+
+	for name, c := range map[string]struct {
+		p       docpayload.FrozenPayloadV1
+		markers []string
+	}{
+		"max":       {maxed, sellerMarkers},
+		"realistic": {realistic, realisticMarkers},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := CheckPrintable(c.p); err != nil {
+				t.Fatal(err)
+			}
+			pdf, err := r.RenderPayload(context.Background(), c.p, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeOut(t, os.Getenv("SOLOBILL_PDF_OUT"), "footer-"+name, pdf)
+			pages := pageCount(t, pdf)
+			for page := 1; page <= pages; page++ {
+				text := pageText(t, pdftotext, pdf, page)
+				for _, m := range c.markers {
+					if !strings.Contains(text, m) {
+						t.Errorf("page %d of %d lacks %q", page, pages, m)
+					}
+				}
+			}
+		})
+	}
+}
+
+// pageText extracts one page's text, line breaks joined into spaces.
+func pageText(t *testing.T, pdftotext string, pdf []byte, page int) string {
+	t.Helper()
+	in := filepath.Join(t.TempDir(), "page.pdf")
+	if err := os.WriteFile(in, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := fmt.Sprint(page)
+	out, err := exec.CommandContext(context.Background(), pdftotext, "-raw", "-f", n, "-l", n, in, "-").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("%d bytes of data render to %d bytes of PDF", len(src.Data), len(pdf))
-	if len(pdf) > DefaultMaxOutputBytes {
-		t.Errorf("PDF is %d bytes, over %d", len(pdf), DefaultMaxOutputBytes)
-	}
+
+	return strings.Join(strings.Fields(string(out)), " ")
 }
 
 // fakeTypst writes a shell script standing in for typst.

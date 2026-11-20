@@ -1,15 +1,15 @@
-                                                                                                        Example GmbH
+                                                                                                          Example GmbH
 
 
 
 Example GmbH · Musterstraße 1 · 12345 Musterstadt
 
-Mustermann Consulting GmbH                                      Rechnungsnummer                                 RE-20260042-1
-Beispielweg 7                                                   Datum                                                 10.12.2026
-z. Hd. Max Mustermann                                           Leistungszeitraum                      01.11.2026 bis 30.11.2026
-                                                                Kundennummer                                             K-1001
+Mustermann Consulting GmbH                                      Rechnungsnummer                                   RE-20260042-1
+Beispielweg 7                                                   Datum                                                   10.12.2026
+z. Hd. Max Mustermann                                           Leistungszeitraum                        01.11.2026 bis 30.11.2026
+                                                                Kundennummer                                               K-1001
 54321 Beispielstadt
-                                                                Zahlbar bis                                           24.12.2026
+                                                                Zahlbar bis                                             24.12.2026
 
 
 
@@ -18,13 +18,13 @@ Rechnungskorrektur
 Diese Rechnungskorrektur ersetzt die Rechnung RE-20260042 vom 05.12.2026.
 
 
- Pos. Beschreibung                                                    Menge Einheit Einzelpreis            USt.            Betrag
-     1 Softwareentwicklung laut Leistungsbeschreibun​g                   120 Std.            95,00 EUR 19 % 11.400,00 EUR
+ Pos. Beschreibung                                                    Menge Einheit Einzelpreis             USt.          Betrag
+     1 Softwareentwicklung laut Leistungsbeschreibung                    120 Std.          95,00 EUR 19 % 11.400,00 EUR
 
 
-                                                      Summe netto                                                  11.400,00 EUR
-                                                      Umsatzsteuer 19 % auf 11.400,00 EUR                           2.166,00 EUR
-                                                      Gesamtbetrag                                                13.566,00 EUR
+                                                      Summe netto                                                   11.400,00 EUR
+                                                      Umsatzsteuer 19 % auf 11.400,00 EUR                            2.166,00 EUR
+                                                      Gesamtbetrag                                                 13.566,00 EUR
 
 Zahlungsbedingungen
 Zahlbar innerhalb von 14 Tagen ohne Abzug.
@@ -32,10 +32,13 @@ Zahlbar innerhalb von 14 Tagen ohne Abzug.
 
 
 
-                                                                                                                         Seite 1 von 1
+                                                                                                                        Seite 1 von 1
 
-Example GmbH                     Tel. +49 000 0000000            Steuernummer 12/345/67890     Bank Musterbank
-Musterstraße 1                   E-Mail rechnung@example.com     USt-IdNr. DE000000000         IBAN DE00 0000 0000 0000 0000 00
-12345 Musterstadt                Web www.example.com                                           BIC MUSTDEXXXXX
+Example GmbH                                                          Tel. +49 000 0000000
+Musterstraße 1                                                        E-Mail rechnung@example.com
+12345 Musterstadt                                                     Web www.example.com
+Steuernummer 12/345/67890                                             Bank Musterbank
+USt-IdNr. DE000000000                                                 IBAN DE00 0000 0000 0000 0000 00
+                                                                      BIC MUSTDEXXXXX
 Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000
 

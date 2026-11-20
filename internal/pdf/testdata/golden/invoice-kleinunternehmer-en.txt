@@ -1,28 +1,28 @@
-                                                                              Max Mustermann IT-Beratung
+                                                                             Max Mustermann IT-Beratung
 
 
 
 Max Mustermann IT-Beratung · Musterstraße 1 · 12345 Musterstadt
 
-Mustermann Consulting GmbH                                        Invoice number                                     RE-20260007
-Beispielweg 7                                                     Date                                           20 November 2026
-54321 Beispielstadt                                               Date of supply                                 18 November 2026
-                                                                  Customer number                                         K-1001
-                                                                  Due date                                        4 December 2026
+Mustermann Consulting GmbH                                        Invoice number                                  RE-20260007
+Beispielweg 7                                                     Date                                        20 November 2026
+54321 Beispielstadt                                               Date of supply                              18 November 2026
+                                                                  Customer number                                      K-1001
+                                                                  Due date                                     4 December 2026
 
 
 
 
 Invoice
 
- No. Description                                                                     Qty Unit           Unit price          Amount
-    1 Kubernetes basics workshop                                                        1 day      1,200.00 EUR 1,200.00 EUR
-    2 Travel expenses, flat rate                                                        1 flat         85.50 EUR         85.50 EUR
+ No. Description                                                                    Qty Unit          Unit price       Amount
+    1 Kubernetes basics workshop                                                       1 day     1,200.00 EUR 1,200.00 EUR
+    2 Travel expenses, flat rate                                                       1 flat        85.50 EUR       85.50 EUR
 
 
-                                                          Total                                                      1,285.50 EUR
+                                                          Total                                                    1,285.50 EUR
 
-No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerreg​elung).
+No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung).
 
 Payment terms
 Payable within 14 days without deduction.
@@ -30,9 +30,12 @@ Payable within 14 days without deduction.
 
 
 
-                                                                                                                            Page 1 of 1
+                                                                                                                        Page 1 of 1
 
-Max Mustermann IT-Beratung        Phone +49 000 0000000            Tax number 12/345/67890       Bank Musterbank
-Musterstraße 1                    Email rechnung@example.com                                     IBAN DE00 0000 0000 0000 0000 00
-12345 Musterstadt                 Web www.example.com                                            BIC MUSTDEXXXXX
+Max Mustermann IT-Beratung                                             Phone +49 000 0000000
+Musterstraße 1                                                         Email rechnung@example.com
+12345 Musterstadt                                                      Web www.example.com
+Tax number 12/345/67890                                                Bank Musterbank
+                                                                       IBAN DE00 0000 0000 0000 0000 00
+                                                                       BIC MUSTDEXXXXX
 
