@@ -25,12 +25,12 @@ section.
 {{- if $egress.enabled -}}
 {{- $_ := $postgresPort | required "networkPolicy.egress.postgres.port is required while networkPolicy.egress.enabled is true: it is the only port this policy allows PostgreSQL egress on." -}}
 {{- $_ = $oidcPort | required "networkPolicy.egress.oidc.port is required while networkPolicy.egress.enabled is true: it is the only port this policy allows identity provider egress on." -}}
-{{- $dbPort := include "solobill.urlPort" .Values.config.databaseUrl -}}
+{{- $dbPort := include "solobill.urlPort" (dict "key" "config.databaseUrl" "url" .Values.config.databaseUrl) -}}
 {{- if and $dbPort (ne $dbPort (printf "%v" $postgresPort)) -}}
 {{ fail (printf "config.databaseUrl names port %s but networkPolicy.egress.postgres.port is %v: with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would deny the one connection this application cannot start without. Set networkPolicy.egress.postgres.port to %s, or point config.databaseUrl at port %v." $dbPort $postgresPort $dbPort $postgresPort) }}
 {{- end -}}
 {{- if .Values.config.oidc.issuerUrl -}}
-{{- $issuerPort := include "solobill.urlPort" .Values.config.oidc.issuerUrl -}}
+{{- $issuerPort := include "solobill.urlPort" (dict "key" "config.oidc.issuerUrl" "url" .Values.config.oidc.issuerUrl) -}}
 {{- if and $issuerPort (ne $issuerPort (printf "%v" $oidcPort)) -}}
 {{ fail (printf "config.oidc.issuerUrl names port %s but networkPolicy.egress.oidc.port is %v: with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would deny every OIDC discovery, token and JWKS call, so every OIDC login fails while the local login path keeps working. Set networkPolicy.egress.oidc.port to %s, or point config.oidc.issuerUrl at port %v." $issuerPort $oidcPort $issuerPort $oidcPort) }}
 {{- end -}}

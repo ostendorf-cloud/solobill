@@ -407,7 +407,7 @@ by the ingress rules themselves.
   scoped by destination as well as by port.
 - **PostgreSQL**, on `networkPolicy.egress.postgres.port` (default `5432`). The port is an
   explicit value rather than read out of `config.databaseUrl`, and a guard fails the render
-  when the two disagree; see "Three guards" below. The destination is left to that block's own
+  when the two disagree; see "Four guards" below. The destination is left to that block's own
   selectors, which **default to nothing, so this rule admits any destination on its port**. No
   default could do better: `config.databaseUrl` may name a managed PostgreSQL instance outside
   this cluster entirely, which no namespace or pod selector can describe, and a guessed
@@ -467,8 +467,9 @@ neither yields no port, and the render goes ahead rather than guessing.
 
 A URL whose port cannot be read as a number at all, a `?port=abc` query parameter or a
 non-numeric host-embedded port such as `host:abc`, fails on its own guard instead, naming the
-bad value, where it was found (the query parameter or the host part) and that a URL's port must
-be digits only. Left to the two guards above, a non-numeric query parameter still failed the
+values key, where the bad port was found (the query parameter or the host part) and that a
+URL's port must be digits only. The message prints neither the URL nor the bad value, since the
+URL may carry a password. Left to the two guards above, a non-numeric query parameter still failed the
 render, but with a message built for a numeric mismatch ("set `networkPolicy.egress.postgres.port`
 to `abc`"); a non-numeric host-embedded port crashed inside `urlParse` itself, aborting the whole
 render with a raw Go template error instead of a message this chart authored.
