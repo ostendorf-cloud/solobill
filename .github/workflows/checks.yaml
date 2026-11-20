@@ -231,6 +231,29 @@ jobs:
             ${{ runner.os }}-integration-
       - run: task test:go
 
+  # The full PDF renderer suite: typst and pdftotext come from mise.toml,
+  # and the fuzz runs and worst case renders take about five minutes.
+  test-pdf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d  # v5.2.9
+      - name: Cache Go modules and build output
+        # Own key, like the other Go jobs; falls back to the test job's
+        # cache, which covers the same packages.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-test-pdf-${{ hashFiles('go.sum', 'mise.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-test-pdf-
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-vet-
+      - run: task test:pdf
+
   govue-version:
     runs-on: ubuntu-latest
     timeout-minutes: 10

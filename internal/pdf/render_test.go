@@ -519,6 +519,7 @@ func TestWorstCaseRender(t *testing.T) {
 	}
 	for name, desc := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			// The most lines CheckPrintable accepts.
 			lo, hi := 1, lim.Lines
 			for lo < hi {

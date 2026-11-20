@@ -65,11 +65,11 @@ const (
 // description takes what is left of textWidthMM.
 const (
 	colPositionMM  = 10.0
-	colQuantityMM  = 15.0
+	colQuantityMM  = 16.5
 	colUnitMM      = 17.5
-	colUnitPriceMM = 24.0
+	colUnitPriceMM = 25.0
 	colVATMM       = 12.5
-	colAmountMM    = 29.0
+	colAmountMM    = 27.5
 	// tableSizePt is the item table's font size.
 	tableSizePt = 8.0
 	// discountSizePt is the size of a line's discount note.
@@ -210,14 +210,18 @@ func (m *metrics) widthMM(s string, c cell) float64 {
 	return em * c.sizePt / ptPerMM * widthMargin
 }
 
-// splitWords splits a line conservatively: only at a run of ordinary
-// spaces with a letter or a digit directly on both sides. Everything
-// else stays in one word: punctuation, quotes, brackets and every other
-// character next to a space, no-break spaces, hyphens, slashes, "@" and
-// "://". Typst breaks at least wherever this splits (a space between two
-// letters or digits is always a break opportunity in Unicode line
-// breaking), and the words measured are never smaller than Typst's, so
-// a word that fits here fits in Typst. Typst decides the rest.
+// splitWords splits a line conservatively: at a run of ordinary spaces
+// only when a letter or a digit follows it, and not when opening or
+// quotation punctuation precedes it. Unicode line breaking (UAX #14)
+// allows a break after spaces before a letter or digit, except after
+// opening punctuation (LB14: classes Ps and the opening Pi or Pf, and
+// "¡", "¿", "⸘", which are opening there although their category is
+// Po) and around quotation marks (LB15a, LB19). Everything else stays
+// in one word: punctuation before a space (", ", ": ", ") "), no-break
+// spaces, hyphens, slashes, "@" and "://". Typst breaks at least
+// wherever this splits, so a word that fits here fits in Typst.
+// Typst decides the rest, and refuses with a field path when it does
+// not fit.
 func splitWords(line string) []string {
 	var out []string
 	start := 0
@@ -234,7 +238,7 @@ func splitWords(line string) []string {
 		}
 		before, _ := utf8.DecodeLastRuneInString(line[:i])
 		after, _ := utf8.DecodeRuneInString(line[j:])
-		if i > start && j < len(line) && isLetterOrDigit(before) && isLetterOrDigit(after) {
+		if i > start && j < len(line) && !isOpening(before) && isLetterOrDigit(after) {
 			out = append(out, line[start:i])
 			start = j
 		}
@@ -242,6 +246,12 @@ func splitWords(line string) []string {
 	}
 
 	return append(out, line[start:])
+}
+
+// isOpening reports opening and quotation punctuation, after which a
+// space is no break opportunity.
+func isOpening(r rune) bool {
+	return r == '¡' || r == '¿' || r == '⸘' || unicode.In(r, unicode.Ps, unicode.Pi, unicode.Pf, unicode.Quotation_Mark)
 }
 
 func isLetterOrDigit(r rune) bool {

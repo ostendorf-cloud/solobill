@@ -33,13 +33,16 @@ func TestRealisticValuesFit(t *testing.T) {
 	}{
 		{"position", "1000", cellPosition},
 		{"quantity", "1.234,5", cellQuantity},
-		{"quantity", "999,125", cellQuantity},
+		{"quantity", "1.234,567", cellQuantity},
 		{"unit", "Pauschale", cellUnit},
 		{"unit", "Kilogramm", cellUnit},
 		{"unit price", "99.999,99 EUR", cellUnitPrice},
+		{"unit price", "999.999,99 EUR", cellUnitPrice},
+		{"unit price negative", "-99.999,99 EUR", cellUnitPrice},
 		{"vat", "10,5" + string(noBreakSpace) + "%", cellVAT},
-		{"amount", "12.345.670,00 EUR", cellAmount},
-		{"amount negative", "-1.234.567,00 EUR", cellAmount},
+		// 10 million EUR and more, and -1 million EUR and less, are refused.
+		{"amount", "9.999.999,99 EUR", cellAmount},
+		{"amount negative", "-999.999,99 EUR", cellAmount},
 		{"description word", "Donaudampfschifffahrtsgesellschaft", cellDescription(true)},
 		{"meta word", "RE-2026-000001-1", cellMetaValue},
 		{"total value", "99.999.999,99 EUR", cellTotalStrong},
@@ -343,6 +346,26 @@ func renderChecked(t *testing.T, r *Renderer, pdftotext, name string, p docpaylo
 	assertNotClipped(t, r.opts.Binary, pdftotext, src, pdf)
 }
 
+// namedPayload is one payload of a fuzz run.
+type namedPayload struct {
+	name string
+	p    docpayload.FrozenPayloadV1
+}
+
+// renderAllChecked renders the payloads as parallel subtests, each with
+// renderChecked. The group returns when all are done.
+func renderAllChecked(t *testing.T, r *Renderer, pdftotext string, cases []namedPayload) {
+	t.Helper()
+	t.Run("render", func(t *testing.T) {
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				t.Parallel()
+				renderChecked(t, r, pdftotext, c.name, c.p)
+			})
+		}
+	})
+}
+
 // TestOverprintCases are the reviews' overprint payloads. Each must be
 // refused at a field path or render without two words overlapping.
 func TestOverprintCases(t *testing.T) {
@@ -478,6 +501,8 @@ func TestFuzzLayout(t *testing.T) {
 	}
 
 	accepted, refused, rendered := 0, 0, 0
+	// Drawn in order from the seed, rendered in parallel.
+	var cases []namedPayload
 	for i := range draws {
 		p := base
 		p.Lines = make([]docpayload.Line, 1+rng.IntN(12))
@@ -519,9 +544,10 @@ func TestFuzzLayout(t *testing.T) {
 		accepted++
 		if rendered < renders {
 			rendered++
-			renderChecked(t, r, pdftotext, fmt.Sprintf("fuzz-%03d", i), p)
+			cases = append(cases, namedPayload{fmt.Sprintf("fuzz-%03d", i), p})
 		}
 	}
+	renderAllChecked(t, r, pdftotext, cases)
 	t.Logf("%d payloads: %d accepted, %d refused, %d rendered", draws, accepted, refused, rendered)
 	if accepted < 30 {
 		t.Errorf("only %d payloads accepted: the generator is too hostile to test the layout", accepted)

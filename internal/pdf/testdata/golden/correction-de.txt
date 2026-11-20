@@ -19,9 +19,9 @@ Rechnungskorrektur
 Diese Rechnungskorrektur ersetzt die Rechnung RE-20260042 vom 05.12.2026.
 
 
-  Pos.    Beschreibung                                     Menge      Einheit          Einzelpreis         USt.             Betrag
+  Pos.    Beschreibung                                      Menge     Einheit           Einzelpreis         USt.            Betrag
 
-      1   Softwareentwicklung laut                             120    Std.              95,00 EUR         19 %       11.400,00 EUR
+      1   Softwareentwicklung laut                             120    Std.               95,00 EUR         19 %      11.400,00 EUR
           Leistungsbeschreibung
 
 

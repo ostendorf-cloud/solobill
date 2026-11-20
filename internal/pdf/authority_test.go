@@ -250,30 +250,35 @@ func TestDifferentialBreaks(t *testing.T) {
 		t.Fatal("no case accepted: the test proves nothing")
 	}
 	const batch = 120
-	for start := 0; start < len(accepted); start += batch {
-		cases := accepted[start:min(start+batch, len(accepted))]
-		p := withLines(base, len(cases), "x")
-		for i, s := range cases {
-			p.Lines[i].Description = s
-		}
-		if err := CheckPrintable(p); err != nil {
-			t.Fatalf("batch at %d: %v", start, err)
-		}
-		_, err := r.RenderPayload(context.Background(), p, false)
-		var invalid *InvalidPayloadError
-		if errors.As(err, &invalid) {
-			for path := range invalid.Details {
-				var i int
-				if _, scanErr := fmt.Sscanf(path, "lines[%d]", &i); scanErr == nil && i < len(cases) {
-					t.Errorf("accepted by the pre check, overflows in Typst: %q", cases[i])
-				} else {
-					t.Errorf("overflow at %s", path)
+	t.Run("render", func(t *testing.T) {
+		for start := 0; start < len(accepted); start += batch {
+			cases := accepted[start:min(start+batch, len(accepted))]
+			t.Run(fmt.Sprintf("batch-%04d", start), func(t *testing.T) {
+				t.Parallel()
+				p := withLines(base, len(cases), "x")
+				for i, s := range cases {
+					p.Lines[i].Description = s
 				}
-			}
-		} else if err != nil {
-			t.Fatal(err)
+				if err := CheckPrintable(p); err != nil {
+					t.Fatalf("batch: %v", err)
+				}
+				_, err := r.RenderPayload(context.Background(), p, false)
+				var invalid *InvalidPayloadError
+				if errors.As(err, &invalid) {
+					for path := range invalid.Details {
+						var i int
+						if _, scanErr := fmt.Sscanf(path, "lines[%d]", &i); scanErr == nil && i < len(cases) {
+							t.Errorf("accepted by the pre check, overflows in Typst: %q", cases[i])
+						} else {
+							t.Errorf("overflow at %s", path)
+						}
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+			})
 		}
-	}
+	})
 }
 
 // cellRect is one fit cell as Typst laid it out, in points.
@@ -336,9 +341,26 @@ func fitCells(t *testing.T, bin string, src Source) []cellRect {
 func assertNotClipped(t *testing.T, bin, pdftotext string, src Source, pdf []byte) {
 	t.Helper()
 	const tolerance = 0.3
+	var in Input
+	if err := json.Unmarshal(src.Data, &in); err != nil {
+		t.Fatal(err)
+	}
+	// The only texts outside a fit cell: the title, the page number line
+	// and the draft watermark.
+	allowed := map[string]bool{in.PageLabel: true, in.PageOfLabel: true, in.Watermark: true}
+	for _, w := range strings.Fields(in.Title) {
+		allowed[w] = true
+	}
 	cells := fitCells(t, bin, src)
 	reported := 0
+	report := func(format string, args ...any) {
+		t.Errorf(format, args...)
+		reported++
+	}
 	for _, b := range wordBoxes(t, pdftotext, pdf) {
+		if reported > 5 {
+			return
+		}
 		touched, inside := false, false
 		for _, c := range cells {
 			if c.page != b.page+1 {
@@ -346,7 +368,7 @@ func assertNotClipped(t *testing.T, bin, pdftotext string, src Source, pdf []byt
 			}
 			dx := min(b.xMax, c.x+c.w) - max(b.xMin, c.x)
 			dy := min(b.yMax, c.y+c.h) - max(b.yMin, c.y)
-			if dx <= 1 || dy <= 1 {
+			if dx <= tolerance || dy <= 1 {
 				continue
 			}
 			touched = true
@@ -354,12 +376,30 @@ func assertNotClipped(t *testing.T, bin, pdftotext string, src Source, pdf []byt
 				inside = true
 			}
 		}
-		if touched && !inside {
-			t.Errorf("page %d: %q at %.1f..%.1f is clipped", b.page+1, shortWord(b.text), b.xMin, b.xMax)
-			reported++
-			if reported > 5 {
-				return
+		if touched {
+			if !inside {
+				report("page %d: %q at %.1f..%.1f crosses its cell's edge", b.page+1, shortWord(b.text), b.xMin, b.xMax)
 			}
+
+			continue
+		}
+		// Outside every cell: allowed for the fixed texts and the page
+		// numbers, and for the continuation of a cell an earlier page
+		// records (a description broken over a page), within its columns.
+		if allowed[b.text] || strings.Trim(b.text, "0123456789") == "" {
+			continue
+		}
+		continued := false
+		for _, c := range cells {
+			// The cell reaches below the earlier page's body: it broke.
+			if c.page < b.page+1 && c.y+c.h > 600 && b.xMin >= c.x-tolerance && b.xMax <= c.x+c.w+tolerance {
+				continued = true
+
+				break
+			}
+		}
+		if !continued {
+			report("page %d: %q at %.1f..%.1f lies outside every cell", b.page+1, shortWord(b.text), b.xMin, b.xMax)
 		}
 	}
 }

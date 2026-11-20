@@ -17,11 +17,11 @@ z. Hd. Max Mustermann                                           Leistungsdatum  
 
 Rechnung
 
-  Pos.    Beschreibung                                     Menge      Einheit          Einzelpreis        USt.         Betrag
+  Pos.    Beschreibung                                      Menge     Einheit           Einzelpreis       USt.         Betrag
 
-      1   Prüfungsvorbereitung IHK, Unterricht                   6    Std.              60,00 EUR         0%       360,00 EUR
+      1   Prüfungsvorbereitung IHK, Unterricht                    6   Std.               60,00 EUR        0%       360,00 EUR
 
-      2   Lernmaterial                                           1    Stück             49,00 EUR         19 %      49,00 EUR
+      2   Lernmaterial                                            1   Stück              49,00 EUR        19 %      49,00 EUR
 
 
                                                       Summe netto                                                 409,00 EUR

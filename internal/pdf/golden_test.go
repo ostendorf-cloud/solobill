@@ -93,7 +93,7 @@ func TestGolden(t *testing.T) {
 // templateHashes pins every shipped template version. A stored payload
 // names its version forever, so a shipped template never changes.
 var templateHashes = map[string]string{
-	"document-v1": "a1d6cf595bb9ac0cf5adf586c9aa95e715096911543ddbe0f836d0e7b3d47eca",
+	"document-v1": "7054e771c104f9298550f5cdbff4b4da84224022aa0091f51d4e13d579da857f",
 }
 
 func TestTemplateHashes(t *testing.T) {

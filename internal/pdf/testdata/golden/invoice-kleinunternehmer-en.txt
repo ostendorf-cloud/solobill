@@ -1,4 +1,4 @@
-                                                                               Max Mustermann IT-Beratung
+                                                                             Max Mustermann IT-Beratung
 
 
 
@@ -16,11 +16,11 @@ Beispielweg 7                                                     Date          
 
 Invoice
 
-   No.    Description                                                    Qty   Unit                 Unit price           Amount
+   No.    Description                                                    Qty    Unit                Unit price           Amount
 
-      1   Kubernetes basics workshop                                       1   day             1,200.00 EUR          1,200.00 EUR
+      1   Kubernetes basics workshop                                        1   day             1,200.00 EUR         1,200.00 EUR
 
-      2   Travel expenses, flat rate                                       1   flat                 85.50 EUR          85.50 EUR
+      2   Travel expenses, flat rate                                        1   flat                85.50 EUR          85.50 EUR
 
 
 

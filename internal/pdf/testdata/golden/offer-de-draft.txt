@@ -13,23 +13,23 @@ z. Hd. Max Mustermann                                           Gültig bis     
 
 
 
-                                                                                                       f
+                                                                                                        f
 Angebot
 
 
 
 
-                                                                                                     r
-  Pos.    Beschreibung                                     Menge      Einheit          Einzelpreis        USt.          Betrag
+                                                                                                      r
+  Pos.    Beschreibung                                      Menge     Einheit           Einzelpreis       USt.          Betrag
 
-      1   Einrichtung Monitoring                                 1    pauschal       2.400,00 EUR         19 %    2.400,00 EUR
+      1   Einrichtung Monitoring                                  1   pauschal        2.400,00 EUR        19 %    2.400,00 EUR
           Prometheus, Alertmanager und Grafana
 
 
 
 
                                                                     u
-      2   Betreuung pro Monat                                   12    Monat            350,00 EUR         19 %    4.200,00 EUR
+      2   Betreuung pro Monat                                   12    Monat             350,00 EUR        19 %    4.200,00 EUR
 
 
                                                       Summe netto                                                 6.600,00 EUR

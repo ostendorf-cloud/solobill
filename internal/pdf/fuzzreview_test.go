@@ -317,6 +317,10 @@ func TestFuzzReviewSeed(t *testing.T) {
 		"invoice-kleinunternehmer-en", "correction-de", "offer-de", "offer-en",
 	}
 	accepted, refused := 0, 0
+	// The payloads are drawn one after another from the seeded generator,
+	// so they are the same on every run; only the rendering runs in
+	// parallel.
+	var cases []namedPayload
 	for i := range 400 {
 		p := loadFixture(t, bases[rng.IntN(len(bases))])
 		nl := 1 + rng.IntN(12)
@@ -363,8 +367,9 @@ func TestFuzzReviewSeed(t *testing.T) {
 			continue
 		}
 		accepted++
-		renderChecked(t, r, pdftotext, name, p)
+		cases = append(cases, namedPayload{name, p})
 	}
+	renderAllChecked(t, r, pdftotext, cases)
 	t.Logf("400 payloads: %d accepted and rendered, %d refused before Typst", accepted, refused)
 	if accepted < 50 {
 		t.Errorf("only %d payloads accepted", accepted)

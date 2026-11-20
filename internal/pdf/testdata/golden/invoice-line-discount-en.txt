@@ -1,40 +1,40 @@
-                                                                                                           Example GmbH
+                                                                                                          Example GmbH
 
 
 
 Example GmbH · Musterstraße 1 · 12345 Musterstadt
 
 
-Beispiel Handels GmbH                                           Invoice number                                        RE-20260043
-Musterplatz 3                                                   Date                                               7 December 2026
-1010 Wien                                                       Service period                                   1 November 2026 to
-AUSTRIA                                                                                                           30 November 2026
-                                                                Customer number                                             K-2002
-                                                                Your reference                                        PO 2026-118
-                                                                Your VAT ID                                           ATU00000000
-                                                                Due date                                          21 December 2026
+Beispiel Handels GmbH                                           Invoice number                                       RE-20260043
+Musterplatz 3                                                   Date                                              7 December 2026
+1010 Wien                                                       Service period                                  1 November 2026 to
+AUSTRIA                                                                                                          30 November 2026
+                                                                Customer number                                            K-2002
+                                                                Your reference                                       PO 2026-118
+                                                                Your VAT ID                                          ATU00000000
+                                                                Due date                                         21 December 2026
 
 
 
 
 Invoice
 
-   No.    Description                                          Qty    Unit                Unit price       VAT             Amount
+   No.    Description                                          Qty    Unit                Unit price      VAT             Amount
 
-      1   Cloud architecture review                           12.5    hours             110.00 EUR         0%         1,237.50 EUR
+      1   Cloud architecture review                           12.5    hours             110.00 EUR         0%        1,237.50 EUR
           Discount 10%
 
-      2   Platform migration, fixed price                         1   flat            4,500.00 EUR         0%         4,250.00 EUR
+      2   Platform migration, fixed price                         1   flat            4,500.00 EUR         0%        4,250.00 EUR
           Discount 250.00 EUR
 
-      3   Operations handbook                                     1   flat              800.00 EUR         0%           800.00 EUR
+      3   Operations handbook                                     1   flat              800.00 EUR         0%          800.00 EUR
 
 
-                                                      Net total                                                       6,287.50 EUR
-                                                      Discount 3%                                                     -188.63 EUR
-                                                      Net total after discount                                        6,098.87 EUR
-                                                      VAT 0% on 6,098.87 EUR                                              0.00 EUR
-                                                      Total                                                          6,098.87 EUR
+                                                      Net total                                                      6,287.50 EUR
+                                                      Discount 3%                                                    -188.63 EUR
+                                                      Net total after discount                                       6,098.87 EUR
+                                                      VAT 0% on 6,098.87 EUR                                             0.00 EUR
+                                                      Total                                                         6,098.87 EUR
 
 Reverse charge: the recipient is liable for VAT (Article 196 Council Directive 2006/112/EC).
 
@@ -44,14 +44,14 @@ Payable within 14 days without deduction.
 
 
 
-                                                                                                                           Page 1 of 1
+                                                                                                                          Page 1 of 1
 
-Example GmbH                                                            Phone +49 000 0000000
-Musterstraße 1                                                          Email rechnung@example.com
-12345 Musterstadt                                                       Web www.example.com
-Tax number 12/345/67890                                                 Bank Musterbank
-VAT ID DE000000000                                                      IBAN DE00 0000 0000 0000 0000 00
-                                                                        BIC MUSTDEXXXXX
+Example GmbH                                                           Phone +49 000 0000000
+Musterstraße 1                                                         Email rechnung@example.com
+12345 Musterstadt                                                      Web www.example.com
+Tax number 12/345/67890                                                Bank Musterbank
+VAT ID DE000000000                                                     IBAN DE00 0000 0000 0000 0000 00
+                                                                       BIC MUSTDEXXXXX
 
 Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000
 

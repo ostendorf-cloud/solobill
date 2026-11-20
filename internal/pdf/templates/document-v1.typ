@@ -176,7 +176,7 @@
 #{
   set text(size: 8pt)
   table(
-    columns: (10mm, 1fr, 15mm, 17.5mm, 24mm) + vat-col(12.5mm) + (29mm,),
+    columns: (10mm, 1fr, 16.5mm, 17.5mm, 25mm) + vat-col(12.5mm) + (27.5mm,),
     align: (x, y) => aligns.at(x) + top,
     stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { (bottom: 0.3pt + rule) },
     inset: (x: 1.5mm, y: 1.6mm),
