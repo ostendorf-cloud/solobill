@@ -1,9 +1,23 @@
 package storage
 
 import (
+	"context"
 	"errors"
+	"io"
 	"time"
 )
+
+// VersionedObjectReader reads one stored version of an object. A reader of
+// a files row with an ObjectVersionID reads that version, so a later
+// overwrite of the key in a versioned bucket never replaces what the row
+// recorded. objectstore.Client and objectstore.Guarded implement it. It is
+// an interface of its own because ObjectStore is the year end contract and
+// has no version parameter.
+type VersionedObjectReader interface {
+	// GetVersion opens versionID of key. ErrNotFound when the key or the
+	// version does not exist.
+	GetVersion(ctx context.Context, key, versionID string) (io.ReadCloser, ObjectInfo, error)
+}
 
 // ErrObjectStoreUnavailable is returned by an ObjectStore that refuses a
 // call because the bucket is gated: unreachable, without versioning while

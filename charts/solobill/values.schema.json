@@ -291,10 +291,11 @@
         "verify": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "schedule"],
+          "required": ["enabled", "schedule", "activeDeadlineSeconds"],
           "properties": {
             "enabled": { "type": "boolean" },
             "schedule": { "type": "string", "minLength": 1 },
+            "activeDeadlineSeconds": { "type": "integer", "minimum": 60 },
             "annotations": { "type": "object" },
             "resources": { "type": "object" }
           }

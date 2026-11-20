@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/ostendorf-cloud/solobill/internal/config"
 	"github.com/ostendorf-cloud/solobill/internal/httpapi"
@@ -25,7 +26,7 @@ func init() {
 // seller_profiles.logo_file_id, can only be added once the seller_profiles
 // table of issue #68 exists. The logo routes answer 501 until then.
 func wireFiles(ctx context.Context, env wireEnv, repos *httpapi.Repositories) error {
-	store, err := buildObjectStore(env.cfg.ObjectStore)
+	store, err := buildObjectStore(env.cfg.ObjectStore, env.logger)
 	if err != nil {
 		return fmt.Errorf("files: %w", err)
 	}
@@ -54,7 +55,7 @@ func wireFiles(ctx context.Context, env wireEnv, repos *httpapi.Repositories) er
 
 // buildObjectStore builds the S3 client from cfg, or returns nil when no
 // S3_ENDPOINT is configured. It contacts nothing.
-func buildObjectStore(cfg config.ObjectStoreConfig) (*objectstore.Client, error) {
+func buildObjectStore(cfg config.ObjectStoreConfig, logger *slog.Logger) (*objectstore.Client, error) {
 	if !cfg.Enabled {
 		return nil, nil //nolint:nilnil // no store configured is a state the gate reports, not an error
 	}
@@ -67,6 +68,7 @@ func buildObjectStore(cfg config.ObjectStoreConfig) (*objectstore.Client, error)
 		AccessKeyID:     cfg.AccessKeyID,
 		SecretAccessKey: cfg.SecretAccessKey,
 		ObjectLock:      cfg.ObjectLock,
+		Logger:          logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build object store client: %w", err)

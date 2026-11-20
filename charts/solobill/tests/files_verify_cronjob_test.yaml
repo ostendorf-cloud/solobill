@@ -44,6 +44,9 @@ tests:
           path: spec.jobTemplate.spec.backoffLimit
           value: 0
       - equal:
+          path: spec.jobTemplate.spec.activeDeadlineSeconds
+          value: 3600
+      - equal:
           path: spec.jobTemplate.spec.template.spec.containers[0].args
           value: ["files", "verify"]
       - contains:
@@ -86,7 +89,7 @@ tests:
           path: spec.jobTemplate.spec.template.metadata.labels["app.kubernetes.io/instance"]
           value: RELEASE-NAME
 
-  - it: follows a custom schedule
+  - it: follows a custom schedule and deadline
     set:
       objectStore:
         endpoint: "http://s3.seaweedfs.svc:8333"
@@ -94,7 +97,21 @@ tests:
         verify:
           enabled: true
           schedule: "0 2 * * *"
+          activeDeadlineSeconds: 900
     asserts:
       - equal:
           path: spec.schedule
           value: "0 2 * * *"
+      - equal:
+          path: spec.jobTemplate.spec.activeDeadlineSeconds
+          value: 900
+
+  - it: refuses a deadline under a minute through the schema
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:8333"
+        bucket: solobill
+        verify:
+          activeDeadlineSeconds: 10
+    asserts:
+      - failedTemplate: {}

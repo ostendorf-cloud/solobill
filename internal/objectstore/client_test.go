@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -27,6 +28,9 @@ type fakeS3 struct {
 	putHeaders http.Header
 	versioning string
 	lock       string // "", "Enabled"; "" answers ObjectLockConfigurationNotFoundError
+	// versions holds stored versions under "<key>@<version id>".
+	versions       map[string][]byte
+	retentionFails bool
 }
 
 const testBucket = "receipts"
@@ -38,7 +42,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	bucket, key, _ := strings.Cut(path, "/")
 	if bucket != testBucket {
-		writeS3Error(w, http.StatusNotFound, "NoSuchBucket")
+		writeS3NotFound(w, "NoSuchBucket")
 
 		return
 	}
@@ -49,13 +53,34 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `<VersioningConfiguration><Status>`+f.versioning+`</Status></VersioningConfiguration>`)
 	case key == "" && query.Has("object-lock"):
 		if f.lock == "" {
-			writeS3Error(w, http.StatusNotFound, "ObjectLockConfigurationNotFoundError")
+			writeS3NotFound(w, "ObjectLockConfigurationNotFoundError")
 
 			return
 		}
 		_, _ = io.WriteString(w, `<ObjectLockConfiguration><ObjectLockEnabled>`+f.lock+`</ObjectLockEnabled></ObjectLockConfiguration>`)
 	case key != "" && query.Has("retention"):
+		if f.retentionFails {
+			writeS3NotFound(w, "NoSuchObjectLockConfiguration")
+
+			return
+		}
 		_, _ = io.WriteString(w, `<Retention><Mode>COMPLIANCE</Mode><RetainUntilDate>2037-01-01T00:00:00Z</RetainUntilDate></Retention>`)
+	case key != "" && query.Has("versionId") && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+		version := query.Get("versionId")
+		body, ok := f.versions[key+"@"+version]
+		if !ok {
+			writeS3NotFound(w, "NoSuchVersion")
+
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.Header().Set("ETag", `"etag"`)
+		w.Header().Set("Last-Modified", time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC).Format(http.TimeFormat))
+		w.Header().Set("X-Amz-Version-Id", version)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write(body)
+		}
 	case key != "" && r.Method == http.MethodPut:
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -70,7 +95,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case key != "" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
 		body, ok := f.objects[key]
 		if !ok {
-			writeS3Error(w, http.StatusNotFound, "NoSuchKey")
+			writeS3NotFound(w, "NoSuchKey")
 
 			return
 		}
@@ -87,13 +112,25 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func writeS3Error(w http.ResponseWriter, status int, code string) {
+// writeS3NotFound answers a 404 S3 error with code, the only error status
+// the fake needs.
+func writeS3NotFound(w http.ResponseWriter, code string) {
 	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusNotFound)
 	_, _ = io.WriteString(w, `<Error><Code>`+code+`</Code><Message>test</Message></Error>`)
 }
 
+// testSecretAccessKey is an obviously fake key, used to prove it never
+// reaches a log line.
+const testSecretAccessKey = "test-secret-not-real"
+
 func newTestClient(t *testing.T, s3 *fakeS3, objectLock bool) *objectstore.Client {
+	t.Helper()
+
+	return newLoggedTestClient(t, s3, objectLock, nil)
+}
+
+func newLoggedTestClient(t *testing.T, s3 *fakeS3, objectLock bool, logger *slog.Logger) *objectstore.Client {
 	t.Helper()
 
 	srv := httptest.NewServer(s3)
@@ -105,14 +142,72 @@ func newTestClient(t *testing.T, s3 *fakeS3, objectLock bool) *objectstore.Clien
 		Region:          "us-east-1",
 		UsePathStyle:    true,
 		AccessKeyID:     "test-access-key-id",
-		SecretAccessKey: "test-secret-not-real",
+		SecretAccessKey: testSecretAccessKey,
 		ObjectLock:      objectLock,
+		Logger:          logger,
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 
 	return client
+}
+
+func TestClientPutWarnsWhenTheRetentionCannotBeReadBack(t *testing.T) {
+	t.Parallel()
+
+	var logs bytes.Buffer
+	s3 := &fakeS3{objects: map[string][]byte{}, retentionFails: true}
+	client := newLoggedTestClient(t, s3, true, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	body := []byte("%PDF-1.7")
+	retain := time.Date(2037, time.January, 1, 0, 0, 0, 0, time.UTC)
+	info, err := client.Put(context.Background(), storage.PutObject{
+		Key: "t/f", Body: bytes.NewReader(body), SizeBytes: int64(len(body)),
+		ContentType: "application/pdf", SHA256: sha256Hex(body), RetainUntil: &retain,
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	if info.RetainUntil != nil {
+		t.Errorf("RetainUntil = %v, want nil when the store does not confirm it", info.RetainUntil)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "key=t/f") {
+		t.Errorf("log = %q, want a WARN line naming the key", out)
+	}
+	if strings.Contains(out, testSecretAccessKey) {
+		t.Error("the warning carries the secret access key")
+	}
+}
+
+func TestClientGetVersionReadsTheRecordedVersion(t *testing.T) {
+	t.Parallel()
+
+	original := []byte("%PDF-1.7 original")
+	s3 := &fakeS3{
+		objects:  map[string][]byte{"t/f": []byte("%PDF-1.7 overwritten")},
+		versions: map[string][]byte{"t/f@v1": original},
+	}
+	client := newTestClient(t, s3, false)
+	ctx := context.Background()
+
+	rc, _, err := client.GetVersion(ctx, "t/f", "v1")
+	if err != nil {
+		t.Fatalf("GetVersion() error = %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || !bytes.Equal(got, original) {
+		t.Errorf("GetVersion() = %q, %v, want the recorded version %q", got, err, original)
+	}
+
+	if _, _, err := client.GetVersion(ctx, "t/f", "v2"); err == nil {
+		t.Error("GetVersion() of an unknown version error = nil, want an error")
+	}
+	if _, _, err := client.GetVersion(ctx, "t/f", ""); err == nil {
+		t.Error("GetVersion() with an empty version error = nil, want an error")
+	}
 }
 
 func TestClientPutSendsTheChecksumAndRetention(t *testing.T) {

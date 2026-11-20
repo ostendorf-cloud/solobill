@@ -2,6 +2,7 @@ package objectstore
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"github.com/ostendorf-cloud/solobill/internal/storage"
@@ -17,7 +18,10 @@ type Guarded struct {
 	Monitor *Monitor
 }
 
-var _ storage.ObjectStore = (*Guarded)(nil)
+var (
+	_ storage.ObjectStore           = (*Guarded)(nil)
+	_ storage.VersionedObjectReader = (*Guarded)(nil)
+)
 
 // Status returns the Monitor's last check, for GET /api/v1/status and the
 // 503 decision of the file routes.
@@ -49,6 +53,20 @@ func (g *Guarded) Get(ctx context.Context, key string) (io.ReadCloser, storage.O
 	}
 
 	return g.Store.Get(ctx, key)
+}
+
+// GetVersion implements storage.VersionedObjectReader. A store that cannot
+// read versions is an error, never a silent fall back to the current one.
+func (g *Guarded) GetVersion(ctx context.Context, key, versionID string) (io.ReadCloser, storage.ObjectInfo, error) {
+	if err := g.open(); err != nil {
+		return nil, storage.ObjectInfo{}, err
+	}
+	versioned, ok := g.Store.(storage.VersionedObjectReader)
+	if !ok {
+		return nil, storage.ObjectInfo{}, errors.New("objectstore: the store cannot read an object version")
+	}
+
+	return versioned.GetVersion(ctx, key, versionID)
 }
 
 // Stat implements storage.ObjectStore.

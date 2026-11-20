@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -59,17 +60,23 @@ type Config struct {
 	// Transport replaces the HTTP transport, for tests. Nil uses the
 	// minio default.
 	Transport http.RoundTripper
+	// Logger receives the warnings of Put. Nil discards them.
+	Logger *slog.Logger
 }
 
-// Client is the minio-go adapter. It satisfies storage.ObjectStore and
-// BucketChecker.
+// Client is the minio-go adapter. It satisfies storage.ObjectStore,
+// storage.VersionedObjectReader and BucketChecker.
 type Client struct {
 	client     *minio.Client
 	bucket     string
 	objectLock bool
+	logger     *slog.Logger
 }
 
-var _ storage.ObjectStore = (*Client)(nil)
+var (
+	_ storage.ObjectStore           = (*Client)(nil)
+	_ storage.VersionedObjectReader = (*Client)(nil)
+)
 
 // New builds a Client. It does not contact the store: the first contact is
 // the Monitor's check, so the process starts even while the store is down.
@@ -111,7 +118,12 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("objectstore: build client: %w", err)
 	}
 
-	return &Client{client: client, bucket: cfg.Bucket, objectLock: cfg.ObjectLock}, nil
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+
+	return &Client{client: client, bucket: cfg.Bucket, objectLock: cfg.ObjectLock, logger: logger}, nil
 }
 
 // Put implements storage.ObjectStore. It uploads in one request, never as
@@ -160,7 +172,16 @@ func (c *Client) Put(ctx context.Context, object storage.PutObject) (storage.Obj
 		// that ignores the lock headers must not end up with a retain date
 		// in the files row that nothing enforces.
 		_, until, err := c.client.GetObjectRetention(ctx, c.bucket, object.Key, uploaded.VersionID)
-		if err == nil && until != nil {
+		switch {
+		case err != nil:
+			// The error comes from the store's answer or the transport and
+			// carries no credential: the signature travels in headers.
+			c.logger.WarnContext(ctx, "object lock retention could not be read back, the files row records none",
+				"key", object.Key, "version_id", uploaded.VersionID, "error", err.Error())
+		case until == nil:
+			c.logger.WarnContext(ctx, "object lock retention requested but the store reports none",
+				"key", object.Key, "version_id", uploaded.VersionID)
+		default:
 			retain := until.UTC()
 			info.RetainUntil = &retain
 		}
@@ -171,8 +192,23 @@ func (c *Client) Put(ctx context.Context, object storage.PutObject) (storage.Obj
 
 // Get implements storage.ObjectStore. It reads the current version of the
 // key. The caller verifies the bytes against the files row; see Verify.
+// A caller holding the row's version id uses GetVersion instead.
 func (c *Client) Get(ctx context.Context, key string) (io.ReadCloser, storage.ObjectInfo, error) {
-	object, err := c.client.GetObject(ctx, c.bucket, key, minio.GetObjectOptions{})
+	return c.get(ctx, key, minio.GetObjectOptions{})
+}
+
+// GetVersion implements storage.VersionedObjectReader: it reads exactly
+// the version the files row recorded.
+func (c *Client) GetVersion(ctx context.Context, key, versionID string) (io.ReadCloser, storage.ObjectInfo, error) {
+	if versionID == "" {
+		return nil, storage.ObjectInfo{}, errors.New("objectstore: get version: empty version id")
+	}
+
+	return c.get(ctx, key, minio.GetObjectOptions{VersionID: versionID})
+}
+
+func (c *Client) get(ctx context.Context, key string, opts minio.GetObjectOptions) (io.ReadCloser, storage.ObjectInfo, error) {
+	object, err := c.client.GetObject(ctx, c.bucket, key, opts)
 	if err != nil {
 		return nil, storage.ObjectInfo{}, mapError("get", key, err)
 	}

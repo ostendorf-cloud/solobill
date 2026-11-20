@@ -30,7 +30,7 @@ func init() {
 		monitor.Check(context.Background())
 
 		repos.Files = files
-		repos.Objects = &objectstore.Guarded{Store: &fakeObjects{objects: map[string][]byte{}}, Monitor: monitor}
+		repos.Objects = &objectstore.Guarded{Store: newFakeObjects(), Monitor: monitor}
 		repos.SellerProfileLogos = &fakeLogos{}
 		fileFixtures.Store(repos.Objects, &fileFixture{files: files, checker: checker, monitor: monitor})
 	})
@@ -103,11 +103,23 @@ func (b *fakeBucket) BucketObjectLock(context.Context) (bool, error) {
 	return b.lock, b.err
 }
 
-// fakeObjects is an in-memory bucket.
+// fakeVersion is the one version id fakeObjects hands out on Put.
+const fakeVersion = "v1"
+
+// fakeObjects is an in-memory versioned bucket. objects is the current
+// version of each key, versions the one written by Put under
+// "<key>@v1". reported overrides the size Get and GetVersion report, to
+// model a store whose metadata and body disagree.
 type fakeObjects struct {
-	mu      sync.Mutex
-	objects map[string][]byte
-	puts    int
+	mu       sync.Mutex
+	objects  map[string][]byte
+	versions map[string][]byte
+	reported map[string]int64
+	puts     int
+}
+
+func newFakeObjects() *fakeObjects {
+	return &fakeObjects{objects: map[string][]byte{}, versions: map[string][]byte{}, reported: map[string]int64{}}
 }
 
 func (o *fakeObjects) Put(_ context.Context, object storage.PutObject) (storage.ObjectInfo, error) {
@@ -119,9 +131,10 @@ func (o *fakeObjects) Put(_ context.Context, object storage.PutObject) (storage.
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.objects[object.Key] = data
+	o.versions[object.Key+"@"+fakeVersion] = data
 	o.puts++
 
-	info := storage.ObjectInfo{SizeBytes: int64(len(data)), ContentType: object.ContentType, VersionID: "v1"}
+	info := storage.ObjectInfo{SizeBytes: int64(len(data)), ContentType: object.ContentType, VersionID: fakeVersion}
 	if object.RetainUntil != nil {
 		retain := *object.RetainUntil
 		info.RetainUntil = &retain
@@ -139,7 +152,29 @@ func (o *fakeObjects) Get(_ context.Context, key string) (io.ReadCloser, storage
 		return nil, storage.ObjectInfo{}, storage.ErrNotFound
 	}
 
-	return io.NopCloser(bytes.NewReader(bytes.Clone(data))), storage.ObjectInfo{SizeBytes: int64(len(data))}, nil
+	return o.open(key, data)
+}
+
+func (o *fakeObjects) GetVersion(_ context.Context, key, versionID string) (io.ReadCloser, storage.ObjectInfo, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	data, ok := o.versions[key+"@"+versionID]
+	if !ok {
+		return nil, storage.ObjectInfo{}, storage.ErrNotFound
+	}
+
+	return o.open(key, data)
+}
+
+// open must be called with o.mu held.
+func (o *fakeObjects) open(key string, data []byte) (io.ReadCloser, storage.ObjectInfo, error) {
+	size := int64(len(data))
+	if reported, ok := o.reported[key]; ok {
+		size = reported
+	}
+
+	return io.NopCloser(bytes.NewReader(bytes.Clone(data))), storage.ObjectInfo{SizeBytes: size}, nil
 }
 
 func (o *fakeObjects) Stat(_ context.Context, key string) (storage.ObjectInfo, error) {
@@ -165,11 +200,32 @@ func (o *fakeObjects) get(key string) ([]byte, bool) {
 	return data, ok
 }
 
-func (o *fakeObjects) set(key string, data []byte) {
+// overwrite writes a new current version of key, as a client with the
+// bucket key could. The version Put recorded stays.
+func (o *fakeObjects) overwrite(key string, data []byte) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	o.objects[key] = data
+}
+
+// tamper changes the bytes of key in place, the recorded version included,
+// as an admin with direct access to the storage could.
+func (o *fakeObjects) tamper(key string, data []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.objects[key] = data
+	o.versions[key+"@"+fakeVersion] = data
+}
+
+// tamperKeepingSize is tamper, with the store still reporting reportedSize.
+func (o *fakeObjects) tamperKeepingSize(key string, data []byte, reportedSize int64) {
+	o.tamper(key, data)
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.reported[key] = reportedSize
 }
 
 func (o *fakeObjects) count() int {

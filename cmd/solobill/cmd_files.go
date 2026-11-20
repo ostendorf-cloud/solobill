@@ -88,7 +88,7 @@ func runFilesVerify(ctx context.Context) error {
 	}
 	defer pool.Close()
 
-	store, err := buildObjectStore(cfg.ObjectStore)
+	store, err := buildObjectStore(cfg.ObjectStore, logger)
 	if err != nil {
 		return fmt.Errorf("solobill files verify: %w", err)
 	}
@@ -104,9 +104,12 @@ type fileCatalog interface {
 	ListFiles(ctx context.Context) ([]storage.File, error)
 }
 
-// objectReader is the one store call verifyFiles needs.
+// objectReader is what verifyFiles reads objects through: the current
+// object for a row without a version id, the recorded version otherwise.
+// *objectstore.Client implements it.
 type objectReader interface {
 	Get(ctx context.Context, key string) (io.ReadCloser, storage.ObjectInfo, error)
+	storage.VersionedObjectReader
 }
 
 // verifyFiles reads every file of every tenant, recomputes its SHA-256 and
@@ -159,7 +162,17 @@ func verifyFile(ctx context.Context, objects objectReader, tenantID uuid.UUID, f
 		return fmt.Errorf("row has tenant %s and object key %q, want %s and %q", file.TenantID, file.ObjectKey, tenantID, want)
 	}
 
-	body, _, err := objects.Get(ctx, file.ObjectKey)
+	// The version the row recorded, so the scan checks what was uploaded,
+	// not whatever a later overwrite put under the key.
+	var (
+		body io.ReadCloser
+		err  error
+	)
+	if file.ObjectVersionID != nil && *file.ObjectVersionID != "" {
+		body, _, err = objects.GetVersion(ctx, file.ObjectKey, *file.ObjectVersionID)
+	} else {
+		body, _, err = objects.Get(ctx, file.ObjectKey)
+	}
 	if errors.Is(err, storage.ErrNotFound) {
 		return errors.New("object missing from the store")
 	}

@@ -580,6 +580,10 @@ objectStore:
   # Request compliance mode retention per object (end of the upload year
   # plus ten years) and gate the file routes while the bucket has no
   # object lock. Set it to true once the bucket has object lock.
+  # Decide before production: with the default false, no object is locked,
+  # and anyone holding the bucket key can delete or overwrite a receipt
+  # (versioning keeps the earlier version, the lock is what prevents the
+  # change).
   objectLock: false
   # Gate the file routes while the bucket has no versioning.
   requireVersioning: true
@@ -593,6 +597,9 @@ objectStore:
   # NetworkPolicy destination of the object store egress rule, the same
   # shape as networkPolicy.egress.postgres. The port is read from
   # endpoint. Empty: any destination on that port.
+  # Decide before production: left empty, the pods may open a connection to
+  # any address on the store's port, not only to the store. Set
+  # namespaceSelector and podSelector (or ipBlock) to the store's pods.
   egress:
     namespaceSelector: {}
     podSelector: {}
@@ -604,6 +611,9 @@ objectStore:
     enabled: true
     # Sundays 03:17.
     schedule: "17 3 * * 0"
+    # The Job fails after this many seconds, so a hanging store cannot
+    # keep a scan running into the next one.
+    activeDeadlineSeconds: 3600
     annotations: {}
     resources:
       requests:

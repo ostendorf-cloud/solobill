@@ -100,6 +100,34 @@ func (r fakeReader) Get(_ context.Context, key string) (io.ReadCloser, storage.O
 	return io.NopCloser(bytes.NewReader(data)), storage.ObjectInfo{SizeBytes: int64(len(data))}, nil
 }
 
+// GetVersion reads the version stored under "<key>@<version id>".
+func (r fakeReader) GetVersion(ctx context.Context, key, versionID string) (io.ReadCloser, storage.ObjectInfo, error) {
+	return r.Get(ctx, key+"@"+versionID)
+}
+
+func TestVerifyFilesReadsTheRecordedVersion(t *testing.T) {
+	t.Parallel()
+
+	tenant := uuid.New()
+	original := []byte("%PDF-1.7 original")
+	file := storedFile(tenant, original)
+	version := "v1"
+	file.ObjectVersionID = &version
+	catalog := &fakeCatalog{byTenant: map[uuid.UUID][]storage.File{tenant: {file}}}
+
+	// The current object was overwritten, the recorded version is intact.
+	reader := fakeReader{file.ObjectKey: []byte("%PDF-1.7 overwritten"), file.ObjectKey + "@v1": original}
+	if err := verifyFiles(context.Background(), catalog, reader, slog.New(slog.DiscardHandler)); err != nil {
+		t.Errorf("verifyFiles() with an intact version error = %v, want nil", err)
+	}
+
+	// The recorded version itself changed.
+	reader = fakeReader{file.ObjectKey: original, file.ObjectKey + "@v1": []byte("%PDF-1.7 originaL")}
+	if code, _ := exitWith(verifyFiles(context.Background(), catalog, reader, slog.New(slog.DiscardHandler))); code != 1 {
+		t.Errorf("verifyFiles() with a changed version exit = %d, want 1", code)
+	}
+}
+
 func storedFile(tenantID uuid.UUID, data []byte) storage.File {
 	id := uuid.New()
 	sum := sha256.Sum256(data)

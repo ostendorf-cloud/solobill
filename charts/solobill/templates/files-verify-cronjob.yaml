@@ -37,6 +37,8 @@ spec:
     spec:
       # A failed scan is a finding, not a flake: it is not retried.
       backoffLimit: 0
+      # A scan that hangs on the store fails instead of blocking the next.
+      activeDeadlineSeconds: {{ $verify.activeDeadlineSeconds }}
       template:
         metadata:
           labels:

@@ -54,7 +54,8 @@ func TestLoadObjectStore(t *testing.T) {
 
 		s := cfg.ObjectStore
 		if !s.Enabled || s.Endpoint != "http://s3.seaweedfs.svc:8333" || s.Bucket != "solobill" || s.Region != "eu-central-1" {
-			t.Errorf("ObjectStore = %+v", s)
+			// Non secret fields only: the struct carries the key pair.
+			t.Errorf("enabled %v, endpoint %q, bucket %q, region %q", s.Enabled, s.Endpoint, s.Bucket, s.Region)
 		}
 		if !s.UsePathStyle || !s.ObjectLock || s.RequireVersioning {
 			t.Errorf("flags = path style %v, lock %v, versioning %v", s.UsePathStyle, s.ObjectLock, s.RequireVersioning)
@@ -129,7 +130,9 @@ func TestLoadFilesVerify(t *testing.T) {
 		t.Fatalf("LoadFilesVerify() error = %v", err)
 	}
 	if !cfg.ObjectStore.Enabled || cfg.DatabaseUser != "solobill" {
-		t.Errorf("cfg = %+v", cfg.ObjectStore)
+		// Non secret fields only: the config carries the key pair and the
+		// database password.
+		t.Errorf("enabled %v, database user %q", cfg.ObjectStore.Enabled, cfg.DatabaseUser)
 	}
 
 	// Neither the session nor the CSRF key is needed.

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/ostendorf-cloud/govue/csrf"
@@ -445,7 +447,7 @@ func TestDownloadDetectsATamperedObject(t *testing.T) {
 		key := objectstore.Key(s.tenant.ID, created.File.ID)
 		tampered := bytes.Clone(samplePDF)
 		tampered[len(tampered)-2] ^= 0xFF
-		objects.set(key, tampered)
+		objects.tamper(key, tampered)
 
 		rec := doRequest(t, app.handler, http.MethodGet, "/api/v1/files/"+created.File.ID.String()+"/content", nil, "", s.cookie, "")
 		if rec.Code != http.StatusInternalServerError {
@@ -463,7 +465,7 @@ func TestDownloadDetectsATamperedObject(t *testing.T) {
 		_, objects, _ := filesOf(t, app)
 		s := ownerSession(t, app)
 		created := decode[uploadResult](t, upload(t, app, s, "receipt", formPart{name: "file", filename: "a.pdf", data: samplePDF}))
-		objects.set(objectstore.Key(s.tenant.ID, created.File.ID), append(bytes.Clone(samplePDF), 'x'))
+		objects.tamper(objectstore.Key(s.tenant.ID, created.File.ID), append(bytes.Clone(samplePDF), 'x'))
 
 		rec := doRequest(t, app.handler, http.MethodGet, "/api/v1/files/"+created.File.ID.String()+"/content", nil, "", s.cookie, "")
 		if rec.Code != http.StatusInternalServerError {
@@ -500,7 +502,7 @@ func TestDownloadDetectsATamperedObject(t *testing.T) {
 		created := decode[uploadResult](t, upload(t, app, s, "receipt", formPart{name: "file", filename: "a.pdf", data: large}))
 		tampered := bytes.Clone(large)
 		tampered[len(tampered)-1] = 'y'
-		objects.set(objectstore.Key(s.tenant.ID, created.File.ID), tampered)
+		objects.tamper(objectstore.Key(s.tenant.ID, created.File.ID), tampered)
 
 		srv := httptest.NewServer(app.handler)
 		t.Cleanup(srv.Close)
@@ -528,12 +530,106 @@ func TestDownloadDetectsATamperedObject(t *testing.T) {
 		}
 
 		// The same object unmodified streams in full.
-		objects.set(objectstore.Key(s.tenant.ID, created.File.ID), large)
+		objects.tamper(objectstore.Key(s.tenant.ID, created.File.ID), large)
 		rec := doRequest(t, app.handler, http.MethodGet, "/api/v1/files/"+created.File.ID.String()+"/content", nil, "", s.cookie, "")
 		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), large) {
 			t.Errorf("untampered large object: status = %d, %d bytes, want 200 and all %d", rec.Code, rec.Body.Len(), len(large))
 		}
 	})
+
+	// The store reports the recorded size but streams one byte more. With
+	// a size that is a multiple of the chunk size every recorded byte
+	// could otherwise go out before the mismatch is seen.
+	for _, size := range []int{httpapi.VerifiedChunkSize, 2 * httpapi.VerifiedChunkSize, 1 << 20} {
+		t.Run(fmt.Sprintf("store streams one byte more than %d: never complete", size), func(t *testing.T) {
+			t.Parallel()
+
+			app := buildTestApp(t, 1000)
+			_, objects, _ := filesOf(t, app)
+			s := ownerSession(t, app)
+
+			data := append(bytes.Clone(samplePDF), bytes.Repeat([]byte{'z'}, size-len(samplePDF))...)
+			created := decode[uploadResult](t, upload(t, app, s, "receipt", formPart{name: "file", filename: "a.pdf", data: data}))
+			objects.tamperKeepingSize(objectstore.Key(s.tenant.ID, created.File.ID), append(bytes.Clone(data), 'x'), int64(size))
+
+			status, got, readErr := fetchThroughServer(t, app, s, "/api/v1/files/"+created.File.ID.String()+"/content")
+			if status == http.StatusOK && readErr == nil && len(got) >= size {
+				t.Fatalf("the client read %d bytes without an error, want a 500 or a truncated body", len(got))
+			}
+			if status == http.StatusOK && len(got) >= size {
+				t.Errorf("read %d bytes, want fewer than %d", len(got), size)
+			}
+		})
+	}
+
+	t.Run("an overwrite of the key does not replace the recorded version", func(t *testing.T) {
+		t.Parallel()
+
+		app := buildTestApp(t, 1000)
+		_, objects, _ := filesOf(t, app)
+		s := ownerSession(t, app)
+		created := decode[uploadResult](t, upload(t, app, s, "receipt", formPart{name: "file", filename: "a.pdf", data: samplePDF}))
+
+		objects.overwrite(objectstore.Key(s.tenant.ID, created.File.ID), []byte("%PDF-1.7 replaced"))
+
+		rec := doRequest(t, app.handler, http.MethodGet, "/api/v1/files/"+created.File.ID.String()+"/content", nil, "", s.cookie, "")
+		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), samplePDF) {
+			t.Errorf("status = %d, body = %q, want 200 and the recorded version", rec.Code, rec.Body.Bytes())
+		}
+	})
+
+	t.Run("a row whose key is not tenant/id is refused", func(t *testing.T) {
+		t.Parallel()
+
+		app := buildTestApp(t, 1000)
+		fx, objects, _ := filesOf(t, app)
+		s := ownerSession(t, app)
+
+		// The row belongs to the caller's tenant but points at another key,
+		// here the object of a different file.
+		other := uuid.New()
+		otherKey := objectstore.Key(s.tenant.ID, other)
+		objects.tamper(otherKey, samplePDF)
+		id := uuid.New()
+		fx.files.add(storage.File{
+			ID: id, TenantID: s.tenant.ID, Purpose: storage.FilePurposeReceipt, ObjectKey: otherKey,
+			SHA256: sha256Of(samplePDF), SizeBytes: int64(len(samplePDF)), ContentType: "application/pdf",
+		})
+
+		for _, path := range []string{"/api/v1/files/" + id.String(), "/api/v1/files/" + id.String() + "/content"} {
+			rec := doRequest(t, app.handler, http.MethodGet, path, nil, "", s.cookie, "")
+			if rec.Code != http.StatusInternalServerError {
+				t.Errorf("GET %s: status = %d, want 500", path, rec.Code)
+			}
+			if bytes.Contains(rec.Body.Bytes(), samplePDF) {
+				t.Errorf("GET %s served the object of another key", path)
+			}
+		}
+	})
+}
+
+// fetchThroughServer sends a GET through a real server, so an aborted
+// response is seen the way a client sees it.
+func fetchThroughServer(t *testing.T, app testApp, s fileCaller, path string) (int, []byte, error) {
+	t.Helper()
+
+	srv := httptest.NewServer(app.handler)
+	t.Cleanup(srv.Close)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(s.cookie)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	got, readErr := io.ReadAll(resp.Body)
+
+	return resp.StatusCode, got, readErr
 }
 
 func TestFileRoutesAreGatedByTheBucketCheck(t *testing.T) {
@@ -775,7 +871,17 @@ func TestSniffContentType(t *testing.T) {
 		{"png", "\x89PNG\r\n\x1a\nrest", "image/png"},
 		{"jpeg", "\xFF\xD8\xFF\xE0rest", "image/jpeg"},
 		{"xml", "<?xml version=\"1.0\"?><Invoice/>", "application/xml"},
-		{"xml after bom and newline", "\xEF\xBB\xBF\n<?xml version=\"1.0\"?>", "application/xml"},
+		{"xml after bom and newline", "\xEF\xBB\xBF\n<?xml version=\"1.0\"?>\n<Invoice/>", "application/xml"},
+		{"xml declaration without a root", "<?xml version=\"1.0\"?>", ""},
+		{"xml with prolog, comment, doctype and namespaced root", "<?xml version=\"1.0\"?>\n<!-- c -->\n<!DOCTYPE x [<!ENTITY e \"v\">]>\n<rsm:CrossIndustryInvoice xmlns:rsm=\"urn:x\"/>", "application/xml"},
+		{"svg root", "<?xml version=\"1.0\"?><svg xmlns=\"x\" onload=\"alert(1)\"/>", ""},
+		{"svg root upper case after a comment", "<?xml version=\"1.0\"?><!-- x --><SVG/>", ""},
+		{"prefixed svg root", "<?xml version=\"1.0\"?><s:svg xmlns:s=\"x\"/>", ""},
+		{"xhtml root after doctype", "<?xml version=\"1.0\"?><!DOCTYPE html><html><script>alert(1)</script></html>", ""},
+		{"svg namespace on another root", "<?xml version=\"1.0\"?><a xmlns=\"http://www.w3.org/2000/svg\"/>", ""},
+		{"xhtml namespace on another root", "<?xml version=\"1.0\"?><a><b xmlns=\"http://www.w3.org/1999/XHTML\"/></a>", ""},
+		{"unterminated comment", "<?xml version=\"1.0\"?><!-- never closed", ""},
+		{"root beyond 4 KiB", "<?xml version=\"1.0\"?><!--" + strings.Repeat("x", 5000) + "--><Invoice/>", ""},
 		{"xml-stylesheet is not a declaration", "<?xml-stylesheet href=\"x\"?>", ""},
 		{"xml without declaration", "<Invoice/>", ""},
 		{"html", "<!doctype html>", ""},
@@ -790,6 +896,15 @@ func TestSniffContentType(t *testing.T) {
 	}
 }
 
+// Unicode format characters, built from their code points so the source
+// carries none of them literally.
+var (
+	rlo  = string(rune(0x202E)) // right to left override
+	lri  = string(rune(0x2066)) // left to right isolate
+	pdi  = string(rune(0x2069)) // pop directional isolate
+	zwsp = string(rune(0x200B)) // zero width space
+)
+
 func TestCleanFilename(t *testing.T) {
 	t.Parallel()
 
@@ -798,12 +913,47 @@ func TestCleanFilename(t *testing.T) {
 	}{
 		{"rechnung.pdf", "rechnung.pdf"},
 		{"  a\x00b\r\nc.pdf ", "abc.pdf"},
-		{"bad\xffutf8.pdf", "bad�utf8.pdf"},
+		{"bad\xffutf8.pdf", "bad" + string(utf8.RuneError) + "utf8.pdf"},
 		{strings.Repeat("ä", 300), strings.Repeat("ä", 255)},
+		{"a" + rlo + "fdp.exe", "afdp.exe"},
+		{lri + "inv" + pdi + "oice" + zwsp + ".pdf", "invoice.pdf"},
 	}
 	for _, tt := range tests {
 		if got := httpapi.CleanFilename(tt.in); got != tt.want {
 			t.Errorf("CleanFilename(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestAttachmentDisposition(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, stored, contentType, want string
+	}{
+		{"plain", "rechnung.pdf", "application/pdf", `attachment; filename=rechnung.pdf`},
+		{"extension from the sniffed type", "evil.svg", "application/pdf", `attachment; filename=evil.pdf`},
+		{"jpeg", "photo.jpeg", "image/jpeg", `attachment; filename=photo.jpg`},
+		{"right to left override", "a" + rlo + "fdp.exe", "application/pdf", `attachment; filename=afdp.pdf`},
+		{"cr lf", "a\r\nSet-Cookie: x.pdf", "application/pdf", `attachment; filename="aSet-Cookie: x.pdf"`},
+		{"quotes", `say "hi".pdf`, "application/pdf", `attachment; filename="say \"hi\".pdf"`},
+		{"path", `..\..\etc/passwd`, "application/xml", `attachment; filename=.._.._etc_passwd.xml`},
+		{"empty", "", "image/png", `attachment; filename=file.png`},
+		{"only an extension", ".pdf", "application/pdf", `attachment; filename=file.pdf`},
+	}
+	for _, tt := range tests {
+		if got := httpapi.AttachmentDisposition(tt.stored, tt.contentType); got != tt.want {
+			t.Errorf("%s: AttachmentDisposition(%q) = %q, want %q", tt.name, tt.stored, got, tt.want)
+		}
+	}
+
+	long := httpapi.AttachmentDisposition(strings.Repeat("a", 300)+".exe", "application/pdf")
+	if !strings.HasSuffix(long, ".pdf") || len(long) > len("attachment; filename=")+200+len(".pdf") {
+		t.Errorf("long name: %q, want at most 200 base characters and .pdf", long)
+	}
+	for _, header := range []string{long, httpapi.AttachmentDisposition("a\r\nb.pdf", "application/pdf")} {
+		if strings.ContainsAny(header, "\r\n") {
+			t.Errorf("header %q carries a line break", header)
 		}
 	}
 }

@@ -1432,7 +1432,10 @@ func TestAppRoleCannotChangeFiles(t *testing.T) {
 
 	setUpTestAppRole(ctx, t, adminPool, adminURL)
 
-	for privilege, want := range map[string]bool{"SELECT": true, "INSERT": true, "UPDATE": false, "DELETE": false} {
+	for privilege, want := range map[string]bool{
+		"SELECT": true, "INSERT": true,
+		"UPDATE": false, "DELETE": false, "TRUNCATE": false, "TRIGGER": false, "REFERENCES": false,
+	} {
 		var got bool
 		if err := adminPool.QueryRow(ctx, `SELECT has_table_privilege($1, 'public.files', $2)`, testAppRole, privilege).Scan(&got); err != nil {
 			t.Fatalf("has_table_privilege(%s): %v", privilege, err)
@@ -1461,6 +1464,20 @@ WHERE a.attrelid = 'public.files'::regclass
 	}
 	if len(columns) != 0 {
 		t.Errorf("the app role can UPDATE files columns %v, want none", columns)
+	}
+
+	// TRUNCATE skips row triggers, so files_block_truncate must refuse it
+	// even for the admin role. Run inside a transaction that is rolled
+	// back, so a missing trigger empties nothing for the other tests.
+	tx, err := adminPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, err = tx.Exec(ctx, `TRUNCATE files`)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+		t.Errorf("TRUNCATE files as the admin role error = %v, want the files_block_truncate refusal (42501)", err)
 	}
 }
 

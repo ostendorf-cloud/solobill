@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -251,7 +252,7 @@ func (a *app) handleFileContent(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	return a.serveStoredFile(w, r, file, func(h http.Header) {
-		h.Set("Content-Disposition", attachmentDisposition(file.OriginalFilename))
+		h.Set("Content-Disposition", attachmentDisposition(file.OriginalFilename, file.ContentType))
 	})
 }
 
@@ -292,7 +293,7 @@ func (a *app) findFile(ctx context.Context, c caller, id uuid.UUID) (storage.Fil
 // stored file is served with, plus whatever extra adds, and verifies it on
 // the way: see writeVerified.
 func (a *app) serveStoredFile(w http.ResponseWriter, r *http.Request, file storage.File, extra func(http.Header)) error {
-	body, info, err := a.repos.Objects.Get(r.Context(), file.ObjectKey)
+	body, info, err := readStoredObject(r.Context(), a.repos.Objects, file)
 	if errors.Is(err, storage.ErrNotFound) {
 		// A row without its object is an integrity failure, not a 404: the
 		// file existed and is gone from the store.
@@ -321,6 +322,24 @@ func (a *app) serveStoredFile(w http.ResponseWriter, r *http.Request, file stora
 			extra(h)
 		}
 	})
+}
+
+// readStoredObject opens the object of file: the exact version the row
+// recorded when it has one, so a later overwrite of the key never replaces
+// what was uploaded, and the current object otherwise (an unversioned
+// bucket). A store that cannot read versions is an error, not a fall back.
+func readStoredObject(ctx context.Context, objects storage.ObjectStore, file storage.File) (io.ReadCloser, storage.ObjectInfo, error) {
+	if file.ObjectVersionID == nil || *file.ObjectVersionID == "" {
+		return objects.Get(ctx, file.ObjectKey)
+	}
+
+	versioned, ok := objects.(storage.VersionedObjectReader)
+	if !ok {
+		return nil, storage.ObjectInfo{}, fmt.Errorf("httpapi: file %s records version %q, but the store cannot read versions",
+			file.ID, *file.ObjectVersionID)
+	}
+
+	return versioned.GetVersion(ctx, file.ObjectKey, *file.ObjectVersionID)
 }
 
 // writeVerified copies body to w while it computes the SHA-256, and holds
@@ -356,6 +375,16 @@ func writeVerified(w http.ResponseWriter, r *http.Request, file storage.File, bo
 	for {
 		n, err := io.ReadFull(src, next)
 		total += int64(n)
+		// More bytes than the row records: stop before the held chunk goes
+		// out. Otherwise, with a size that is a multiple of the chunk size,
+		// every recorded byte would already be sent when the mismatch is
+		// found.
+		if total > file.SizeBytes {
+			reason := fmt.Sprintf("store returned more than the %d bytes the files row records", file.SizeBytes)
+			logIntegrity(r, file, reason)
+
+			return fail(fmt.Errorf("httpapi: object of file %s: %w: %s", file.ID, objectstore.ErrIntegrity, reason))
+		}
 		if n > 0 {
 			if heldN > 0 {
 				if !started {
@@ -399,14 +428,13 @@ func logIntegrity(r *http.Request, file storage.File, reason string) {
 }
 
 // attachmentDisposition is the Content-Disposition of a download: always
-// attachment, with the stored file name as an RFC 2231 encoded parameter
-// that mime.FormatMediaType quotes or escapes. A name it cannot encode is
-// dropped, never spliced in by hand.
-func attachmentDisposition(filename string) string {
-	if filename != "" {
-		if v := mime.FormatMediaType("attachment", map[string]string{"filename": filename}); v != "" {
-			return v
-		}
+// attachment, with downloadFilename (the extension of the sniffed type) as
+// a parameter that mime.FormatMediaType quotes or RFC 2231 encodes. A name
+// it cannot encode is dropped, never spliced in by hand.
+func attachmentDisposition(stored, contentType string) string {
+	name := downloadFilename(stored, contentType)
+	if v := mime.FormatMediaType("attachment", map[string]string{"filename": name}); v != "" {
+		return v
 	}
 
 	return "attachment"
@@ -527,7 +555,8 @@ var (
 // or "" for anything outside the allowlist (PDF, JPEG, PNG, XML). The
 // client's file name and content type are never consulted. XML is
 // recognised by its declaration, optionally after a UTF-8 byte order mark
-// and whitespace; it is stored, never parsed.
+// and whitespace, and only when xmlRootAllowed accepts its root; it is
+// stored, never parsed.
 func sniffContentType(data []byte) string {
 	switch {
 	case bytes.HasPrefix(data, magicPDF):
@@ -540,7 +569,7 @@ func sniffContentType(data []byte) string {
 
 	rest := bytes.TrimPrefix(data, utf8BOM)
 	rest = bytes.TrimLeft(rest, " \t\r\n")
-	if bytes.HasPrefix(rest, magicXML) && len(rest) > len(magicXML) && isXMLSpace(rest[len(magicXML)]) {
+	if bytes.HasPrefix(rest, magicXML) && len(rest) > len(magicXML) && isXMLSpace(rest[len(magicXML)]) && xmlRootAllowed(rest) {
 		return contentTypeXML
 	}
 
@@ -551,13 +580,151 @@ func isXMLSpace(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
 }
 
+// xmlRootScanBytes bounds how far xmlRootAllowed looks for the root
+// element. A prolog longer than that is refused.
+const xmlRootScanBytes = 4 << 10
+
+// refusedXMLRoots are root elements a browser renders as a document with
+// script: an SVG or (X)HTML file declared as XML. Compared by local name,
+// without a namespace prefix, case insensitive.
+var refusedXMLRoots = map[string]bool{"svg": true, "html": true}
+
+// refusedXMLNamespaces are the SVG and XHTML namespaces. An XML file that
+// names either within the scanned window is refused as well, whatever its
+// root is called. An e-invoice never uses them.
+var refusedXMLNamespaces = [][]byte{
+	[]byte("http://www.w3.org/2000/svg"),
+	[]byte("http://www.w3.org/1999/xhtml"),
+}
+
+// xmlRootAllowed skips the prolog of an XML document (processing
+// instructions, comments, a DOCTYPE with an optional internal subset and
+// whitespace) within its first xmlRootScanBytes and accepts it only when a
+// root element follows whose local name is not in refusedXMLRoots. This is
+// a bounded byte scan to keep script carrying documents out, not an XML
+// parser: anything it cannot follow is refused.
+func xmlRootAllowed(data []byte) bool {
+	if len(data) > xmlRootScanBytes {
+		data = data[:xmlRootScanBytes]
+	}
+	lower := bytes.ToLower(data)
+	for _, ns := range refusedXMLNamespaces {
+		if bytes.Contains(lower, ns) {
+			return false
+		}
+	}
+
+	rest := data
+	for {
+		rest = bytes.TrimLeft(rest, " \t\r\n")
+		switch {
+		case bytes.HasPrefix(rest, []byte("<?")):
+			end := bytes.Index(rest, []byte("?>"))
+			if end < 0 {
+				return false
+			}
+			rest = rest[end+2:]
+		case bytes.HasPrefix(rest, []byte("<!--")):
+			end := bytes.Index(rest[4:], []byte("-->"))
+			if end < 0 {
+				return false
+			}
+			rest = rest[4+end+3:]
+		case len(rest) >= 9 && bytes.EqualFold(rest[:9], []byte("<!DOCTYPE")):
+			i := bytes.IndexAny(rest, "[>")
+			if i < 0 {
+				return false
+			}
+			if rest[i] == '[' {
+				j := bytes.Index(rest[i:], []byte("]"))
+				if j < 0 {
+					return false
+				}
+				i += j
+				k := bytes.IndexByte(rest[i:], '>')
+				if k < 0 {
+					return false
+				}
+				i += k
+			}
+			rest = rest[i+1:]
+		case bytes.HasPrefix(rest, []byte("<")):
+			name := rest[1:]
+			end := bytes.IndexAny(name, " \t\r\n/>")
+			if end <= 0 {
+				return false
+			}
+			local := name[:end]
+			if colon := bytes.LastIndexByte(local, ':'); colon >= 0 {
+				local = local[colon+1:]
+			}
+
+			return len(local) > 0 && !refusedXMLRoots[strings.ToLower(string(local))]
+		default:
+			return false
+		}
+	}
+}
+
+// downloadExtensions is the file name extension of each allowed content
+// type. A download is named after the sniffed type, never after the
+// client's extension.
+var downloadExtensions = map[string]string{
+	contentTypePDF:  ".pdf",
+	contentTypePNG:  ".png",
+	contentTypeJPEG: ".jpg",
+	contentTypeXML:  ".xml",
+}
+
+// maxDownloadBaseRunes bounds the base name of a download.
+const maxDownloadBaseRunes = 200
+
+// downloadFilename is the name a download is offered under: the stored
+// name cleaned again, its extension replaced by the one of the sniffed
+// content type, no path separator, a bounded length. "evil.svg" stored as
+// a PDF downloads as "evil.pdf".
+func downloadFilename(stored, contentType string) string {
+	name := cleanFilename(stored)
+	name = strings.NewReplacer("/", "_", "\\", "_").Replace(name)
+	base := name
+	if ext := path.Ext(name); isFileExtension(ext) {
+		base = strings.TrimSuffix(name, ext)
+	}
+	base = strings.TrimSpace(base)
+	if utf8.RuneCountInString(base) > maxDownloadBaseRunes {
+		base = string([]rune(base)[:maxDownloadBaseRunes])
+	}
+	if base == "" || strings.Trim(base, ".") == "" {
+		base = "file"
+	}
+
+	return base + downloadExtensions[contentType]
+}
+
+// isFileExtension reports whether ext (with its dot) looks like a file
+// name extension: one to ten ASCII letters or digits.
+func isFileExtension(ext string) bool {
+	if len(ext) < 2 || len(ext) > 11 {
+		return false
+	}
+	for _, r := range ext[1:] {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+
+	return true
+}
+
 // cleanFilename keeps the client's file name as display data only: valid
-// UTF-8, no control characters, at most maxFilenameRunes runes. It is
-// never a path or a key; mime/multipart already dropped any directory.
+// UTF-8, no control characters, no format characters (Unicode Cf, which
+// includes the bidi controls: "a", U+202E and "fdp.exe" display as
+// "aexe.pdf"), at most maxFilenameRunes runes. It is never a path or a
+// key; mime/multipart already dropped any directory.
 func cleanFilename(name string) string {
-	name = strings.ToValidUTF8(name, "�")
+	name = strings.ToValidUTF8(name, string(utf8.RuneError))
 	name = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 
