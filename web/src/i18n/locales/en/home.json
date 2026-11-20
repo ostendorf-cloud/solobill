@@ -9,5 +9,8 @@
   "tenantId": "Tenant ID",
   "logout": "Log out",
   "loggingOut": "Logging out",
-  "logoutError": "Logging out failed."
+  "logoutError": "Logging out failed.",
+  "passkeys": "Passkeys",
+  "passkeysLead": "Log in next time with a passkey instead of your password and TOTP code.",
+  "passkeyAdded": "Passkey added."
 }

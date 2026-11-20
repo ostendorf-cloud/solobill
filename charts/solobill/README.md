@@ -470,11 +470,46 @@ number `service.port` names. Equal, that same rule now also covers `adminPort`, 
 from any source regardless of `networkPolicy.ingress.admin` and inverting, silently, the
 boundary this policy exists to build. The render fails naming both values instead.
 
+## Login, sessions and passkeys
+
+The login runs on govue's `account`, `session` and `passkey` packages. These settings decide
+whether it is safe behind your routing:
+
+- Session cookie: `__Host-session`, Secure, HttpOnly, SameSite Lax, Path `/`, 2 hours idle and
+  12 hours at most (govue's defaults). `config.sessionAllowPlainHttp: true` drops Secure and the
+  `__Host-` prefix. It is for the plain HTTP `docker-compose.yaml` setup only, and the render
+  fails when it is true together with `ingress.enabled` or `httpRoute.enabled`.
+- Trusted proxies: the general rate limit and the login limits key on the client address.
+  Behind an `Ingress` or a `Gateway` the TCP peer is the proxy, the same address for every
+  caller, so `config.trustedProxies` is required with either; the render fails without it.
+- Login limits: every route that verifies a password, a TOTP code or a passkey costs an
+  Argon2id derivation, and govue runs one at a time. `config.loginRateLimits` tunes the limits
+  per client address, per login and client, and per login. Unset keeps `cmd/solobill`'s
+  defaults: 5 per minute, 10 per 15 minutes, 100 per hour.
+- Lockout: the ceiling per login counts every address, so a few addresses guessing at a known
+  login keep it used up and block the password login of that account until the bucket refills.
+  Passkey and OIDC logins still work. Against a sustained attack, register a passkey and block
+  the addresses at the ingress. A shorter `config.loginRateLimits.ceilingPer` refills the bucket
+  sooner, at the price of more guesses per hour.
+- One replica: the sessions and the passkey challenges live in the memory of the pod. A
+  second replica would not know them. `values.schema.json` and a template guard both refuse a
+  `replicaCount` above 1. A restart or a rollout signs everybody out. Scaling out needs a
+  shared session store first.
+- Invite cookie: `__Host-solobill_invite`, Secure, HttpOnly, SameSite Strict, Path `/`, for one
+  hour between the TOTP secret request and the confirm, cleared by the confirm. Plain HTTP
+  development drops Secure and the prefix, as for the session cookie.
+- Passkeys: off while `config.passkey.rpId` is empty. Set `config.passkey.rpId` to the host
+  the SPA is served from and `config.passkey.origins` to its exact `https://` origin. Both are
+  configuration only, never read off a request. The RP id cannot change later: every passkey is
+  bound to it, and a change loses all of them.
+
+None of these is a secret. The session codec key and the CSRF key stay in `existingSecret`.
+
 ## Values
 
 | Key | Description | Default |
 | --- | --- | --- |
-| `replicaCount` | Number of pods. Fixed at `1`: `cmd/solobill`'s session store is in-memory, correct for exactly one replica. A second pod would keep its own, separate sessions, so a request load-balanced to it would see its caller as logged out. | `1` |
+| `replicaCount` | Number of pods. Fixed at `1`: `cmd/solobill`'s session store and passkey challenge store are in-memory, correct for exactly one replica. A second pod would keep its own, separate sessions, so a request load-balanced to it would see its caller as logged out. | `1` |
 | `image.repository` | Container image repository. | `ghcr.io/ostendorf-cloud/solobill` |
 | `image.tag` | Image tag. Defaults to the chart's `appVersion` when left empty. | `""` |
 | `image.pullPolicy` | Image pull policy. | `IfNotPresent` |
@@ -524,11 +559,15 @@ boundary this policy exists to build. The render fails naming both values instea
 | `config.logLevel` | `LOG_LEVEL`. One of `debug`, `info`, `warn`, `error`. | `info` |
 | `config.databaseUrl` | `DATABASE_URL`. Credential-free; see "Why `config.databaseUrl` is plain" above. Required. | `""` |
 | `config.databaseUser` | `DATABASE_USER`. Required. Must be `NOSUPERUSER NOBYPASSRLS`; see "Prerequisites" above. | `""` |
-| `config.sessionAllowPlainHttp` | `SESSION_ALLOW_PLAIN_HTTP`. Keep `false` behind a TLS-terminating ingress; `true` is `docker-compose.yaml`'s own local-dev-only setting. | `false` |
+| `config.sessionAllowPlainHttp` | `SESSION_ALLOW_PLAIN_HTTP`. Keep `false` behind a TLS-terminating ingress; `true` is `docker-compose.yaml`'s own local-dev-only setting. The render fails when it is `true` with `ingress.enabled` or `httpRoute.enabled`. | `false` |
 | `config.allowedOrigins` | `ALLOWED_ORIGINS`, joined with a comma. Empty means no CORS middleware (same-origin SPA). | `[]` |
-| `config.trustedProxies` | `TRUSTED_PROXIES`, joined with a comma. Empty trusts only the direct TCP peer. Required (and enforced with a template `fail`) when `ingress.enabled` is true: otherwise every client's `X-Forwarded-For` is ignored and the rate limiter keys every request to the ingress controller's own address, one shared bucket for every caller. Set it to the ingress controller's pod or service CIDR. | `[]` |
-| `config.rateLimitBurst` | `RATE_LIMIT_BURST`. | `10` |
+| `config.trustedProxies` | `TRUSTED_PROXIES`, joined with a comma. Empty trusts only the direct TCP peer. Required (and enforced with a template `fail`) when `ingress.enabled` or `httpRoute.enabled` is true: otherwise every client's `X-Forwarded-For` is ignored and the rate limiter keys every request to the proxy's own address, one shared bucket for every caller. Set it to the ingress controller's or the gateway data plane's pod or service CIDR. | `[]` |
+| `config.rateLimitBurst` | `RATE_LIMIT_BURST`, the general per client limit of every public route. | `10` |
 | `config.rateLimitPer` | `RATE_LIMIT_PER`. | `1m` |
+| `config.loginRateLimits.*` | `LOGIN_RATE_LIMIT_*`: `clientBurst`/`clientPer`, `loginBurst`/`loginPer`, `ceilingBurst`/`ceilingPer`. `0` and `""` keep the defaults; see "Login, sessions and passkeys" above. | `0` / `""` |
+| `config.passkey.rpId` | `PASSKEY_RP_ID`. Empty leaves passkeys off. Cannot change once passkeys exist. | `""` |
+| `config.passkey.rpDisplayName` | `PASSKEY_RP_DISPLAY_NAME`, the name an authenticator shows. | `solobill` |
+| `config.passkey.origins` | `PASSKEY_ORIGINS`, joined with a comma. Exact `https://` origins, each `rpId` or a subdomain of it. Required with `rpId`. | `[]` |
 | `config.inviteDefaultTtl` | `INVITE_DEFAULT_TTL`. | `168h` |
 | `config.oidc.issuerUrl` | `OIDC_ISSUER_URL`. OIDC login is off exactly when this is empty. | `""` |
 | `config.oidc.clientId` | `OIDC_CLIENT_ID`. Required together with `issuerUrl`. | `""` |

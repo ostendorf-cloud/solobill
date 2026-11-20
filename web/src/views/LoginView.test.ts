@@ -13,7 +13,7 @@ vi.mock('../api', () => ({
   csrfToken: { value: undefined },
 }))
 
-function renderLoginView() {
+async function renderLoginView(path = '/login') {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -21,6 +21,8 @@ function renderLoginView() {
       { path: '/login', name: 'login', component: LoginView },
     ],
   })
+  await router.push(path)
+  await router.isReady()
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
 
   return { router, ...render(LoginView, { global: { plugins: [router, i18n] } }) }
@@ -31,39 +33,52 @@ describe('LoginView', () => {
     vi.clearAllMocks()
   })
 
-  it('submits the tenant, email, password and totp code to the login endpoint', async () => {
-    vi.mocked(apiClient.post).mockResolvedValue(undefined)
+  it("submits govue's login, password and code to the tenant's login route", async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ login: 'owner@example.com' })
     const user = userEvent.setup()
-    const { router } = renderLoginView()
+    const { router } = await renderLoginView()
 
     await user.type(screen.getByLabelText(/Tenant/), 'acme')
-    await user.type(screen.getByLabelText(/Email/), 'owner@example.com')
-    await user.type(screen.getByLabelText(/Password/), 'super-secret')
-    await user.type(screen.getByLabelText(/TOTP code/), '123456')
+    await user.type(screen.getByLabelText(/^Login/), 'owner@example.com')
+    await user.type(screen.getByLabelText(/Password/), 'super-secret-passphrase')
+    await user.type(screen.getByLabelText(/Code from your authenticator app/), '123456')
     await user.click(screen.getByRole('button', { name: 'Log in' }))
 
-    expect(apiClient.post).toHaveBeenCalledWith('/auth/login', {
-      tenant_slug: 'acme',
-      email: 'owner@example.com',
-      password: 'super-secret',
-      totp_code: '123456',
-    })
-    expect(router.currentRoute.value.name).toBe('home')
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/tenants/acme/auth/login',
+      { login: 'owner@example.com', password: 'super-secret-passphrase', code: '123456' },
+      { skipUnauthenticatedHook: true },
+    )
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('home'))
+  })
+
+  it('takes the tenant from the query string', async () => {
+    await renderLoginView('/login?tenant=acme')
+
+    expect(screen.getByLabelText(/Tenant/)).toHaveValue('acme')
+    expect(screen.getByLabelText(/Password/)).toBeEnabled()
+  })
+
+  it('keeps the login form disabled until a tenant is given', async () => {
+    await renderLoginView()
+
+    expect(screen.getByLabelText(/Password/)).toBeDisabled()
+    expect(screen.getByText('Please enter the tenant.')).toBeVisible()
+    expect(apiClient.post).not.toHaveBeenCalled()
   })
 
   it('does not submit when a required field is left empty', async () => {
     const user = userEvent.setup()
-    renderLoginView()
+    await renderLoginView('/login?tenant=acme')
 
-    await user.type(screen.getByLabelText(/Tenant/), 'acme')
+    await user.type(screen.getByLabelText(/^Login/), 'owner@example.com')
     await user.click(screen.getByRole('button', { name: 'Log in' }))
 
     expect(apiClient.post).not.toHaveBeenCalled()
-    expect(await screen.findByText('Please enter your email address.')).toBeVisible()
   })
 
-  it('always renders the single sign-on link, regardless of whether OIDC is enabled', () => {
-    renderLoginView()
+  it('always renders the single sign-on link, regardless of whether OIDC is enabled', async () => {
+    await renderLoginView()
 
     const link = screen.getByRole('link', { name: 'Log in with single sign-on' })
     expect(link).toHaveAttribute('href', '/auth/oidc/login')

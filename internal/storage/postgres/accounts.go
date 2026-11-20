@@ -112,13 +112,10 @@ func (r *accountRepository) Update(ctx context.Context, account storage.Account)
 	}
 
 	row, err := sqlcgen.New(tx).UpdateAccount(ctx, sqlcgen.UpdateAccountParams{
-		ID:              account.ID,
-		PasswordHash:    ptrToText(account.PasswordHash),
-		TotpSecret:      ptrToText(account.TOTPSecret),
-		TotpLastCounter: ptrToInt8(account.TOTPLastCounter),
-		OidcSubject:     ptrToText(account.OIDCSubject),
-		Role:            string(account.Role),
-		Status:          string(account.Status),
+		ID:          account.ID,
+		OidcSubject: ptrToText(account.OIDCSubject),
+		Role:        string(account.Role),
+		Status:      string(account.Status),
 	})
 	if err != nil {
 		return storage.Account{}, mapWriteError(err)

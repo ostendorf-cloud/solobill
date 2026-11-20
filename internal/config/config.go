@@ -127,8 +127,9 @@ type Config struct {
 	// default, trusts only the direct TCP peer.
 	TrustedProxies []netip.Prefix
 
-	// RateLimitBurst and RateLimitPer configure the token bucket
-	// internal/httpapi applies to local login and invite accept.
+	// RateLimitBurst and RateLimitPer configure the general per client
+	// token bucket internal/httpapi applies to every public route. The
+	// stricter login limits are Auth's.
 	RateLimitBurst int
 	RateLimitPer   time.Duration
 
@@ -164,6 +165,10 @@ type Config struct {
 	SeedOwnerEmail       string
 	SeedOwnerOIDCSubject string
 
+	// Auth is the account and passkey configuration of issue #86, in
+	// config_auth.go.
+	Auth AuthConfig
+
 	// ObjectStore is the S3 configuration, owned by issue #75 in
 	// config_objectstore.go.
 	ObjectStore ObjectStoreConfig
@@ -180,9 +185,9 @@ type Config struct {
 //
 // # Resolving a tenant for OIDC
 //
-// Every local login and every invite-accept request carries an explicit
-// tenant slug field in its own body (see internal/httpapi): that request is
-// entirely under this application's control, so adding a field costs
+// Every local login carries an explicit tenant slug in its path, and every
+// invite-accept request one in its body (see internal/httpapi): that
+// request is entirely under this application's control, so adding it costs
 // nothing. An OIDC callback is different. govue's oidc.HandlerConfig calls
 // StartSession, and through it internal/auth's TenantResolver, with only
 // the callback's own *http.Request: the one value that round-trips a login
@@ -272,6 +277,7 @@ func Load(getenv func(string) string) (Config, error) {
 	// One loader per feature file. A feature issue edits only its own
 	// config_<feature>.go, never this function: see AGENTS.md's conflict
 	// zones.
+	loadAuth(l, &cfg.Auth, fail)
 	loadObjectStore(l, &cfg.ObjectStore, fail)
 	loadPDF(l, &cfg.PDF, fail)
 

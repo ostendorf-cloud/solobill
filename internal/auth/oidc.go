@@ -173,8 +173,8 @@ var ErrOIDCAccountNotProvisioned = errors.New("auth: no active account is provis
 // the email-based matching this function replaced.
 //
 // tenantID is resolved by the caller before this runs (a slug or
-// subdomain on the login request), exactly like LocalAuthenticator.Login
-// resolves a tenant before it looks up an account; neither path ever
+// subdomain on the login request), exactly like the password login
+// resolves a tenant (TenantFromPath) before it looks up an account; neither path ever
 // looks an account up without a tenant already fixed.
 func ResolveOIDCIdentity(ctx context.Context, store Store, tenantID uuid.UUID, identity oidc.Identity) (Identity, error) {
 	var account storage.Account

@@ -12,7 +12,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 1,
-      "description": "cmd/solobill's session store is in-memory (govue's session.NewMemoryStore); it is correct for exactly one replica. A second replica would keep its own, separate set of sessions, so a request load-balanced to the other pod would see its caller as logged out."
+      "description": "cmd/solobill's session store is in-memory (govue's session.NewMemoryStore), and so is the passkey challenge store; both are correct for exactly one replica. A second replica would keep its own, separate set of sessions, so a request load-balanced to the other pod would see its caller as logged out."
     },
     "image": {
       "type": "object",
@@ -292,6 +292,32 @@
         "rateLimitBurst": { "type": "integer", "minimum": 1 },
         "rateLimitPer": { "type": "string", "minLength": 1 },
         "inviteDefaultTtl": { "type": "string", "minLength": 1 },
+        "loginRateLimits": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The limits in front of the routes that verify a password, a TOTP code or a passkey. 0 and an empty string keep cmd/solobill's defaults.",
+          "properties": {
+            "clientBurst": { "type": "integer", "minimum": 0 },
+            "clientPer": { "type": "string" },
+            "loginBurst": { "type": "integer", "minimum": 0 },
+            "loginPer": { "type": "string" },
+            "ceilingBurst": { "type": "integer", "minimum": 0 },
+            "ceilingPer": { "type": "string" }
+          }
+        },
+        "passkey": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The WebAuthn relying party. Passkeys are off while rpId is empty. Configuration only, never derived from a request.",
+          "properties": {
+            "rpId": { "type": "string" },
+            "rpDisplayName": { "type": "string", "minLength": 1 },
+            "origins": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^https://" }
+            }
+          }
+        },
         "oidc": {
           "type": "object",
           "properties": {

@@ -8,11 +8,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/ostendorf-cloud/solobill/internal/auth/authtest"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
 // fakeStore is a hand written fake satisfying auth.Store, for a handler
-// test that exercises the real LocalAuthenticator and InviteManager logic
+// test that exercises the real govue login and InviteManager logic
 // behind internal/httpapi with no database. It mirrors internal/auth's own
 // test fake; see that package's fake_store_test.go for why WithTenant need
 // not simulate a real transaction here and why MarkUsed's atomicity under
@@ -23,24 +24,38 @@ type fakeStore struct {
 	tenantsBySlug map[string]uuid.UUID
 	accounts      map[uuid.UUID]storage.Account
 	invites       map[uuid.UUID]storage.Invite
+
+	// login and passkeys sit on top of accounts: see authtest.
+	login    *authtest.LoginAccounts
+	passkeys *authtest.Passkeys
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{
+	s := &fakeStore{
 		tenants:       map[uuid.UUID]storage.Tenant{},
 		tenantsBySlug: map[string]uuid.UUID{},
 		accounts:      map[uuid.UUID]storage.Account{},
 		invites:       map[uuid.UUID]storage.Invite{},
 	}
+	s.login = &authtest.LoginAccounts{
+		Accounts: &fakeAccountRepository{s},
+		Put:      func(a storage.Account) { s.addAccount(a) },
+	}
+	s.passkeys = &authtest.Passkeys{Accounts: &fakeAccountRepository{s}}
+
+	return s
 }
 
 func (s *fakeStore) WithTenant(ctx context.Context, _ uuid.UUID, fn func(ctx context.Context) error) error {
 	return fn(ctx)
 }
 
-func (s *fakeStore) Tenants() storage.TenantRepository   { return &fakeTenantRepository{s} }
-func (s *fakeStore) Accounts() storage.AccountRepository { return &fakeAccountRepository{s} }
-func (s *fakeStore) Invites() storage.InviteRepository   { return &fakeInviteRepository{s} }
+func (s *fakeStore) Tenants() storage.TenantRepository { return &fakeTenantRepository{s} }
+
+func (s *fakeStore) Accounts() storage.AccountRepository           { return &fakeAccountRepository{s} }
+func (s *fakeStore) LoginAccounts() storage.LoginAccountRepository { return s.login }
+func (s *fakeStore) Passkeys() storage.PasskeyRepository           { return s.passkeys }
+func (s *fakeStore) Invites() storage.InviteRepository             { return &fakeInviteRepository{s} }
 
 func (s *fakeStore) addTenant(t storage.Tenant) storage.Tenant {
 	s.mu.Lock()
@@ -179,9 +194,8 @@ func (r *fakeAccountRepository) Update(_ context.Context, account storage.Accoun
 		return storage.Account{}, storage.ErrNotFound
 	}
 
-	existing.PasswordHash = account.PasswordHash
-	existing.TOTPSecret = account.TOTPSecret
-	existing.TOTPLastCounter = account.TOTPLastCounter
+	// Mirrors queries/accounts.sql's UpdateAccount: the credentials change
+	// only through LoginAccounts' conditional writes.
 	existing.OIDCSubject = account.OIDCSubject
 	existing.Role = account.Role
 	existing.Status = account.Status

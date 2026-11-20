@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ostendorf-cloud/govue/account"
 
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
@@ -26,10 +27,6 @@ var ErrInviteInvalid = errors.New("auth: invite token is invalid, expired or alr
 // IssueTOTPSecret), including when no secret was ever issued for it.
 var ErrTOTPEnrollmentNotConfirmed = errors.New("auth: totp code does not match the secret just enrolled")
 
-// inviteTOTPIssuer names this application in the QR code an authenticator
-// app shows next to an invitee's enrolled entry.
-const inviteTOTPIssuer = "solobill"
-
 // InviteManager runs the invite lifecycle: creating one, a local account
 // redeeming it (AcceptInvite), and an OIDC-provisioned account redeeming
 // it (AcceptInviteOIDC). The owner's intent to admit this email is
@@ -40,20 +37,26 @@ const inviteTOTPIssuer = "solobill"
 // holder's identity claims on its own. See the package doc's "OIDC on a
 // first-time subject" section for why that distinction is the whole
 // point.
+//
+// Password hashing and TOTP run through govue's account package, the same
+// code a login verifies against: hasher is the process's one
+// account.Hasher, shared with Login, so the cap on concurrent Argon2id
+// derivations holds for both.
 type InviteManager struct {
-	store Store
-	now   func() time.Time
+	store  Store
+	hasher *account.Hasher
+	now    func() time.Time
 }
 
-// NewInviteManager builds an InviteManager against store. now is the
-// clock CreateInvite and AcceptInvite use for expiry and TOTP checks;
-// nil is time.Now.
-func NewInviteManager(store Store, now func() time.Time) *InviteManager {
+// NewInviteManager builds an InviteManager against store. hasher is the
+// process's account.Hasher. now is the clock CreateInvite and AcceptInvite
+// use for expiry and TOTP checks; nil is time.Now.
+func NewInviteManager(store Store, hasher *account.Hasher, now func() time.Time) *InviteManager {
 	if now == nil {
 		now = time.Now
 	}
 
-	return &InviteManager{store: store, now: now}
+	return &InviteManager{store: store, hasher: hasher, now: now}
 }
 
 // CreateInviteParams is CreateInvite's input.
@@ -117,11 +120,32 @@ func (m *InviteManager) CreateInvite(ctx context.Context, params CreateInvitePar
 // the same reasons AcceptInvite already does: no such token, expired, or
 // already used.
 func (m *InviteManager) IssueTOTPSecret(ctx context.Context, tenantID uuid.UUID, rawToken string) (secret, provisioningURI string, err error) {
-	tokenHash := HashInviteToken(rawToken)
-
-	secret, err = GenerateTOTPSecret()
+	enrolment, err := m.IssueTOTPEnrolment(ctx, tenantID, rawToken)
 	if err != nil {
 		return "", "", err
+	}
+
+	return enrolment.Secret, enrolment.ProvisioningURI, nil
+}
+
+// InviteEnrolment is what IssueTOTPEnrolment answers: the fresh secret,
+// its provisioning URI and the invite's email, the login the account will
+// have.
+type InviteEnrolment struct {
+	Secret          string
+	ProvisioningURI string
+	Email           string
+}
+
+// IssueTOTPEnrolment is IssueTOTPSecret with the invite's email as well,
+// for govue's TOTP enrolment component, which shows the login next to the
+// secret.
+func (m *InviteManager) IssueTOTPEnrolment(ctx context.Context, tenantID uuid.UUID, rawToken string) (InviteEnrolment, error) {
+	tokenHash := HashInviteToken(rawToken)
+
+	secret, err := account.GenerateTOTPSecret()
+	if err != nil {
+		return InviteEnrolment{}, fmt.Errorf("auth: generate invite totp secret: %w", err)
 	}
 
 	var invite storage.Invite
@@ -155,13 +179,48 @@ func (m *InviteManager) IssueTOTPSecret(ctx context.Context, tenantID uuid.UUID,
 	})
 	if err != nil {
 		if errors.Is(err, ErrInviteInvalid) {
-			return "", "", ErrInviteInvalid
+			return InviteEnrolment{}, ErrInviteInvalid
 		}
 
-		return "", "", fmt.Errorf("auth: issue invite totp secret: %w", err)
+		return InviteEnrolment{}, fmt.Errorf("auth: issue invite totp secret: %w", err)
 	}
 
-	return secret, TOTPProvisioningURI(secret, invite.Email, inviteTOTPIssuer), nil
+	provisioningURI, err := account.TOTPProvisioningURI(TOTPIssuer, invite.Email, secret)
+	if err != nil {
+		return InviteEnrolment{}, fmt.Errorf("auth: build invite totp provisioning uri: %w", err)
+	}
+
+	return InviteEnrolment{Secret: secret, ProvisioningURI: provisioningURI, Email: invite.Email}, nil
+}
+
+// SameInviteLogin reports whether login names the invite's email. An
+// empty login never does. The comparison folds ASCII letter case only and
+// is otherwise exact: no trimming, no Unicode case folding and no NFKC.
+// The SPA sends back the very email the TOTP secret request answered with,
+// so only letter case can differ in an honest request. Unicode folding or
+// NFKC would make look alike strings equal, the Kelvin sign U+212A and
+// "k" among them (strings.EqualFold already does), which is exactly what
+// a login check must not accept.
+func SameInviteLogin(login, email string) bool {
+	if login == "" || len(login) != len(email) {
+		return false
+	}
+
+	for i := range len(login) {
+		if asciiLower(login[i]) != asciiLower(email[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func asciiLower(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+
+	return b
 }
 
 // AcceptInviteParams is AcceptInvite's input.
@@ -175,6 +234,14 @@ func (m *InviteManager) IssueTOTPSecret(ctx context.Context, tenantID uuid.UUID,
 type AcceptInviteParams struct {
 	TenantID uuid.UUID
 	RawToken string
+	// Login is the login govue's TOTP enrolment component sends with the
+	// confirm (POST /api/v1/invites/confirm). When it is set it has to
+	// name the invite's email, see SameInviteLogin, or the invite is
+	// refused like an invalid one; an empty login is refused too. Nil is
+	// the JSON accept route, whose body names no login: there the token
+	// alone admits, as before. The account's email is always the invite's
+	// own either way.
+	Login    *string
 	Password string
 	TOTPCode string
 }
@@ -206,14 +273,17 @@ type AcceptInviteParams struct {
 // TestAcceptInviteIsSingleUseUnderConcurrentAccept for the test that
 // actually races this against a real Postgres.
 func (m *InviteManager) AcceptInvite(ctx context.Context, params AcceptInviteParams) (storage.Account, error) {
-	passwordHash, err := HashPassword(params.Password)
+	// govue's policy applies here as at every other password: at least
+	// account.MinPasswordLength characters. ErrPasswordTooShort,
+	// ErrPasswordTooLong and ErrHashingBusy stay matchable for the caller.
+	passwordHash, err := m.hasher.HashPassword(ctx, params.Password)
 	if err != nil {
 		return storage.Account{}, fmt.Errorf("auth: hash invite accept password: %w", err)
 	}
 
 	tokenHash := HashInviteToken(params.RawToken)
 
-	var account storage.Account
+	var accepted storage.Account
 
 	err = m.store.WithTenant(ctx, params.TenantID, func(ctx context.Context) error {
 		invite, err := m.store.Invites().FindByTokenHash(ctx, tokenHash)
@@ -229,6 +299,10 @@ func (m *InviteManager) AcceptInvite(ctx context.Context, params AcceptInvitePar
 			return ErrInviteInvalid
 		}
 
+		if params.Login != nil && !SameInviteLogin(*params.Login, invite.Email) {
+			return ErrInviteInvalid
+		}
+
 		// The server, not the client, owns the secret this code is
 		// checked against: it was persisted by a prior IssueTOTPSecret
 		// call. An invite that never had one issued, or whose secret is
@@ -238,7 +312,7 @@ func (m *InviteManager) AcceptInvite(ctx context.Context, params AcceptInvitePar
 			return ErrTOTPEnrollmentNotConfirmed
 		}
 
-		totpCounter, totpOK := VerifyTOTPCode(*invite.TOTPSecret, params.TOTPCode, m.now())
+		matchedCounter, totpOK := account.VerifyTOTPCode(*invite.TOTPSecret, params.TOTPCode, m.now())
 		if !totpOK {
 			return ErrTOTPEnrollmentNotConfirmed
 		}
@@ -252,7 +326,6 @@ func (m *InviteManager) AcceptInvite(ctx context.Context, params AcceptInvitePar
 		}
 
 		totpSecret := *invite.TOTPSecret
-		matchedCounter := int64(totpCounter)
 
 		created, err := m.store.Accounts().Create(ctx, storage.Account{
 			TenantID:     params.TenantID,
@@ -261,8 +334,10 @@ func (m *InviteManager) AcceptInvite(ctx context.Context, params AcceptInvitePar
 			TOTPSecret:   &totpSecret,
 			// Set at creation time to the counter the enrolment code
 			// itself matched, so that same code cannot immediately be
-			// replayed as a first login; see VerifyTOTPCode and
-			// LocalAuthenticator.Login.
+			// replayed as a first login: govue's login consumes a code
+			// only through a conditional write that requires a higher
+			// counter (account.Store.AdvanceTOTPCounter). A counter above
+			// zero is also what makes the secret confirmed for govue.
 			TOTPLastCounter: &matchedCounter,
 			Role:            invite.Role,
 			Status:          storage.AccountStatusActive,
@@ -271,7 +346,7 @@ func (m *InviteManager) AcceptInvite(ctx context.Context, params AcceptInvitePar
 			return err
 		}
 
-		account = created
+		accepted = created
 
 		return nil
 	})
@@ -286,7 +361,7 @@ func (m *InviteManager) AcceptInvite(ctx context.Context, params AcceptInvitePar
 		return storage.Account{}, fmt.Errorf("auth: accept invite: %w", err)
 	}
 
-	return account, nil
+	return accepted, nil
 }
 
 // PeekInvite checks that rawToken names an invite that is not yet used

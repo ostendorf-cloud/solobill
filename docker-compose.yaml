@@ -229,6 +229,11 @@ services:
       # HTTP on localhost, with no TLS-terminating ingress in front of
       # it. Never set this in a real deployment (see internal/config).
       SESSION_ALLOW_PLAIN_HTTP: "true"
+      # Passkeys on localhost: WebAuthn allows plain HTTP for localhost
+      # only, so the browser has to open http://localhost:8080, not
+      # 127.0.0.1. The RP id is configuration, never read off a request.
+      PASSKEY_RP_ID: localhost
+      PASSKEY_ORIGINS: "http://localhost:8080"
       # cmd/solobill creates this tenant on startup if it does not exist
       # yet (main.go's seedTenant), so a fresh `docker compose up --build`
       # has something to log into immediately instead of a chicken-and-egg
