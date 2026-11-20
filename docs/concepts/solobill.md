@@ -175,6 +175,13 @@ the milestone (#68 to #82) builds against. Only #67 edits this document in the m
   every change. This is why payments are a table of their own.
 - Under the standard regime the VAT share of a partial payment is split pro rata. This is an
   assumption the owner confirms in issue #71.
+- Which document sets that ratio: the chain's effective document on the payment's
+  `received_on`, that is the newest correction issued on or before that day, or the original.
+- A later correction does not recompute the VAT share of payments received before it. The EÜR
+  counts each payment's amount with the ratio of its own day. A difference the correction
+  causes shows up only through the refund or the additional payment that follows it.
+- The legal side of both rules (section 13 and 17 UStG on corrections and partial payments) is
+  not verified. The owner confirms it with a Steuerberater.
 
 ### Offers
 
@@ -209,14 +216,25 @@ The owner's decision: a correction replaces the invoice.
 - The EÜR counts payments only, so a correction changes the EÜR only through the payments and
   refunds that follow it.
 - A new correction copies the lines of the current effective document as its draft.
+- The draft records its base: `correction_base_id` and `correction_base_seq`, the effective
+  document it copied from. At issue, under the lock on the root row, issue #70 compares the base
+  with the chain's effective document and refuses with `409 correction_base_changed` when they
+  differ. Example: draft A is created while correction 1 is effective, correction 2 is issued
+  meanwhile, A is refused, because it would replace lines it never saw. The owner discards A
+  and starts a new correction from correction 2.
+- The rules are `internal/docchain`: effective, superseded, next sequence, base check. Pure and
+  tested, called by #70.
+- An imported historic correction keeps the number it was issued under. The suffix rule does
+  not apply to it, and its original may be unknown to solobill.
 
 Not verified, and not claimed:
 
 - Whether a number with a suffix satisfies section 14 Abs. 4 Satz 1 Nr. 4 UStG and section 31
   UStDV for a correction. The owner or a Steuerberater confirms it before the first correction
   is issued.
-- GoBD does not prescribe how a correction looks. This model follows the owner's decision, not
-  a requirement of the GoBD and not the behaviour of another product.
+- Whether the GoBD prescribe anything about the form of a correction. The GoBD letter was not
+  read in full. This model follows the owner's decision, not a known requirement of the GoBD
+  and not the behaviour of another product.
 
 ### Number format
 
@@ -226,16 +244,35 @@ The owner's decision: the display number format is a template per document type.
 - Tokens: `{year}` is the four digit number year, `{yy}` its last two digits, `{seq}` the
   number without padding, `{seq:N}` the number padded with zeros to at least N digits (N from 1
   to 9).
-- Every other character is literal. A template must contain exactly one `{seq}` or `{seq:N}`
-  and one `{year}` or `{yy}`, so a number is unique per year.
+- `{{` and `}}` are a literal `{` and `}`. A single `}` and an unknown token are errors at save.
+- Every other character must be an ASCII letter, a digit, `-`, `_`, `.` or `/`. No space, no
+  control character, no quote, no backslash, nothing outside ASCII.
+- A template must contain exactly one `{seq}` or `{seq:N}` and exactly one `{year}` or `{yy}`,
+  so a number is unique per year, and it must start with a literal prefix.
+- A rendered number is at most 36 characters, checked at save against a nine digit counter. A
+  correction suffix of up to four characters keeps every display number within 40.
 - The owner's format is `RE-{year}{seq:4}`: number 9 of 2026 renders as `RE-20260009`.
-- The default, when no template is saved, is `{year}-{seq:4}`.
-- A template change applies to the next issued document only. An issued document keeps the
-  number frozen in its payload.
+- Defaults when no template is saved: `RE-{year}{seq:4}` for an invoice, `AN-{year}{seq:4}` for
+  an offer. They differ in their prefix.
+- On save, the templates of all types are checked together: no type's literal prefix may be a
+  prefix of another type's. Two numbers with such prefixes differ at the latest at the end of
+  the shorter prefix, so an invoice and an offer can never render the same string.
+- At issue the rendered number is stored in `documents.display_number`, unique per tenant (a
+  unique index). A collision, for example with an imported number, refuses the issue with `409
+  conflict`. Every list and read returns the stored value. A template change never rewrites an
+  issued number.
 - A correction has no template: it is the original's number plus `-1`, `-2` and so on.
+- An imported document stores its original number in `display_number` as well, so the unique
+  index also catches a collision between an imported and a new number.
 - The numeric counter in `document_numbers` stays gapless per tenant, type and year. The
   template only renders it.
-- Issue #68 validates and stores the template. Issue #70 renders it at issue.
+- Where a number leaves solobill it needs no escaping beyond one rule, because the character
+  set excludes quotes, backslashes, spaces and control characters:
+  - File name (`Content-Disposition`): `numbering.FileName`, `/` becomes `_`, plus `.pdf`.
+  - Typst: the number is passed as data in the JSON input, never spliced into markup.
+  - CSV: every field is quoted by the CSV writer as usual; the number needs nothing more.
+- `internal/numbering` holds the parser, the renderer, the set check, the defaults and the file
+  name rule, with tests. Issue #68 calls it on save, issue #70 at issue.
 
 ### Imported documents and original numbers
 
@@ -312,9 +349,14 @@ func Validate(p storage.SellerProfile, regime storage.VATRegime) map[string]stri
 - It also holds, so no version 2 is needed for them: `currency` (only `EUR`), a second address
   line, the customer number, the customer's own reference, and for a correction `corrects` and
   `correction_seq`.
-- `Validate` checks the totals arithmetic: the lines add up to the net total, net minus
-  discount, the VAT buckets, each bucket's VAT rounded once, the grand total, and a VAT total
-  of 0 under the Kleinunternehmer regime.
+- `Validate` runs `internal/money` again over the payload's own lines and discounts and compares
+  every frozen line figure, every bucket and every total with the result. A payload can never
+  carry figures its lines do not produce.
+- An imported document has no recomputable lines. For it `Validate` checks the arithmetic
+  only: net minus discount, the bucket sums, each bucket's VAT rounded once, the grand total,
+  and a VAT total of 0 under the Kleinunternehmer regime.
+- A correction's `corrects` needs id, number and a valid issue date; only a correction may
+  carry it. An imported correction may lack the id and is not checked against the suffix rule.
 - The payload holds the printed tax note as text in the document language, so a later wording
   change never alters an issued document.
 - The renderer formats and never computes.
@@ -359,16 +401,26 @@ So the store side is a production requirement:
 - Both are set up by the owner in the infrastructure repository: a new bucket created with
   object lock enabled (SeaweedFS allows it only at bucket creation), versioning on, and a bucket
   policy that adds the versioning, retention and legal hold actions.
-- solobill checks versioning at startup and on every readiness probe. With
-  `S3_REQUIRE_VERSIONING=true`, the default, the readiness check fails while the bucket reports
-  no versioning, so the pod takes no traffic. Local development sets it to `false` and gets a
-  loud warning in the log instead.
+The owner's decision on what happens while that protection is missing: only the file routes
+are gated.
+
+- solobill checks the bucket at startup and then periodically (every minute): is it
+  reachable, is versioning on, is object lock configured.
+- When the bucket is unreachable, or reports no versioning while `S3_REQUIRE_VERSIONING=true`
+  (the default), the file routes answer `503 object_store_unavailable`: upload, download, the
+  logo, and the attachment of an import original. Every other route keeps working: invoices,
+  customers, payments, expenses without a new receipt, the report.
+- `/readyz` stays about the database only. The pod keeps taking traffic.
+- Every check that finds the protection missing logs a warning at level `WARN` with the reason.
+- `GET /api/v1/status` reports `object_store.reachable`, `versioning`, `object_lock` and
+  `gobd_protection_active`. The UI shows a banner while `gobd_protection_active` is false.
+- Local development sets `S3_REQUIRE_VERSIONING=false`: the file routes work against the
+  unversioned compose bucket, the warning and the banner stay.
 - An integrity scan reads every object, recomputes its SHA-256 and compares it with the
-  database. It runs as `solobill files verify`, a subcommand of the same binary, scheduled as a
-  Kubernetes CronJob (weekly by default) by the chart. A mismatch or a missing object exits
-  non-zero and is logged with the file id. Issue #75 builds both.
-- Until the bucket with lock and versioning exists, the milestone runs with the readiness
-  check failing in production. The owner sets the bucket up first.
+  database. It runs as `solobill files verify`, a subcommand registered in
+  `cmd/solobill/cmd_files.go`, scheduled as a Kubernetes CronJob (weekly by default) by the
+  chart. A mismatch or a missing object exits non-zero and is logged with the file id. Issue
+  #75 builds the checks, the status endpoint, the subcommand and the CronJob.
 
 What remains unverified:
 
@@ -400,7 +452,7 @@ What remains unverified:
 | `S3_ACCESS_KEY_ID`, `S3_ACCESS_KEY_ID_FILE` | Key id, or a file holding it |
 | `S3_SECRET_ACCESS_KEY`, `S3_SECRET_ACCESS_KEY_FILE` | Secret, or a file holding it |
 | `S3_OBJECT_LOCK` | `true` requests retention per object and fails startup without a lock |
-| `S3_REQUIRE_VERSIONING` | `true` (default) fails readiness while the bucket has no versioning |
+| `S3_REQUIRE_VERSIONING` | `true` (default): the file routes answer 503 while the bucket has no versioning |
 
 - In the cluster the bucket, the user and the key come from the infrastructure repository and
   OpenBao. The chart takes a secret reference only.
@@ -450,61 +502,19 @@ What remains unverified:
 - "nd" and "d" split a line into its non deductible and deductible Kennzahl.
 - Kind: `income` and `expense` are chosen by the owner, `asset` comes from the register,
   `derived` is computed by the report.
-- The Kennzahlen below are the 2025 form as read for the plan. They are data of issue #80.
-- `internal/category` holds the keys. Its test fails when a key has no row here.
+- The Kennzahlen in the key tables are the 2025 form as read for the plan. They are data of
+  issue #80.
+- The keys are registered per issue, one file pair each, so no issue edits this document:
 
-| Key | Kind | Zeile 2025 | Kz 2025 | Line |
-| --- | --- | --- | --- | --- |
-| `euer.z12` | income | 12 | 111 | Betriebseinnahmen als Kleinunternehmer |
-| `euer.z15` | income | 15 | 112 | Umsatzsteuerpflichtige Betriebseinnahmen |
-| `euer.z16` | income | 16 | 103 | Umsatzsteuerfreie, nicht steuerbare Einnahmen, section 13b |
-| `euer.z17` | derived | 17 | 140 | Vereinnahmte Umsatzsteuer |
-| `euer.z18` | income | 18 | 141 | Vom Finanzamt erstattete Umsatzsteuer |
-| `euer.z19` | income | 19 | 102 | Veräußerung oder Entnahme von Anlagevermögen |
-| `euer.z20` | income | 20 | 106 | Private Kfz-Nutzung |
-| `euer.z21` | income | 21 | 108 | Sonstige Sach-, Nutzungs- und Leistungsentnahmen |
-| `euer.z27` | expense | 27 | 100 | Waren, Rohstoffe und Hilfsstoffe |
-| `euer.z29` | expense | 29 | 110 | Bezogene Fremdleistungen |
-| `euer.z30` | expense | 30 | 120 | Ausgaben für eigenes Personal |
-| `euer.z32` | asset | 32 | 131 | AfA auf immaterielle Wirtschaftsgüter |
-| `euer.z33` | asset | 33 | 130 | AfA auf bewegliche Wirtschaftsgüter |
-| `euer.z36` | asset | 36 | 132 | Geringwertige Wirtschaftsgüter |
-| `euer.z37` | asset | 37 | 137 | Auflösung Sammelposten |
-| `euer.z38` | asset | 38 | 135 | Restbuchwerte ausgeschiedener Anlagegüter |
-| `euer.z39` | expense | 39 | 150 | Miete und Pacht für Geschäftsräume |
-| `euer.z43` | expense | 43 | 280 | Telekommunikation |
-| `euer.z44` | expense | 44 | 221 | Übernachtungs- und Reisenebenkosten |
-| `euer.z45` | expense | 45 | 281 | Fortbildungskosten |
-| `euer.z46` | expense | 46 | 194 | Rechts- und Steuerberatung, Buchführung |
-| `euer.z47` | expense | 47 | 222 | Miete und Leasing für bewegliche Wirtschaftsgüter |
-| `euer.z48` | expense | 48 | 225 | Erhaltungsaufwendungen |
-| `euer.z49` | expense | 49 | 223 | Beiträge, Gebühren, Abgaben und Versicherungen |
-| `euer.z50` | expense | 50 | 228 | Laufende EDV-Kosten |
-| `euer.z51` | expense | 51 | 229 | Arbeitsmittel |
-| `euer.z52` | expense | 52 | 226 | Abfallbeseitigung und Entsorgung |
-| `euer.z53` | expense | 53 | 227 | Verpackung und Transport |
-| `euer.z54` | expense | 54 | 224 | Werbekosten |
-| `euer.z57` | derived | 57 | 185 | Abziehbare Vorsteuer |
-| `euer.z58` | expense | 58 | 186 | An das Finanzamt gezahlte Umsatzsteuer |
-| `euer.z60` | expense | 60 | 183 | Übrige unbeschränkt abziehbare Betriebsausgaben |
-| `euer.z62.nd` | expense | 62 | 164 | Geschenke, nicht abziehbar |
-| `euer.z62.d` | expense | 62 | 174 | Geschenke, abziehbar |
-| `euer.z63.nd` | expense | 63 | 165 | Bewirtungsaufwendungen, nicht abziehbar |
-| `euer.z63.d` | expense | 63 | 175 | Bewirtungsaufwendungen, abziehbar |
-| `euer.z65.nd` | expense | 65 | 162 or 172 | Häusliches Arbeitszimmer, nicht abziehbar |
-| `euer.z65.d` | expense | 65 | 162 or 172 | Häusliches Arbeitszimmer, abziehbar |
-| `euer.z66` | expense | 66 | 163 | Tagespauschale häusliche Wohnung |
+| Issue | Code | Table | Content |
+| --- | --- | --- | --- |
+| #67 | `internal/category/keys_67.go` | `docs/concepts/euer-keys/67.md` | the verified 2025 lines |
+| #76 | `internal/category/keys_76.go` | `docs/concepts/euer-keys/76.md` | the car cost lines 68 to 73, empty until read |
+| #80 | `internal/category/keys_80.go` | `docs/concepts/euer-keys/80.md` | Zeile 65 (Kz 162 or 172 open), Zeile 13, Kz 111 on Zeile 10 |
 
-Open points of the set:
-
-- Zeile 65 is in the set, but which of Kz 162 and 172 is the deductible one was not read.
-  Issue #80 checks it before it maps the line.
-- Zeilen 68 to 73 (Kfz-Kosten): the label of each single line was not read. Issue #76 adds the
-  keys after reading the form. Car cost computation stays out of the milestone.
-- Zeile 13 (Kz 119, nicht steuerbare Umsätze eines Kleinunternehmers): issue #80 decides
-  whether it is derived or chosen.
-- Zeile 10 also shows a printed 111 in the read copy. Issue #80 checks whether Kz 111 belongs
-  to Zeile 10, Zeile 12 or both.
+- `internal/category`'s test reads every table and checks in both directions: each key has a
+  row in its own issue's table, with the same kind and Zeile, and each row is a key.
+- The open points of the set are listed in the table of the issue that resolves them.
 
 ### Migration timestamp reservation
 
@@ -522,7 +532,7 @@ Open points of the set:
 | #67 contract | none | ships no table |
 | #68 seller profile | `20261121100000` to `20261121100099` | `seller_profiles` with `number_formats`, `vat_regime_periods` with `supersedes_id` |
 | #69 customers, catalogue | `20261121110000` to `20261121110099` | `customers.document_language`, `customers.number`, `customers.address_line2` |
-| #70 documents | `20261121120000` to `20261121120099` | widen `documents_type_check` and `document_numbers_type_check` for offers; `original_number`, `source_offer_id`, `language`, `valid_until`, `service_date_to`, `payment_terms`, `notes`, `customer_reference`, `correction_seq`; number uniqueness without corrections plus a unique `(tenant_id, corrects_document_id, correction_seq)` |
+| #70 documents | `20261121120000` to `20261121120099` | widen `documents_type_check` and `document_numbers_type_check` for offers; `original_number`, `source_offer_id`, `language`, `valid_until`, `service_date_to`, `payment_terms`, `notes`, `customer_reference`, `correction_seq`, `correction_base_id`, `correction_base_seq`, `display_number` with a unique index per tenant; number uniqueness without corrections plus a unique `(tenant_id, corrects_document_id, correction_seq)` |
 | #71 payments | `20261121130000` to `20261121130099` | `payments` with trigger, root invoice reference |
 | #72 Vue shell | none | Vue only |
 | #73 Vue documents | none | Vue only |
@@ -543,25 +553,42 @@ Every file that several issues would otherwise edit, and the rule that keeps the
 - `internal/httpapi`: one `routes_<resource>.go` per resource with its `registerX`. `NewHandler`
   and `routes.go` are not edited again. `Repositories` already has every field.
 - `internal/httpapi/reserved_<resource>_test.go`: one file per routes file lists its 501 stubs.
-  The issue that implements the routes deletes its own file.
+  The issue that implements the routes deletes its own file. A test fails when a stub is listed
+  under another file than the one that registers it.
+- `internal/httpapi` test fakes: `buildTestApp` and `fake_store_test.go` are not edited again.
+  A feature adds its fakes in its own `fake_<resource>_test.go`, whose `init` appends a hook to
+  `repositoryHooks` (`testhooks_test.go`). Its tests read the fake back through
+  `testApp.repos`.
 - `internal/storage`: one domain file and one interface file per resource.
 - `internal/storage/postgres`: every `func (s *Store) X()` accessor lives in its own
   `store_<resource>.go`. `store.go` is not edited again.
 - `internal/storage/postgres/sqlcgen/models.go`: regenerated after a rebase, never hand merged.
 - `cmd/solobill`: a feature wires itself in its own `wire_<feature>.go`, whose `init` appends a
-  `wireFunc` to `wirers`. `main.go` and `wire.go` are not edited again.
+  `wireFunc` to `wirers`. A subcommand lives in its own `cmd_<name>.go`, whose `init` calls
+  `registerCommand` (`commands.go`); `solobill files verify` is `cmd_files.go` of #75. `main.go`,
+  `wire.go` and `commands.go` are not edited again.
 - `internal/config`: a feature loads its variables in its own `config_<feature>.go`. `Config`
   already carries `ObjectStore` (#75) and `PDF` (#74), and `Load` already calls both loaders.
-- `charts/solobill`: #75 alone owns `templates/_objectstore.tpl`, which `deployment.yaml` and
-  `networkpolicy.yaml` already include, plus the top level `objectStore` values block, its
-  `values.schema.json` property, a CronJob template for `files verify` and its tests. #82 owns
-  every other chart change (body size limit, notes). No other issue edits the chart.
+- `charts/solobill`, two owners with disjoint files and blocks:
+  - #75 owns `templates/_objectstore.tpl` (already included by `deployment.yaml` and
+    `networkpolicy.yaml`), the `objectStore` block at the end of `values.yaml`, the
+    `objectStore` property in `values.schema.json`, a new CronJob template for `files verify`
+    and new test files.
+  - #82 owns `templates/_requestlimits.tpl` (already merged into the annotations of
+    `ingress.yaml` and `httproute.yaml`), the `requestLimits` block at the top of `values.yaml`,
+    the `requestLimits` property at the top of `values.schema.json`, and the chart README notes.
+  - The two blocks sit apart in both files, so the two branches never touch neighbouring lines.
+    No other issue edits the chart.
+- `internal/category` and its key tables: one `keys_<issue>.go` and one
+  `docs/concepts/euer-keys/<issue>.md` per issue (#67, #76, #80). See "EÜR line keys".
 - Grants: one SQL file per issue in `docker/postgres/grants/`, named after the issue's range
   start. `docker-compose.yaml`, `integration_test.go` and `charts/solobill/README.md` all read
   or point to that directory and are not edited for a new table.
-- Row level security: every new table enables and forces RLS with a policy in its own
-  migration. `TestEveryTenantScopedTableEnforcesRowLevelSecurity` finds the tables itself, so
-  no list needs an edit.
+- Row level security: every new table carries `tenant_id` and enables and forces RLS with a
+  policy in its own migration. `TestEveryTenantScopedTableEnforcesRowLevelSecurity` finds those
+  tables itself. `TestEveryTableIsTenantScopedOrAllowlisted` fails for a table without
+  `tenant_id` unless it is in `tablesWithoutTenantID` with a reason; only #67 and #82 edit that
+  list. `TestAppRoleCannotChangeFiles` asserts the files grant once #75 creates the table.
 - `go.mod` and `go.sum`: only #74 (if Typst needs a Go module) and #75 (minio-go) add
   dependencies. The second to merge rebases onto `main`, runs `go mod tidy`, and never hand
   merges `go.sum`.
@@ -572,7 +599,8 @@ Every file that several issues would otherwise edit, and the rule that keeps the
   optional `roles`) to its own route. `navigationEntries` in `web/src/router/meta.ts` lists
   them, the navigation component of #72 renders them, and no feature edits that component.
 - `docs/concepts/solobill.md` and `docs/api.md`: only #67 edits them in this milestone. A
-  needed change goes back to the owner as a contract change.
+  needed change goes back to the owner as a contract change. The key tables under
+  `docs/concepts/euer-keys/` are separate files with their own owners.
 - `AGENTS.md` layout: only issue #82 edits it. Until then the layout section is stale on
   purpose.
 

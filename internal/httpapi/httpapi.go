@@ -177,9 +177,10 @@ type Handlers struct {
 	Public http.Handler
 	Admin  http.Handler
 
-	// reserved is every pattern still answered by a 501 stub, read by
-	// the tests through export_test.go.
-	reserved []string
+	// reserved maps every pattern still answered by a 501 stub to the
+	// routes_<resource>.go that registered it, read by the tests through
+	// export_test.go.
+	reserved map[string]string
 }
 
 // NewHandler builds both handlers, returning every construction problem at
@@ -296,6 +297,7 @@ func NewHandler(d Deps) (Handlers, error) {
 		allowPlainHTTP:   d.AllowPlainHTTP,
 		oidcHandlers:     d.OIDCHandlers,
 		repos:            d.Repositories,
+		reserved:         map[string]string{},
 	}
 
 	// route is the one per-handler chain, outermost first: CORS (when
@@ -414,7 +416,7 @@ type app struct {
 	// milestone's handlers call. See Repositories.
 	repos Repositories
 
-	// reserved collects every pattern stub registered, for
-	// Handlers.reserved.
-	reserved []string
+	// reserved maps every pattern stub registered to the file that
+	// registered it, for Handlers.reserved.
+	reserved map[string]string
 }

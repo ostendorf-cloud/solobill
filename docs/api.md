@@ -47,24 +47,29 @@ One shape for every error, written by govue's `api.WriteError`:
   govue's JSON decoder already puts a wrongly typed field (`{"amount_cents": "wrong type"}`).
 - Field path scheme: JSON names joined by `.`, an array index as `[i]`. The decoder's own
   paths carry no index.
-- Only validation errors carry `details`.
+- `details` is present on validation errors (`400 invalid_argument`) and on the two domain
+  conflicts that name a field: `409 vat_regime_mismatch` (`{"vat_regime": "<period regime>"}`)
+  and `409 correction_base_changed` (`{"correction_base_seq": "<effective sequence>"}`). Every
+  other error has none.
 - A 5xx never carries a cause. Its message is `internal error`, except `503` and `501`.
 
 | Status | Code | When |
 | --- | --- | --- |
 | 400 | `invalid_argument` | Malformed JSON, unknown field, failed validation |
 | 400 | `vat_regime_missing` | No VAT regime period covers the date |
-| 409 | `vat_regime_mismatch` | The draft's regime differs from the period on the issue date |
 | 401 | `unauthenticated` | No session |
 | 403 | `permission_denied` | Wrong role, or a refused CSRF check |
 | 404 | `not_found` | No such row in the caller's tenant |
-| 409 | `conflict` | The row's state forbids the change, or a duplicate |
+| 409 | `conflict` | The row's state forbids the change, or a duplicate (a display number included) |
+| 409 | `vat_regime_mismatch` | The draft's regime differs from the period on the issue date |
+| 409 | `correction_base_changed` | The chain's effective document changed since the correction draft was created |
 | 413 | `request_too_large` | Body over the endpoint's limit |
 | 415 | `unsupported_media_type` | Wrong content type, or an upload outside the allowlist |
 | 429 | `too_many_requests` | Rate limit, with `Retry-After` |
 | 500 | `internal` | A bug |
 | 501 | `not_implemented` | Reserved endpoint, issue not merged yet |
-| 503 | `unavailable` | Session store or object store down |
+| 503 | `unavailable` | Session store down |
+| 503 | `object_store_unavailable` | File routes only: bucket unreachable, or no versioning while it is required |
 
 ## Seller profile
 
@@ -101,10 +106,14 @@ The profile JSON:
 
 - `issue_ready` is computed by the seller validation function per regime. Read only.
 - `has_logo` is read only. The logo has its own endpoint.
-- `number_formats` holds one template for `invoice` and one for `offer`. The grammar is the
-  concept's "Number format": `{year}`, `{yy}`, `{seq}`, `{seq:N}`, everything else literal.
-  `RE-{year}{seq:4}` renders number 9 of 2026 as `RE-20260009`. A missing type uses
-  `{year}-{seq:4}`. A correction has no template.
+- `number_formats` holds one template for `invoice` and one for `offer`, parsed by
+  `internal/numbering`: `{year}`, `{yy}`, `{seq}`, `{seq:N}`, `{{` and `}}` for a literal brace,
+  every other character from `A-Z a-z 0-9 - _ . /`, a literal prefix first, at most 36 rendered
+  characters. `RE-{year}{seq:4}` renders number 9 of 2026 as `RE-20260009`.
+- A missing type uses its default: `RE-{year}{seq:4}` for an invoice, `AN-{year}{seq:4}` for an
+  offer. A correction has no template.
+- A changed template applies to the next issue only. Issued documents keep their stored
+  `display_number`.
 
 ### `GET /api/v1/profile`
 
@@ -117,8 +126,12 @@ The profile JSON:
 - Who: owner.
 - Request: the profile JSON without the read only fields. The whole profile is replaced.
 - Response `200`: the saved profile.
-- `400` with `details` for a malformed value (IBAN checksum, country code, regime, a number
-  template without exactly one sequence and one year token).
+- `400` with `details` for a malformed value: IBAN checksum, country code, regime, or a number
+  template `numbering.Parse` refuses (unknown token, character outside the set, missing or
+  repeated sequence or year token, too long). The path is `number_formats.invoice` or
+  `number_formats.offer`.
+- `400` with `details` on `number_formats` when the two prefixes overlap, so an invoice and an
+  offer could render the same number (`numbering.ValidateSet`).
 - Saving an incomplete profile is allowed. Completeness is checked at issue time.
 
 ## Seller logo
@@ -140,6 +153,7 @@ Registered in `internal/httpapi/routes_profile_logo.go`. Owned by issue #75.
 - Accepted: PNG or JPEG, checked by magic bytes.
 - Response `200`: `{"file_id": "...", "sha256": "...", "size_bytes": 12345}`.
 - `413` over the limit. `415` for any other type. `404` when no profile exists yet.
+- `503 object_store_unavailable` for both logo routes under the condition of the file routes.
 
 ## VAT regime periods
 
@@ -309,6 +323,8 @@ A document JSON:
   "number_value": null,
   "number_year": null,
   "correction_seq": null,
+  "correction_base_id": null,
+  "correction_base_seq": null,
   "original_number": null,
   "imported": false,
   "chain_status": null,
@@ -338,9 +354,12 @@ A document JSON:
 }
 ```
 
-- `number` is the display number rendered from the profile's template (`"RE-20260009"`), the
-  original's number plus `-1`, `-2` for a correction (`"RE-20260009-1"`), or the original
-  number of an imported row. `null` for a draft.
+- `number` is the stored `display_number`, written once at issue: the profile's template
+  rendered (`"RE-20260009"`), the original's number plus `-1`, `-2` for a correction
+  (`"RE-20260009-1"`), or the original number of an imported row. `null` for a draft. List and
+  read always return this stored value, never a fresh rendering. It is unique per tenant.
+- `correction_base_id` and `correction_base_seq` are set on a correction draft: the effective
+  document it copied its lines from.
 - `totals` is always computed by `internal/money` on the server. The Vue app never computes money.
 - `type` is `invoice`, `correction` or `offer`. `state` is `draft` or `issued`, the only stored
   states.
@@ -398,14 +417,20 @@ A document JSON:
 - In one transaction: evaluate the VAT regime period on the issue date, validate the seller
   profile, allocate the number (an invoice or an offer from `document_numbers`, a correction
   as the next `correction_seq` of its chain under a lock on the root row), render the display
-  number, build `FrozenPayloadV1`, validate it, freeze, hash.
+  number and store it as `display_number`, build `FrozenPayloadV1`, validate it, freeze, hash.
+- A correction draft is first checked against its base (`internal/docchain.CheckBase`).
 - Response `200`: the issued document.
 - `400 invalid_argument` with `details` when the seller validation or `docpayload.Validate`
   reports a problem. Both use the same path scheme; the seller's paths start with `seller.`.
 - `400 vat_regime_missing` when no effective period covers the issue date.
 - `409 vat_regime_mismatch` when the draft's `vat_regime` differs from that period. `details`
   is `{"vat_regime": "<regime of the period>"}`.
-- `409 conflict` when already issued.
+- `409 correction_base_changed` when the draft is a correction and the chain's effective
+  document is no longer its base, for example because another correction was issued meanwhile.
+  `details` is `{"correction_base_seq": "<sequence now effective>"}`. The draft stays; the owner
+  discards it and starts a new correction.
+- `409 conflict` when already issued, or when the rendered `display_number` already exists in
+  the tenant.
 
 ### `POST /api/v1/documents/{id}/correction`
 
@@ -413,7 +438,8 @@ A document JSON:
 - Request: empty body. `{id}` is any issued invoice or correction of a chain.
 - Response `201`: a new correction draft. Its lines are a copy of the chain's effective
   document, to be edited into the full corrected lines. `corrects_document_id` names the chain
-  root, the original invoice.
+  root, the original invoice. `correction_base_id` and `correction_base_seq` record the
+  effective document copied.
 - The draft gets its number and `correction_seq` only at issue.
 - `409` when `{id}` is a draft or an offer.
 
@@ -471,6 +497,9 @@ A payment JSON:
   chain or one already reversed.
 - An overpayment is accepted and shows as a negative `open_cents`.
 - Payments are never edited or deleted. The EÜR counts them, never document totals.
+- Under the standard regime the VAT share of a payment uses the ratio of the chain's effective
+  document on `received_on`. A later correction does not recompute earlier payments. The legal
+  side is not verified (concept, "Payments").
 
 ## PDF
 
@@ -479,7 +508,9 @@ Registered in `internal/httpapi/routes_pdf.go`. Owned by issue #74.
 ### `GET /api/v1/documents/{id}/pdf`
 
 - Who: any.
-- Response `200`: `application/pdf`, `Content-Disposition: attachment; filename="<number>.pdf"`.
+- Response `200`: `application/pdf`, `Content-Disposition: attachment;
+  filename="<numbering.FileName(display_number)>"`: the stored display number with `/` replaced
+  by `_`, plus `.pdf`. A draft is named `draft-<id>.pdf`.
 - An issued document renders from its frozen payload and the template version it names.
 - A draft renders with an "Entwurf" or "Draft" watermark and without a number.
 - `400` with `details` when a draft lacks data the template needs.
@@ -520,7 +551,9 @@ A file JSON:
   import rows then reference their file ids.
 - Response `201`: `{"file": file, "duplicates": [file, ...]}`.
 - `duplicates` lists earlier files with the same sha256. It is a warning, not a refusal.
-- `413` over the limit. `415` outside the allowlist. `503` when the object store is down.
+- `413` over the limit. `415` outside the allowlist.
+- `503 object_store_unavailable` while the bucket is unreachable or reports no versioning with
+  `S3_REQUIRE_VERSIONING` on. Nothing is stored then.
 
 ### `GET /api/v1/files/{id}`
 
@@ -535,7 +568,7 @@ A file JSON:
   `Content-Security-Policy: sandbox`.
 - The server recomputes the sha256 while streaming. On a mismatch it aborts the response and
   logs an integrity error. A client sees a truncated download, never wrong bytes as complete.
-- `503` when the object store is down.
+- `503 object_store_unavailable` under the same condition as for the upload.
 
 ## Expenses
 
@@ -819,6 +852,35 @@ Registered in `internal/httpapi/routes_reports.go`. Owned by issue #80.
 - `400` when the entry's date lies outside 22 December to 10 January, or `tax_year` is neither
   the year of the date nor the neighbouring year it belongs to.
 - `409` when the entry already has an effective assignment and `supersedes_id` does not name it.
+
+## Status
+
+Registered in `internal/httpapi/routes_status.go`. Owned by issue #75.
+
+### `GET /api/v1/status`
+
+- Who: any.
+- Response `200`:
+
+```json
+{
+  "object_store": {
+    "reachable": true,
+    "versioning": false,
+    "object_lock": false,
+    "require_versioning": true,
+    "file_routes_available": false,
+    "gobd_protection_active": false,
+    "checked_at": "2026-12-01T10:00:00Z"
+  }
+}
+```
+
+- The values are the last periodic check, never a check per request.
+- `gobd_protection_active` is true only when the bucket is reachable and has versioning and
+  object lock. The UI shows a banner while it is false.
+- `file_routes_available` is false while the file routes answer `503 object_store_unavailable`.
+- `/readyz` does not depend on any of this. It reports the database only.
 
 ## Historic import
 

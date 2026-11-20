@@ -298,6 +298,21 @@ type Document struct {
 	// value. nil for every other type and for a correction draft. The
 	// column lands with issue #70's migration.
 	CorrectionSeq *int32
+	// CorrectionBaseID and CorrectionBaseSeq record, on a correction
+	// draft, the chain's effective document the draft copied its lines
+	// from (internal/docchain.Base). Issuing refuses with 409
+	// correction_base_changed when the chain's effective document is no
+	// longer that one. nil for every other row. The columns land with
+	// issue #70's migration.
+	CorrectionBaseID  *uuid.UUID
+	CorrectionBaseSeq *int32
+	// DisplayNumber is the number as printed, stored once at issue: the
+	// rendered template, a correction's suffixed number, or an imported
+	// document's original number. Unique per tenant. Every list and read
+	// returns this stored value, so a later template change never
+	// rewrites an issued number. nil for a draft. The column lands with
+	// issue #70's migration.
+	DisplayNumber *string
 	// CustomerReference is the customer's own reference (order number,
 	// "Ihr Zeichen"), printed on the document. The column lands with
 	// issue #70's migration.

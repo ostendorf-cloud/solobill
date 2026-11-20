@@ -131,8 +131,13 @@ asserting isolation through a superuser connection would prove nothing.
   in `web/src/router/routes/<feature>.ts` and its strings in
   `web/src/i18n/locales/{de,en}/<feature>.json`. It does not edit the index files.
 - A feature adds its store accessor in `store_<resource>.go`, its wiring in
-  `cmd/solobill/wire_<feature>.go`, its configuration in `internal/config/config_<feature>.go`
-  and its grants in `docker/postgres/grants/<range start>_<name>.sql`.
+  `cmd/solobill/wire_<feature>.go`, a subcommand in `cmd/solobill/cmd_<name>.go`, its
+  configuration in `internal/config/config_<feature>.go`, its HTTP test fakes in
+  `internal/httpapi/fake_<resource>_test.go`, its EÜR keys in `internal/category/keys_<issue>.go`
+  with `docs/concepts/euer-keys/<issue>.md`, and its grants in
+  `docker/postgres/grants/<range start>_<name>.sql`.
+- Only the contract issue (#67) edits `docs/concepts/solobill.md` and `docs/api.md` during the
+  year end milestone.
 - A second branch that changes `go.mod` rebases onto `main` and runs `go mod tidy`. It never
   hand merges `go.sum`.
 - The full list is the section "Conflict zones" in `docs/concepts/solobill.md`.

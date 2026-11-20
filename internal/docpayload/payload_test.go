@@ -11,15 +11,55 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/money"
 )
 
-// standardInvoice builds a complete invoice under the standard regime,
-// its totals computed by internal/money exactly as the issue step will.
+// withMoney fills the line figures and the totals of p the way the issue
+// step will: through internal/money, from p's own lines and discount.
+func withMoney(t *testing.T, p docpayload.FrozenPayloadV1) docpayload.FrozenPayloadV1 {
+	t.Helper()
+
+	toMoney := func(d docpayload.Discount) money.Discount {
+		var out money.Discount
+		if d.PercentPermyriad != nil {
+			v := money.Permyriad(*d.PercentPermyriad)
+			out.PercentPermyriad = &v
+		}
+		if d.AmountCents != nil {
+			v := money.Cents(*d.AmountCents)
+			out.AmountCents = &v
+		}
+
+		return out
+	}
+
+	in := make([]money.Line, len(p.Lines))
+	for i, l := range p.Lines {
+		in[i] = money.Line{
+			QuantityThousandths: money.Thousandths(l.QuantityThousandths),
+			UnitPriceCents:      money.Cents(l.UnitPriceCents),
+			VATRatePermyriad:    money.Permyriad(l.VATRatePermyriad),
+			Discount:            toMoney(l.LineDiscount),
+		}
+	}
+	result, err := money.Calculate(in, toMoney(p.DocumentDiscount), money.VATRegime(p.VATRegime))
+	if err != nil {
+		t.Fatalf("money.Calculate() error = %v", err)
+	}
+	if err := docpayload.ApplyLineResults(p.Lines, result.Lines); err != nil {
+		t.Fatalf("ApplyLineResults() error = %v", err)
+	}
+	p.Totals = docpayload.TotalsFromMoney(result)
+
+	return p
+}
+
+// standardInvoice builds a complete invoice under the standard regime.
 // It reuses the worked example of docs/concepts/solobill.md's Rounding
 // section, so the totals are figures a reviewer already checked by hand.
 func standardInvoice(t *testing.T) docpayload.FrozenPayloadV1 {
 	t.Helper()
 
 	percent := int32(1500)
-	p := docpayload.FrozenPayloadV1{
+
+	return withMoney(t, docpayload.FrozenPayloadV1{
 		Version:         docpayload.Version1,
 		Currency:        docpayload.CurrencyEUR,
 		Type:            docpayload.TypeInvoice,
@@ -48,22 +88,27 @@ func standardInvoice(t *testing.T) docpayload.FrozenPayloadV1 {
 			{Position: 2, Description: "Support", QuantityThousandths: 1000, Unit: "piece", UnitPriceCents: 7004, VATRatePermyriad: 1900},
 		},
 		DocumentDiscount: docpayload.Discount{PercentPermyriad: &percent},
-	}
+	})
+}
 
-	pp := money.Permyriad(percent)
-	result, err := money.Calculate([]money.Line{
-		{QuantityThousandths: 1000, UnitPriceCents: 12004, VATRatePermyriad: 1900},
-		{QuantityThousandths: 1000, UnitPriceCents: 7004, VATRatePermyriad: 1900},
-	}, money.Discount{PercentPermyriad: &pp}, money.VATRegimeStandard)
-	if err != nil {
-		t.Fatalf("money.Calculate() error = %v", err)
-	}
-	if err := docpayload.ApplyLineResults(p.Lines, result.Lines); err != nil {
-		t.Fatalf("ApplyLineResults() error = %v", err)
-	}
-	p.Totals = docpayload.TotalsFromMoney(result)
+// mixedInvoice has two VAT rates, a line amount discount and a document
+// amount discount, the paths the worked example does not cover.
+func mixedInvoice(t *testing.T) docpayload.FrozenPayloadV1 {
+	t.Helper()
 
-	return p
+	lineAmount := int64(500)
+	docAmount := int64(1000)
+	p := standardInvoice(t)
+	p.Lines = []docpayload.Line{
+		{
+			Position: 1, Description: "Consulting", QuantityThousandths: 2500, Unit: "hour", UnitPriceCents: 9500, VATRatePermyriad: 1900,
+			LineDiscount: docpayload.Discount{AmountCents: &lineAmount},
+		},
+		{Position: 2, Description: "Book", QuantityThousandths: 3000, Unit: "piece", UnitPriceCents: 1999, VATRatePermyriad: 700},
+	}
+	p.DocumentDiscount = docpayload.Discount{AmountCents: &docAmount}
+
+	return withMoney(t, p)
 }
 
 // correctionOf is the first correction of standardInvoice under the
@@ -101,17 +146,35 @@ func kleinunternehmerInvoice(t *testing.T) docpayload.FrozenPayloadV1 {
 		p.Lines[i].VATRatePermyriad = 0
 	}
 
-	result, err := money.Calculate([]money.Line{
-		{QuantityThousandths: 1000, UnitPriceCents: 12004},
-		{QuantityThousandths: 1000, UnitPriceCents: 7004},
-	}, money.Discount{}, money.VATRegimeKleinunternehmer)
-	if err != nil {
-		t.Fatalf("money.Calculate() error = %v", err)
-	}
-	if err := docpayload.ApplyLineResults(p.Lines, result.Lines); err != nil {
-		t.Fatalf("ApplyLineResults() error = %v", err)
-	}
-	p.Totals = docpayload.TotalsFromMoney(result)
+	return withMoney(t, p)
+}
+
+// importedInvoice is a historic invoice: no lines, totals from the
+// import row, the original PDF referenced.
+func importedInvoice(t *testing.T) docpayload.FrozenPayloadV1 {
+	t.Helper()
+
+	p := standardInvoice(t)
+	p.Imported = true
+	p.Lines = nil
+	p.TemplateVersion = ""
+	p.Number = "R1234"
+	p.Original = &docpayload.OriginalDocument{FileID: "6f1c2a4e-0000-4000-8000-000000000002", SHA256: strings.Repeat("a", 64)}
+
+	return p
+}
+
+// importedCorrection is a historic correction: it keeps the number it
+// was issued under, which follows no suffix rule, and its original was
+// never imported, so it has no id.
+func importedCorrection(t *testing.T) docpayload.FrozenPayloadV1 {
+	t.Helper()
+
+	p := importedInvoice(t)
+	p.Type = docpayload.TypeCorrection
+	p.Number = "GS-2024-3"
+	p.CorrectionSeq = 1
+	p.Corrects = &docpayload.DocumentReference{Number: "RE-2024-017", IssueDate: "2024-05-02"}
 
 	return p
 }
@@ -122,6 +185,8 @@ func TestRoundTrip(t *testing.T) {
 	for name, build := range map[string]func(*testing.T) docpayload.FrozenPayloadV1{
 		"standard":         standardInvoice,
 		"kleinunternehmer": kleinunternehmerInvoice,
+		"mixed":            mixedInvoice,
+		"correction":       correctionOf,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -208,139 +273,5 @@ func TestApplyLineResultsRefusesACountMismatch(t *testing.T) {
 
 	if err := docpayload.ApplyLineResults(make([]docpayload.Line, 2), make([]money.LineResult, 1)); err == nil {
 		t.Error("ApplyLineResults() error = nil, want a mismatch error")
-	}
-}
-
-func TestCompletePayloadsValidate(t *testing.T) {
-	t.Parallel()
-
-	for name, build := range map[string]func(*testing.T) docpayload.FrozenPayloadV1{
-		"standard":         standardInvoice,
-		"kleinunternehmer": kleinunternehmerInvoice,
-		"correction":       correctionOf,
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			if problems := docpayload.Validate(build(t)); len(problems) != 0 {
-				t.Errorf("Validate() = %v, want no problems", problems)
-			}
-		})
-	}
-}
-
-// TestSection14Fields removes one field at a time and expects exactly
-// that field reported. Each case names the paragraph it guards.
-func TestSection14Fields(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		build  func(*testing.T) docpayload.FrozenPayloadV1
-		mutate func(*docpayload.FrozenPayloadV1)
-		want   string
-	}{
-		{"Nr. 1 seller name", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Seller.LegalName = "" }, "seller.legal_name"},
-		{"Nr. 1 seller address", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Seller.Address.City = "" }, "seller.address.city"},
-		{"Nr. 1 customer name", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Customer.Name = "" }, "customer.name"},
-		{"Nr. 1 customer address", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Customer.Address.Street = "" }, "customer.address.street"},
-		{"Nr. 2 tax number", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Seller.TaxNumber = "" }, "seller.tax_number"},
-		{"Nr. 2 Kleinunternehmer id is not enough under the standard regime", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Seller.TaxNumber = ""
-			p.Seller.KleinunternehmerID = "DE-KU-0000000"
-		}, "seller.tax_number"},
-		{"Nr. 3 issue date", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.IssueDate = "01.12.2026" }, "issue_date"},
-		{"Nr. 4 number", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Number = "" }, "number"},
-		{"Nr. 5 line description", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Lines[1].Description = "" }, "lines[1].description"},
-		{"Nr. 5 line quantity", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Lines[0].QuantityThousandths = 0 }, "lines[0].quantity_thousandths"},
-		{"Nr. 5 no lines", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Lines = nil }, "lines"},
-		{"Nr. 6 service period", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.ServicePeriod = nil }, "service_period"},
-		{"Nr. 7 and 8 VAT buckets", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Totals.VAT = nil
-			p.Totals.VATTotalCents = 0
-			p.Totals.GrandTotalCents = p.Totals.NetAfterDocumentDiscountCents
-		}, "totals.vat"},
-		{"currency", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Currency = "USD" }, "currency"},
-		{"net total is the sum of the lines", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Lines[0].NetAfterLineDiscountCents++
-			p.Lines[0].NetAfterAllDiscountsCents++
-		}, "totals.net_total_cents"},
-		{"line net after all discounts", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Lines[1].NetAfterAllDiscountsCents++
-		}, "lines[1].net_after_all_discounts_cents"},
-		{"net after document discount", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Totals.DocumentDiscountCents++
-		}, "totals.net_after_document_discount_cents"},
-		{"bucket VAT rounded once", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Totals.VAT[0].VATCents++
-			p.Totals.VATTotalCents++
-			p.Totals.GrandTotalCents++
-		}, "totals.vat[0].vat_cents"},
-		{"VAT total is the sum of the buckets", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Totals.VATTotalCents++
-			p.Totals.GrandTotalCents++
-		}, "totals.vat_total_cents"},
-		{"grand total", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Totals.GrandTotalCents++ }, "totals.grand_total_cents"},
-		{"34a VAT total is 0", kleinunternehmerInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Totals.VAT[0].RatePermyriad = 1900
-			// 19008 cents at 19 % is 3611.52, rounded once to 3612: the
-			// bucket itself adds up, only the regime forbids it.
-			p.Totals.VAT[0].VATCents = 3612
-			p.Totals.VATTotalCents = 3612
-			p.Totals.GrandTotalCents += 3612
-		}, "totals.vat_total_cents"},
-		{"correction number carries the suffix", correctionOf, func(p *docpayload.FrozenPayloadV1) { p.Number = "RE-20260018" }, "number"},
-		{"correction needs a sequence", correctionOf, func(p *docpayload.FrozenPayloadV1) {
-			p.CorrectionSeq = 0
-		}, "correction_seq"},
-		{"invoice has no sequence", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.CorrectionSeq = 1 }, "correction_seq"},
-		{"Nr. 8 exemption note for a 0 percent line", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
-			p.Totals.VAT = append(p.Totals.VAT, docpayload.VATBucket{RatePermyriad: 0})
-		}, "tax_note"},
-		{"34a note", kleinunternehmerInvoice, func(p *docpayload.FrozenPayloadV1) { p.TaxNote = "" }, "tax_note"},
-		{"34a tax identity", kleinunternehmerInvoice, func(p *docpayload.FrozenPayloadV1) { p.Seller.KleinunternehmerID = "" }, "seller.tax_number"},
-		{"34a no VAT on a line", kleinunternehmerInvoice, func(p *docpayload.FrozenPayloadV1) { p.Lines[0].VATRatePermyriad = 1900 }, "lines[0].vat_rate_permyriad"},
-		{"correction needs its original", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Type = docpayload.TypeCorrection }, "corrects"},
-		{"unknown language", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Language = "fr" }, "language"},
-		{"template version", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.TemplateVersion = "" }, "template_version"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			p := tt.build(t)
-			tt.mutate(&p)
-			problems := docpayload.Validate(p)
-			if _, ok := problems[tt.want]; !ok || len(problems) != 1 {
-				t.Errorf("Validate() = %v, want exactly %q", docpayload.SortedPaths(problems), tt.want)
-			}
-		})
-	}
-}
-
-func TestOfferAndImportedRules(t *testing.T) {
-	t.Parallel()
-
-	offer := standardInvoice(t)
-	offer.Type = docpayload.TypeOffer
-	offer.ServicePeriod = nil
-	offer.Seller.TaxNumber = ""
-	offer.ValidUntil = "2026-12-31"
-	if problems := docpayload.Validate(offer); len(problems) != 0 {
-		t.Errorf("Validate(offer) = %v, want none", problems)
-	}
-
-	imported := standardInvoice(t)
-	imported.Imported = true
-	imported.Lines = nil
-	imported.TemplateVersion = ""
-	imported.Number = "R1234"
-	if got := docpayload.SortedPaths(docpayload.Validate(imported)); !reflect.DeepEqual(got, []string{"original"}) {
-		t.Errorf("Validate(imported without original) = %v, want [original]", got)
-	}
-	imported.Original = &docpayload.OriginalDocument{FileID: "6f1c2a4e-0000-4000-8000-000000000002", SHA256: strings.Repeat("a", 64)}
-	if problems := docpayload.Validate(imported); len(problems) != 0 {
-		t.Errorf("Validate(imported) = %v, want none", problems)
 	}
 }

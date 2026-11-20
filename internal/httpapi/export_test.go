@@ -1,9 +1,10 @@
 package httpapi
 
-import "slices"
+import "maps"
 
 // ReservedPatterns returns every pattern h still answers with a 501
-// stub, for reserved_endpoints_test.go.
-func ReservedPatterns(h Handlers) []string {
-	return slices.Clone(h.reserved)
+// stub, mapped to the routes_<resource>.go file that registered it, for
+// reserved_endpoints_test.go.
+func ReservedPatterns(h Handlers) map[string]string {
+	return maps.Clone(h.reserved)
 }

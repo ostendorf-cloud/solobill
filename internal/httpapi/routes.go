@@ -3,6 +3,8 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"runtime"
 
 	"github.com/google/uuid"
 	"github.com/ostendorf-cloud/govue/api"
@@ -41,6 +43,7 @@ var registrations = []registerFunc{
 	registerAssets,
 	registerReports,
 	registerImports,
+	registerStatus,
 }
 
 // codeNotImplemented is the error code of a reserved endpoint whose
@@ -92,11 +95,16 @@ func (a *app) notImplemented(_ http.ResponseWriter, r *http.Request) error {
 }
 
 // stub registers each pattern with the notImplemented handler and
-// records it, so a test can compare the registered stubs with its own
-// list in both directions (see Handlers.reserved).
+// records it together with the routes_<resource>.go file that called
+// stub, so a test can compare the registered stubs with its own list in
+// both directions and per file (see Handlers.reserved).
 func stub(mux *http.ServeMux, route routeFunc, a *app, patterns ...string) {
+	file := "unknown"
+	if _, path, _, ok := runtime.Caller(1); ok {
+		file = filepath.Base(path)
+	}
 	for _, p := range patterns {
 		mux.Handle(p, route(api.Handle(a.notImplemented)))
-		a.reserved = append(a.reserved, p)
+		a.reserved[p] = file
 	}
 }

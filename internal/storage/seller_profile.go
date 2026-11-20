@@ -54,8 +54,9 @@ type SellerProfile struct {
 	// owner's format "RE-{year}{seq:4}" renders number 9 of 2026 as
 	// "RE-20260009". A correction has no template of its own: its
 	// number is the corrected invoice's number plus "-1", "-2" and so
-	// on. The template grammar is docs/concepts/solobill.md, "Number
-	// format".
+	// on. The grammar and the validation are internal/numbering: every
+	// template parses, and the prefixes of the types never overlap
+	// (numbering.ValidateSet). A missing type uses numbering.Defaults.
 	NumberFormats map[DocumentType]string
 	// LogoFileID references the logo in files. The column lands with
 	// issue #75 (I9), not with issue #68.

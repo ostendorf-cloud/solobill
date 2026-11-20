@@ -77,17 +77,21 @@ func TestReservedListMatchesTheRouter(t *testing.T) {
 	}
 
 	registered := httpapi.ReservedPatterns(handlers)
-	sort.Strings(registered)
-	listed := reservedEndpoints()
 
-	for _, p := range registered {
-		if !slices.Contains(listed, p) {
-			t.Errorf("router registers stub %q, but no reserved_*_test.go lists it", p)
+	for p, file := range registered {
+		if !slices.Contains(reservedByFile[file], p) {
+			t.Errorf("%s registers stub %q, but its reserved test file does not list it", file, p)
 		}
 	}
-	for _, p := range listed {
-		if !slices.Contains(registered, p) {
-			t.Errorf("a reserved_*_test.go lists %q, but the router registers no stub for it", p)
+	for file, patterns := range reservedByFile {
+		for _, p := range patterns {
+			got, ok := registered[p]
+			switch {
+			case !ok:
+				t.Errorf("the reserved list of %s names %q, but the router registers no stub for it", file, p)
+			case got != file:
+				t.Errorf("the reserved list of %s names %q, but %s registers it", file, p, got)
+			}
 		}
 	}
 }

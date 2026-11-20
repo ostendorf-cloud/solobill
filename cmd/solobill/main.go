@@ -30,7 +30,7 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := dispatch(os.Args[1:], run); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

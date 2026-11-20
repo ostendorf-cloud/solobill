@@ -38,12 +38,12 @@ services:
   #     initdb time, since "migrate" below only creates them after
   #     postgres is healthy, well after every initdb script has already
   #     run. A third step, "grant-app-role", runs after "migrate"
-  #     completes and grants solobill_app exactly SELECT/INSERT on
-  #     tenants and SELECT/INSERT/UPDATE on accounts and invites - the
-  #     same grants internal/storage/postgres/integration_test.go's
-  #     setUpTestAppRole gives its own test role, for the same reason -
-  #     plus a standing default-privileges rule so a later migration's
-  #     new table is covered without editing this file again. This is
+  #     completes and grants solobill_app exactly what the files in
+  #     docker/postgres/grants/ grant, one file per issue - the same
+  #     files internal/storage/postgres/integration_test.go's
+  #     setUpTestAppRole applies to its own test role, for the same
+  #     reason - plus a standing default-privileges rule. A new table
+  #     gets its own grant file; this file is not edited for it. This is
   #     the role the "solobill" service's DATABASE_USER /
   #     DATABASE_PASSWORD point at; it is the only role that ever runs
   #     this application's own queries.

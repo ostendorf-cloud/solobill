@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+
+	"github.com/ostendorf-cloud/solobill/internal/money"
 )
 
 // Validate reports every field the payload lacks or gets wrong for its
@@ -127,8 +129,7 @@ func Validate(p FrozenPayloadV1) map[string]string {
 		}
 	}
 
-	v.lineSums(p)
-	v.totals(p)
+	v.recompute(p)
 
 	return v.problems
 }
@@ -203,7 +204,12 @@ func (v validator) taxIdentity(p FrozenPayloadV1) {
 }
 
 // correction checks the replace model: a correction names its original
-// and carries the original's number plus "-" and its sequence.
+// by id, number and issue date, has a sequence, and carries the
+// original's number plus "-" and that sequence.
+//
+// An imported historic correction keeps the number it was issued under,
+// so the suffix rule is not checked for it, and the original's id may
+// be empty when the original itself was never imported.
 func (v validator) correction(p FrozenPayloadV1) {
 	if p.Type != TypeCorrection {
 		if p.Corrects != nil {
@@ -221,9 +227,17 @@ func (v validator) correction(p FrozenPayloadV1) {
 
 		return
 	}
+	if !p.Imported {
+		v.required("corrects.id", p.Corrects.ID)
+	}
+	v.required("corrects.number", p.Corrects.Number)
+	v.date("corrects.issue_date", p.Corrects.IssueDate)
 	if p.CorrectionSeq < 1 {
 		v.add("correction_seq", "must be 1 or higher for a correction")
 
+		return
+	}
+	if p.Imported || p.Corrects.Number == "" {
 		return
 	}
 	if want := p.Corrects.Number + "-" + strconv.Itoa(p.CorrectionSeq); p.Number != want {
@@ -231,25 +245,88 @@ func (v validator) correction(p FrozenPayloadV1) {
 	}
 }
 
-// lineSums checks each line's own figures and that the lines add up to
-// the net total.
-func (v validator) lineSums(p FrozenPayloadV1) {
-	var netTotal int64
-	for i, l := range p.Lines {
-		if l.NetAfterAllDiscountsCents != l.NetAfterLineDiscountCents-l.DocumentDiscountShareCents {
-			v.add(fmt.Sprintf("lines[%d].net_after_all_discounts_cents", i),
-				"must be net_after_line_discount_cents minus document_discount_share_cents")
-		}
-		netTotal += l.NetAfterLineDiscountCents
+// recompute runs internal/money over the payload's own inputs and
+// compares every frozen figure with the result, so a payload can never
+// carry figures its lines do not produce. Only for a payload built by
+// solobill: an imported document's totals come from the import and are
+// checked by totals alone.
+func (v validator) recompute(p FrozenPayloadV1) {
+	if len(p.Lines) == 0 {
+		return
 	}
-	if len(p.Lines) > 0 && netTotal != p.Totals.NetTotalCents {
-		v.add("totals.net_total_cents", fmt.Sprintf("must be the sum of the lines, %d", netTotal))
+	regime := money.VATRegime(p.VATRegime)
+	if regime != money.VATRegimeStandard && regime != money.VATRegimeKleinunternehmer {
+		return
+	}
+
+	in := make([]money.Line, len(p.Lines))
+	for i, l := range p.Lines {
+		in[i] = money.Line{
+			QuantityThousandths: money.Thousandths(l.QuantityThousandths),
+			UnitPriceCents:      money.Cents(l.UnitPriceCents),
+			VATRatePermyriad:    money.Permyriad(l.VATRatePermyriad),
+			Discount:            moneyDiscount(l.LineDiscount),
+		}
+	}
+	res, err := money.Calculate(in, moneyDiscount(p.DocumentDiscount), regime)
+	if err != nil {
+		v.add("lines", "the lines cannot be calculated: "+err.Error())
+
+		return
+	}
+
+	for i, r := range res.Lines {
+		l := p.Lines[i]
+		path := fmt.Sprintf("lines[%d].", i)
+		v.equal(path+"net_after_line_discount_cents", l.NetAfterLineDiscountCents, int64(r.NetAfterLineDiscountCents))
+		v.equal(path+"document_discount_share_cents", l.DocumentDiscountShareCents, int64(r.DocumentDiscountShareCents))
+		v.equal(path+"net_after_all_discounts_cents", l.NetAfterAllDiscountsCents, int64(r.NetAfterAllDiscountsCents))
+	}
+
+	want := TotalsFromMoney(res)
+	got := p.Totals
+	v.equal("totals.net_total_cents", got.NetTotalCents, want.NetTotalCents)
+	v.equal("totals.document_discount_cents", got.DocumentDiscountCents, want.DocumentDiscountCents)
+	v.equal("totals.net_after_document_discount_cents", got.NetAfterDocumentDiscountCents, want.NetAfterDocumentDiscountCents)
+	v.equal("totals.vat_total_cents", got.VATTotalCents, want.VATTotalCents)
+	v.equal("totals.grand_total_cents", got.GrandTotalCents, want.GrandTotalCents)
+	if len(got.VAT) != len(want.VAT) {
+		v.add("totals.vat", fmt.Sprintf("must have %d buckets, one per rate", len(want.VAT)))
+
+		return
+	}
+	for i := range want.VAT {
+		path := fmt.Sprintf("totals.vat[%d].", i)
+		v.equal(path+"rate_permyriad", int64(got.VAT[i].RatePermyriad), int64(want.VAT[i].RatePermyriad))
+		v.equal(path+"net_cents", got.VAT[i].NetCents, want.VAT[i].NetCents)
+		v.equal(path+"vat_cents", got.VAT[i].VATCents, want.VAT[i].VATCents)
 	}
 }
 
-// totals checks the document level arithmetic: net minus discount, the
-// VAT buckets, each bucket's VAT rounded half away from zero once, and
-// the grand total. Under the Kleinunternehmer regime the VAT total is 0.
+func (v validator) equal(path string, got, want int64) {
+	if got != want {
+		v.add(path, fmt.Sprintf("must be %d as internal/money computes it", want))
+	}
+}
+
+func moneyDiscount(d Discount) money.Discount {
+	var out money.Discount
+	if d.PercentPermyriad != nil {
+		p := money.Permyriad(*d.PercentPermyriad)
+		out.PercentPermyriad = &p
+	}
+	if d.AmountCents != nil {
+		a := money.Cents(*d.AmountCents)
+		out.AmountCents = &a
+	}
+
+	return out
+}
+
+// totals checks the document level arithmetic of an imported document:
+// net minus discount, the VAT buckets, each bucket's VAT rounded half
+// away from zero once, and the grand total. Under the Kleinunternehmer
+// regime the VAT total is 0.
 func (v validator) totals(p FrozenPayloadV1) {
 	t := p.Totals
 	if t.NetAfterDocumentDiscountCents != t.NetTotalCents-t.DocumentDiscountCents {

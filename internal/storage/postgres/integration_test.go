@@ -1342,6 +1342,105 @@ ORDER BY c.relname`)
 	}
 }
 
+// tablesWithoutTenantID is every table in the public schema allowed to
+// have no tenant_id column, with the reason. A new table without
+// tenant_id that is missing here fails
+// TestEveryTableIsTenantScopedOrAllowlisted: a table that forgot its
+// tenant_id would otherwise escape the row level security test above
+// entirely, since that test only looks at tables that have the column.
+var tablesWithoutTenantID = map[string]string{
+	"tenants":           "a row here is a tenant, not something a tenant owns",
+	"schema_migrations": "dbmate's own bookkeeping, never read by the application",
+}
+
+// TestEveryTableIsTenantScopedOrAllowlisted closes the gap the test above
+// leaves: every table in the public schema either carries tenant_id (and
+// is then checked for row level security above) or is listed in
+// tablesWithoutTenantID with a reason.
+func TestEveryTableIsTenantScopedOrAllowlisted(t *testing.T) {
+	adminURL := os.Getenv("DATABASE_URL")
+	if adminURL == "" {
+		t.Skip("DATABASE_URL not set; skipping the Postgres-backed table introspection test")
+	}
+
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatalf("open admin pool: %v", err)
+	}
+	t.Cleanup(adminPool.Close)
+
+	rows, err := adminPool.Query(ctx, `
+SELECT c.relname
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'
+  AND NOT EXISTS (
+      SELECT 1 FROM information_schema.columns col
+      WHERE col.table_schema = 'public'
+        AND col.table_name = c.relname
+        AND col.column_name = 'tenant_id'
+  )
+ORDER BY c.relname`)
+	if err != nil {
+		t.Fatalf("introspect tables without tenant_id: %v", err)
+	}
+
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatalf("scan tables without tenant_id: %v", err)
+	}
+
+	for _, name := range names {
+		if _, ok := tablesWithoutTenantID[name]; !ok {
+			t.Errorf("table %q has no tenant_id column and is not in tablesWithoutTenantID: "+
+				"add tenant_id with row level security, or allowlist it with a reason", name)
+		}
+	}
+}
+
+// TestAppRoleCannotChangeFiles asserts the primary control of the
+// receipt storage design (docs/concepts/solobill.md, "Receipt storage and
+// GoBD"): the application role can read and insert files rows, never
+// update or delete them. The files table lands with issue #75; until
+// then this test skips.
+func TestAppRoleCannotChangeFiles(t *testing.T) {
+	adminURL := os.Getenv("DATABASE_URL")
+	if adminURL == "" {
+		t.Skip("DATABASE_URL not set; skipping the Postgres-backed privilege test")
+	}
+
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatalf("open admin pool: %v", err)
+	}
+	t.Cleanup(adminPool.Close)
+
+	var exists bool
+	if err := adminPool.QueryRow(ctx, `SELECT to_regclass('public.files') IS NOT NULL`).Scan(&exists); err != nil {
+		t.Fatalf("look up files: %v", err)
+	}
+	if !exists {
+		t.Skip("table files does not exist yet; it lands with issue #75")
+	}
+
+	setUpTestAppRole(ctx, t, adminPool, adminURL)
+
+	for privilege, want := range map[string]bool{"SELECT": true, "INSERT": true, "UPDATE": false, "DELETE": false} {
+		var got bool
+		if err := adminPool.QueryRow(ctx, `SELECT has_table_privilege($1, 'public.files', $2)`, testAppRole, privilege).Scan(&got); err != nil {
+			t.Fatalf("has_table_privilege(%s): %v", privilege, err)
+		}
+		if got != want {
+			t.Errorf("%s on files = %v, want %v", privilege, got, want)
+		}
+	}
+}
+
 // setUpTestAppRole creates testAppRole on the database adminURL points at,
 // if it does not exist yet, grants it exactly the privileges the
 // application needs on the tenant-scoped tables, and returns a connection

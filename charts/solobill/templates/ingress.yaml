@@ -9,7 +9,8 @@ metadata:
   name: {{ include "solobill.fullname" . }}
   labels:
     {{- include "solobill.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- /* ingress.annotations win over the request limit hook of issue #82, see _requestlimits.tpl. */}}
+  {{- with merge (deepCopy (.Values.ingress.annotations | default dict)) (fromYaml (include "solobill.requestLimits.annotations" .)) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
