@@ -101,6 +101,28 @@ type DocumentNumber struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type Expense struct {
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	State            string
+	PaidOn           pgtype.Date
+	ReceiptDate      pgtype.Date
+	Supplier         string
+	Description      string
+	GrossCents       int64
+	NetCents         int64
+	VatRatePermyriad int32
+	VatCents         int64
+	Category         string
+	FileID           pgtype.UUID
+	IsAsset          bool
+	StornoOfID       pgtype.UUID
+	Imported         bool
+	BookedAt         pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type File struct {
 	ID               uuid.UUID
 	TenantID         uuid.UUID
@@ -127,6 +149,25 @@ type Invite struct {
 	CreatedBy  pgtype.UUID
 	CreatedAt  pgtype.Timestamptz
 	TotpSecret pgtype.Text
+}
+
+type OtherIncome struct {
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	State            string
+	ReceivedOn       pgtype.Date
+	Description      string
+	GrossCents       int64
+	NetCents         int64
+	VatRatePermyriad int32
+	VatCents         int64
+	Category         string
+	FileID           pgtype.UUID
+	StornoOfID       pgtype.UUID
+	Imported         bool
+	BookedAt         pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PasskeyCredential struct {
