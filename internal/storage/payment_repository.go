@@ -11,14 +11,14 @@ import (
 // context TenantScope.WithTenant produced. There is no Update and no
 // Delete: the table is append-only. Implemented by issue #71 (I5).
 type PaymentRepository interface {
-	// Create inserts a payment. ErrConflict when the document is not an
-	// issued invoice or correction, or when a reversal names a payment
-	// of another document.
+	// Create inserts a payment. ErrConflict when DocumentID is not an
+	// issued invoice that is the root of its chain, or when a reversal
+	// names a payment of another chain or one already reversed.
 	Create(ctx context.Context, payment Payment) (Payment, error)
 
-	// ListByDocument returns a document's payments ordered by
-	// ReceivedOn, then CreatedAt.
-	ListByDocument(ctx context.Context, documentID uuid.UUID) ([]Payment, error)
+	// ListByChain returns the payments of the chain rooted at rootID,
+	// ordered by ReceivedOn, then CreatedAt.
+	ListByChain(ctx context.Context, rootID uuid.UUID) ([]Payment, error)
 
 	// ListReceivedBetween returns every payment with ReceivedOn in
 	// [from, to], both inclusive, for the EÜR report.

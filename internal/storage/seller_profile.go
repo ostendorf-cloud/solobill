@@ -21,10 +21,12 @@ type SellerProfile struct {
 	LegalName string
 	// Street, PostalCode, City and CountryCode are the full address
 	// (Nr. 1). CountryCode is ISO 3166-1 alpha-2.
-	Street      string
-	PostalCode  string
-	City        string
-	CountryCode string
+	Street string
+	// AddressLine2 is an optional second address line (c/o, building).
+	AddressLine2 *string
+	PostalCode   string
+	City         string
+	CountryCode  string
 	// TaxNumber is the Steuernummer (Nr. 2).
 	TaxNumber *string
 	// VATID is the USt-IdNr (Nr. 2).
@@ -46,13 +48,15 @@ type SellerProfile struct {
 	Website         *string
 	// FooterText is free text printed in the document footer.
 	FooterText *string
-	// NumberPrefixes maps a DocumentType to the display prefix of its
-	// numbers, so solobill continues the format the imported 2026
-	// documents already use. The display number is the prefix, the
-	// number year, a hyphen and the number padded to NumberPadding
-	// digits, for example "RE-2026-018".
-	NumberPrefixes map[DocumentType]string
-	NumberPadding  int32
+	// NumberFormats maps DocumentTypeInvoice and DocumentTypeOffer to the
+	// template their display number is rendered from, so solobill
+	// continues the format the imported 2026 documents already use. The
+	// owner's format "RE-{year}{seq:4}" renders number 9 of 2026 as
+	// "RE-20260009". A correction has no template of its own: its
+	// number is the corrected invoice's number plus "-1", "-2" and so
+	// on. The template grammar is docs/concepts/solobill.md, "Number
+	// format".
+	NumberFormats map[DocumentType]string
 	// LogoFileID references the logo in files. The column lands with
 	// issue #75 (I9), not with issue #68.
 	LogoFileID *uuid.UUID
@@ -61,18 +65,26 @@ type SellerProfile struct {
 }
 
 // VATRegimePeriod is the VAT regime that applies from ValidFrom onward,
-// until the next period of the same tenant starts. One row per change,
-// so a switch in the middle of a year (the Kleinunternehmer limit of
-// section 19 Abs. 1 UStG exceeded) is one more row, not an edit.
+// until the next effective period of the same tenant starts. One row per
+// change, so a switch in the middle of a year (the Kleinunternehmer
+// limit of section 19 Abs. 1 UStG exceeded) is one more row, not an
+// edit. The table is append-only.
 //
-// The regime on a date is the regime of the latest period whose
-// ValidFrom is on or before that date. A date before the first period
-// has no regime, and the caller refuses to proceed.
+// A wrong row is corrected by a new row that names it in SupersedesID.
+// A superseded row no longer counts. The correcting row carries its own
+// ValidFrom, which may equal the wrong row's or differ from it.
+//
+// The regime on a date is the regime of the latest effective period
+// whose ValidFrom is on or before that date. A date before the first
+// effective period has no regime, and the caller refuses to proceed.
 type VATRegimePeriod struct {
 	ID        uuid.UUID
 	TenantID  uuid.UUID
 	ValidFrom time.Time
 	Regime    VATRegime
+	// SupersedesID names the row this row corrects, nil otherwise. A row
+	// is superseded at most once.
+	SupersedesID *uuid.UUID
 	// Note is the owner's own reason, for example "Umsatzgrenze am
 	// 2026-10-14 überschritten".
 	Note      *string

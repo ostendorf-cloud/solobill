@@ -3,13 +3,18 @@ package docpayload
 import (
 	"fmt"
 	"sort"
+	"strconv"
 )
 
-// Validate reports every field the payload lacks for its type and
-// regime, as JSON paths ("seller.address.city") mapped to a reason. An
-// empty map means the payload is complete. The issue endpoint (issue
-// #70) refuses to freeze an incomplete payload and answers the map as
-// field level errors.
+// Validate reports every field the payload lacks or gets wrong for its
+// type and regime, as a map from a field path to a reason. An empty map
+// means the payload is complete and its totals add up. The issue
+// endpoint (issue #70) refuses to freeze a payload with problems and
+// answers the map as the error's details, unchanged.
+//
+// Field paths use the JSON names joined by ".", with "[i]" for an array
+// index: "seller.address.city", "lines[1].description". The seller
+// validation of issue #68 uses the same scheme under "seller.".
 //
 // The rules are section 14 Abs. 4 Satz 1 Nr. 1 to 8 UStG for an invoice
 // and a correction under the standard regime, and section 34a UStDV
@@ -22,6 +27,9 @@ func Validate(p FrozenPayloadV1) map[string]string {
 
 	if p.Version != Version1 {
 		v.add("version", fmt.Sprintf("must be %d", Version1))
+	}
+	if p.Currency != CurrencyEUR {
+		v.add("currency", "must be "+CurrencyEUR)
 	}
 	v.oneOf("type", p.Type, TypeInvoice, TypeCorrection, TypeOffer)
 	v.oneOf("language", p.Language, LanguageGerman, LanguageEnglish)
@@ -51,9 +59,7 @@ func Validate(p FrozenPayloadV1) map[string]string {
 	if isInvoice {
 		v.taxIdentity(p)
 	}
-	if p.Type == TypeCorrection && p.Corrects == nil {
-		v.add("corrects", "required for a correction")
-	}
+	v.correction(p)
 	if p.Type == TypeOffer {
 		if p.ServicePeriod != nil {
 			v.add("service_period", "must be empty for an offer")
@@ -68,6 +74,7 @@ func Validate(p FrozenPayloadV1) map[string]string {
 		if p.Original == nil || p.Original.SHA256 == "" || p.Original.FileID == "" {
 			v.add("original", "required for an imported document")
 		}
+		v.totals(p)
 
 		return v.problems
 	}
@@ -108,9 +115,6 @@ func Validate(p FrozenPayloadV1) map[string]string {
 	// Nr. 7 and Nr. 8: one VAT bucket per rate, or the exemption note.
 	if p.VATRegime == RegimeKleinunternehmer {
 		v.required("tax_note", p.TaxNote)
-		if p.Totals.VATTotalCents != 0 {
-			v.add("totals.vat_total_cents", "must be 0 under the Kleinunternehmer regime")
-		}
 	}
 	if p.VATRegime == RegimeStandard && len(p.Lines) > 0 && len(p.Totals.VAT) == 0 {
 		v.add("totals.vat", "one bucket per VAT rate is required")
@@ -122,6 +126,9 @@ func Validate(p FrozenPayloadV1) map[string]string {
 			}
 		}
 	}
+
+	v.lineSums(p)
+	v.totals(p)
 
 	return v.problems
 }
@@ -193,4 +200,98 @@ func (v validator) taxIdentity(p FrozenPayloadV1) {
 		return
 	}
 	v.add("seller.tax_number", "a Steuernummer or USt-IdNr is required")
+}
+
+// correction checks the replace model: a correction names its original
+// and carries the original's number plus "-" and its sequence.
+func (v validator) correction(p FrozenPayloadV1) {
+	if p.Type != TypeCorrection {
+		if p.Corrects != nil {
+			v.add("corrects", "only a correction references an original")
+		}
+		if p.CorrectionSeq != 0 {
+			v.add("correction_seq", "only a correction has a sequence")
+		}
+
+		return
+	}
+
+	if p.Corrects == nil {
+		v.add("corrects", "required for a correction")
+
+		return
+	}
+	if p.CorrectionSeq < 1 {
+		v.add("correction_seq", "must be 1 or higher for a correction")
+
+		return
+	}
+	if want := p.Corrects.Number + "-" + strconv.Itoa(p.CorrectionSeq); p.Number != want {
+		v.add("number", fmt.Sprintf("must be %q for correction %d of %q", want, p.CorrectionSeq, p.Corrects.Number))
+	}
+}
+
+// lineSums checks each line's own figures and that the lines add up to
+// the net total.
+func (v validator) lineSums(p FrozenPayloadV1) {
+	var netTotal int64
+	for i, l := range p.Lines {
+		if l.NetAfterAllDiscountsCents != l.NetAfterLineDiscountCents-l.DocumentDiscountShareCents {
+			v.add(fmt.Sprintf("lines[%d].net_after_all_discounts_cents", i),
+				"must be net_after_line_discount_cents minus document_discount_share_cents")
+		}
+		netTotal += l.NetAfterLineDiscountCents
+	}
+	if len(p.Lines) > 0 && netTotal != p.Totals.NetTotalCents {
+		v.add("totals.net_total_cents", fmt.Sprintf("must be the sum of the lines, %d", netTotal))
+	}
+}
+
+// totals checks the document level arithmetic: net minus discount, the
+// VAT buckets, each bucket's VAT rounded half away from zero once, and
+// the grand total. Under the Kleinunternehmer regime the VAT total is 0.
+func (v validator) totals(p FrozenPayloadV1) {
+	t := p.Totals
+	if t.NetAfterDocumentDiscountCents != t.NetTotalCents-t.DocumentDiscountCents {
+		v.add("totals.net_after_document_discount_cents", "must be net_total_cents minus document_discount_cents")
+	}
+
+	var bucketNet, bucketVAT int64
+	for i, b := range t.VAT {
+		bucketNet += b.NetCents
+		bucketVAT += b.VATCents
+		if want := roundHalfAwayFromZero(b.NetCents*int64(b.RatePermyriad), 10000); b.VATCents != want {
+			v.add(fmt.Sprintf("totals.vat[%d].vat_cents", i), fmt.Sprintf("must be %d", want))
+		}
+	}
+	if len(t.VAT) > 0 && bucketNet != t.NetAfterDocumentDiscountCents {
+		v.add("totals.vat", "the bucket nets must add up to net_after_document_discount_cents")
+	}
+	if bucketVAT != t.VATTotalCents {
+		v.add("totals.vat_total_cents", "must be the sum of the bucket VAT")
+	}
+	if p.VATRegime == RegimeKleinunternehmer && t.VATTotalCents != 0 {
+		v.add("totals.vat_total_cents", "must be 0 under the Kleinunternehmer regime")
+	}
+	if t.GrandTotalCents != t.NetAfterDocumentDiscountCents+t.VATTotalCents {
+		v.add("totals.grand_total_cents", "must be net_after_document_discount_cents plus vat_total_cents")
+	}
+}
+
+// roundHalfAwayFromZero divides n by d (d > 0) and rounds half away from
+// zero, the commercial rounding internal/money uses.
+func roundHalfAwayFromZero(n, d int64) int64 {
+	q, r := n/d, n%d
+	if r < 0 {
+		r = -r
+	}
+	if 2*r >= d {
+		if n < 0 {
+			q--
+		} else {
+			q++
+		}
+	}
+
+	return q
 }

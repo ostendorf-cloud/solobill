@@ -13,6 +13,8 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1362,31 +1364,31 @@ $$;`
 		t.Fatalf("create %s role: %v", testAppRole, err)
 	}
 
-	// Granted at the minimum each table actually needs, mirroring
-	// docker-compose.yaml's own "grant-app-role" service grant to the
-	// compose role: nothing before documents deletes a row, so no
-	// table before it gets DELETE, and tenants is never updated (no
-	// UpdateTenant method exists), so it gets only SELECT and INSERT.
-	// documents and document_lines are the exception: see
-	// docker-compose.yaml's own comment on this grant for why DELETE is
-	// real there (DeleteDraftDocument, DeleteDocumentLines and the
-	// ON DELETE CASCADE it triggers) and why document_lines gets no
-	// UPDATE despite that (no query ever updates a line in place, so a
-	// raw UPDATE against document_lines is refused by this grant itself,
-	// unconditionally, not by document_lines_block_issued_document_mutation;
-	// see document_immutability_integration_test.go for the subtest that
-	// exercises exactly that).
-	grant := `
-GRANT USAGE ON SCHEMA public TO ` + testAppRole + `;
-GRANT SELECT, INSERT ON tenants TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE ON accounts, invites TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO ` + testAppRole + `;
-GRANT SELECT, INSERT, DELETE ON document_lines TO ` + testAppRole + `;
-GRANT SELECT, INSERT, UPDATE ON document_numbers TO ` + testAppRole + `;`
+	// Granted from the same files docker-compose.yaml's "grant-app-role"
+	// service applies (docker/postgres/grants, one file per issue, in file
+	// name order), with the role name replaced, so the test role carries
+	// exactly the application role's privileges and the two lists cannot
+	// drift. See the header of the base file for the per-table reasoning,
+	// and document_immutability_integration_test.go for the subtest that
+	// exercises document_lines' missing UPDATE.
+	if _, err := adminPool.Exec(ctx, `GRANT USAGE ON SCHEMA public TO `+testAppRole); err != nil {
+		t.Fatalf("grant %s schema usage: %v", testAppRole, err)
+	}
 
-	if _, err := adminPool.Exec(ctx, grant); err != nil {
-		t.Fatalf("grant %s privileges: %v", testAppRole, err)
+	grantFiles, err := filepath.Glob(filepath.Join("..", "..", "..", "docker", "postgres", "grants", "*.sql"))
+	if err != nil || len(grantFiles) == 0 {
+		t.Fatalf("find grant files: %v (found %d)", err, len(grantFiles))
+	}
+	sort.Strings(grantFiles)
+
+	for _, file := range grantFiles {
+		sql, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		if _, err := adminPool.Exec(ctx, strings.ReplaceAll(string(sql), "solobill_app", testAppRole)); err != nil {
+			t.Fatalf("grant %s privileges from %s: %v", testAppRole, file, err)
+		}
 	}
 
 	restricted, err := url.Parse(adminURL)

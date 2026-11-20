@@ -120,30 +120,24 @@ services:
   # it runs, by the role that ran it (solobill_super, the same role
   # "migrate" above uses), so it cannot retroactively cover tenants,
   # accounts or invites: those still need their own explicit GRANT
-  # here, once. The ALTER DEFAULT PRIVILEGES line below then covers a
-  # later migration's new table automatically, but only for SELECT and
-  # INSERT: any table that also needs UPDATE (or DELETE) always needs
-  # its own explicit GRANT here too, with no way around editing this
-  # file for it. customers and catalogue_items, right above, are exactly
-  # that case: both needed an explicit GRANT ... UPDATE line of their
-  # own despite the standing default-privileges rule, since nothing
-  # about becoming a later migration's table changes what privilege a
-  # table needs. "solobill" below waits on this service, not merely on
+  # here, once. The ALTER DEFAULT PRIVILEGES line below covers a table a
+  # later migration creates after it ran, but only for SELECT and INSERT,
+  # and not on a fresh database, where every migration runs before it:
+  # so every grant file grants every privilege its tables need, SELECT
+  # and INSERT included. "solobill" below waits on this service, not merely on
   # "migrate", so the application itself never opens a connection
   # before these grants exist either.
   #
   # Runs as solobill_super against the postgres service: it only grants
   # privileges, so it needs no password of solobill_app's own.
   #
-  # internal/storage/postgres/integration_test.go's setUpTestAppRole
-  # grants its own solobill_test_app role the identical set of
-  # privileges, table by table, so that the isolation and immutability
-  # tests run under the same restrictions as the real application role
-  # rather than a role with its own, possibly looser, rules. The two grant
-  # lists are necessarily separate (one is psql -c arguments here, the
-  # other a Go string built for a different role name) and nothing
-  # enforces that they stay in step; a table's privileges changed in one
-  # place need the same change in the other, by hand.
+  # The grants themselves live in docker/postgres/grants/, one file per
+  # issue, applied in file name order: see the header of
+  # docker/postgres/grants/20261113160002_base.sql for the per-table
+  # reasoning. internal/storage/postgres/integration_test.go's
+  # setUpTestAppRole reads the same files for its own test role, so the
+  # two lists can no longer drift apart. This file is not edited by a
+  # feature issue.
   grant-app-role:
     image: postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
     depends_on:
@@ -151,58 +145,16 @@ services:
         condition: service_completed_successfully
     environment:
       PGPASSWORD: "${POSTGRES_SUPERUSER_PASSWORD:?set in .env, see .env.example}"
+    volumes:
+      - ./docker/postgres/grants:/grants:ro
+    entrypoint: ["/bin/sh", "-ec"]
     command:
-      - psql
-      - -v
-      - ON_ERROR_STOP=1
-      - --host=postgres
-      - --username=solobill_super
-      - --dbname=solobill
-      - -c
-      - GRANT SELECT, INSERT ON tenants TO solobill_app;
-      - -c
-      - GRANT SELECT, INSERT, UPDATE ON accounts, invites TO solobill_app;
-      # customers and catalogue_items only ever soft delete (an UPDATE
-      # setting deleted_at), never a real DELETE, so no DELETE grant
-      # here either: the same reasoning as accounts and invites above.
-      - -c
-      - GRANT SELECT, INSERT, UPDATE ON customers, catalogue_items TO solobill_app;
-      # documents is the one table in this schema a real DELETE ever
-      # reaches (DeleteDraftDocument on a still-mutable draft; see
-      # internal/storage/postgres/queries/documents.sql), so it is the
-      # one table granted DELETE here. document_lines also needs DELETE
-      # (DeleteDocumentLines, and document_lines' own ON DELETE CASCADE
-      # foreign key when a draft document is removed) but no UPDATE: no
-      # query ever updates an existing line in place, Update instead
-      # deletes every line and recreates the caller's current set. That
-      # means a raw UPDATE against document_lines is refused for
-      # solobill_app unconditionally, for a draft's own line exactly as
-      # much as for an issued one: the rejection comes from this grant
-      # withholding the privilege itself (Postgres' own
-      # "permission denied for table document_lines", SQLSTATE 42501),
-      # before any trigger ever runs, not from
-      # document_lines_block_issued_document_mutation deciding the write
-      # is illegal. The trigger below still has its own job: refusing an
-      # INSERT or a DELETE once the parent document is issued, which
-      # this grant does nothing about since both of those are granted.
-      #
-      # Neither grant lets solobill_app actually touch an issued
-      # document or its lines despite holding UPDATE/DELETE (documents)
-      # or INSERT/DELETE (document_lines): see db/migrations'
-      # documents_block_issued_mutation and
-      # document_lines_block_issued_document_mutation triggers, which
-      # refuse that at the database level regardless of what this role
-      # is granted.
-      - -c
-      - GRANT SELECT, INSERT, UPDATE, DELETE ON documents TO solobill_app;
-      - -c
-      - GRANT SELECT, INSERT, DELETE ON document_lines TO solobill_app;
-      # document_numbers is only ever inserted (first use of a counter),
-      # read and incremented, never deleted.
-      - -c
-      - GRANT SELECT, INSERT, UPDATE ON document_numbers TO solobill_app;
-      - -c
-      - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO solobill_app;
+      - >-
+        for f in /grants/*.sql; do
+        psql -v ON_ERROR_STOP=1 --host=postgres --username=solobill_super --dbname=solobill -f "$$f";
+        done;
+        psql -v ON_ERROR_STOP=1 --host=postgres --username=solobill_super --dbname=solobill
+        -c 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO solobill_app;'
 
   # S3 compatible object store for receipts, imported originals and the
   # logo (docs/concepts/solobill.md, "Receipt storage and GoBD"). The

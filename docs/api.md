@@ -1,6 +1,6 @@
 # solobill API
 
-The HTTP contract of the year end milestone (issues #68 to #81).
+The HTTP contract of the year end milestone (issues #68 to #82).
 The design behind it lives in `docs/concepts/solobill.md`.
 
 ## Rules for every endpoint
@@ -19,8 +19,9 @@ The design behind it lives in `docs/concepts/solobill.md`.
 - A JSON body is limited to 1 MiB. Uploads have their own limits.
 - Unknown JSON fields are refused with `400`.
 - Lists are not paginated in this milestone. The volume is a few hundred rows per year.
-- Until its issue merges, every endpoint answers `501 not_implemented` to a logged in caller.
-  The stub table lives in `internal/httpapi/reserved_endpoints_test.go`.
+- Until its issue merges, every endpoint answers `501 not_implemented` to a logged in caller and
+  `401` to anyone else, whatever the method. The stubs are listed per routes file in
+  `internal/httpapi/reserved_<resource>_test.go`.
 - The file that registers each endpoint is named in each section. Only its issue edits it.
 
 ## Error shape
@@ -31,24 +32,29 @@ One shape for every error, written by govue's `api.WriteError`:
 {
   "error": {
     "code": "invalid_argument",
-    "message": "the seller profile is incomplete",
+    "message": "the document is incomplete",
     "details": {
-      "fields": {
-        "seller.tax_number": "a Steuernummer or USt-IdNr is required",
-        "customer.address.city": "required"
-      }
+      "seller.tax_number": "a Steuernummer or USt-IdNr is required",
+      "customer.address.city": "required",
+      "lines[1].description": "required"
     },
     "request_id": "01JD..."
   }
 }
 ```
 
-- `details.fields` maps a JSON path to a reason. Only validation errors carry it.
+- `details` maps a field path directly to a reason. There is no wrapper key. This is the place
+  govue's JSON decoder already puts a wrongly typed field (`{"amount_cents": "wrong type"}`).
+- Field path scheme: JSON names joined by `.`, an array index as `[i]`. The decoder's own
+  paths carry no index.
+- Only validation errors carry `details`.
 - A 5xx never carries a cause. Its message is `internal error`, except `503` and `501`.
 
 | Status | Code | When |
 | --- | --- | --- |
 | 400 | `invalid_argument` | Malformed JSON, unknown field, failed validation |
+| 400 | `vat_regime_missing` | No VAT regime period covers the date |
+| 409 | `vat_regime_mismatch` | The draft's regime differs from the period on the issue date |
 | 401 | `unauthenticated` | No session |
 | 403 | `permission_denied` | Wrong role, or a refused CSRF check |
 | 404 | `not_found` | No such row in the caller's tenant |
@@ -70,6 +76,7 @@ The profile JSON:
 {
   "legal_name": "Example Trading",
   "street": "Main Street 1",
+  "address_line2": null,
   "postal_code": "12345",
   "city": "Example City",
   "country_code": "DE",
@@ -85,8 +92,7 @@ The profile JSON:
   "phone": null,
   "website": null,
   "footer_text": null,
-  "number_prefixes": { "invoice": "RE-", "correction": "KR-", "offer": "AN-" },
-  "number_padding": 3,
+  "number_formats": { "invoice": "RE-{year}{seq:4}", "offer": "AN-{year}{seq:4}" },
   "has_logo": false,
   "issue_ready": { "standard": false, "kleinunternehmer": true },
   "updated_at": "2026-11-20T10:00:00Z"
@@ -95,6 +101,10 @@ The profile JSON:
 
 - `issue_ready` is computed by the seller validation function per regime. Read only.
 - `has_logo` is read only. The logo has its own endpoint.
+- `number_formats` holds one template for `invoice` and one for `offer`. The grammar is the
+  concept's "Number format": `{year}`, `{yy}`, `{seq}`, `{seq:N}`, everything else literal.
+  `RE-{year}{seq:4}` renders number 9 of 2026 as `RE-20260009`. A missing type uses
+  `{year}-{seq:4}`. A correction has no template.
 
 ### `GET /api/v1/profile`
 
@@ -107,7 +117,8 @@ The profile JSON:
 - Who: owner.
 - Request: the profile JSON without the read only fields. The whole profile is replaced.
 - Response `200`: the saved profile.
-- `400` with `details.fields` for a malformed value (IBAN checksum, country code, regime).
+- `400` with `details` for a malformed value (IBAN checksum, country code, regime, a number
+  template without exactly one sequence and one year token).
 - Saving an incomplete profile is allowed. Completeness is checked at issue time.
 
 ## Seller logo
@@ -124,7 +135,8 @@ Registered in `internal/httpapi/routes_profile_logo.go`. Owned by issue #75.
 ### `PUT /api/v1/profile/logo`
 
 - Who: owner.
-- Request: `multipart/form-data` with one part `file`. At most 512 KiB.
+- Request: `multipart/form-data` with one part `file`. The whole request body is limited to
+  512 KiB (524,288 bytes) by `http.MaxBytesReader`, multipart framing included.
 - Accepted: PNG or JPEG, checked by magic bytes.
 - Response `200`: `{"file_id": "...", "sha256": "...", "size_bytes": 12345}`.
 - `413` over the limit. `415` for any other type. `404` when no profile exists yet.
@@ -141,22 +153,33 @@ A period JSON:
   "valid_from": "2026-01-01",
   "regime": "kleinunternehmer",
   "note": null,
+  "supersedes_id": null,
+  "superseded": false,
   "created_at": "2026-11-20T10:00:00Z"
 }
 ```
 
+- This table is the source of the regime. The profile's `default_vat_regime` only prefills a
+  form when no period exists.
+- `superseded` is derived: true when a later row names this one in `supersedes_id`.
+
 ### `GET /api/v1/vat-regimes`
 
 - Who: any.
-- Response `200`: `{"periods": [period, ...]}`, ordered by `valid_from`.
+- Response `200`: `{"periods": [period, ...]}`, superseded rows included, ordered by
+  `valid_from`, then `created_at`.
 
 ### `POST /api/v1/vat-regimes`
 
 - Who: owner.
-- Request: `{"valid_from": "2026-10-14", "regime": "standard", "note": "Grenze überschritten"}`.
+- Request: `{"valid_from": "2026-10-14", "regime": "standard", "note": "Grenze überschritten",`
+  `"supersedes_id": null}`.
+- A wrong row is corrected by a new row with `supersedes_id` naming it. The new row carries its
+  own `valid_from`.
 - Response `201`: the period.
-- `409` when a period with the same `valid_from` exists.
-- A period is never edited or deleted. A mistake is corrected by a later period.
+- `409` when an effective period with the same `valid_from` exists and is not the superseded
+  one, or when the named row is superseded already.
+- A period is never edited or deleted. Issued documents keep their frozen regime.
 
 ## Customers
 
@@ -168,9 +191,11 @@ A customer JSON:
 {
   "id": "...",
   "name": "Customer Ltd",
+  "number": "K-0042",
   "email": "billing@customer.test",
   "vat_id": null,
   "street": "Side Street 2",
+  "address_line2": null,
   "postal_code": "54321",
   "city": "Other City",
   "country_code": "DE",
@@ -279,11 +304,14 @@ A document JSON:
   "discount_amount_cents": null,
   "payment_terms": "Zahlbar innerhalb von 14 Tagen.",
   "notes": null,
+  "customer_reference": "PO-7",
   "number": null,
   "number_value": null,
   "number_year": null,
+  "correction_seq": null,
   "original_number": null,
   "imported": false,
+  "chain_status": null,
   "issued_at": null,
   "frozen_payload_sha256": null,
   "lines": [
@@ -310,9 +338,15 @@ A document JSON:
 }
 ```
 
-- `number` is the display number (`"RE-2026-018"`), or the original number of an imported row.
+- `number` is the display number rendered from the profile's template (`"RE-20260009"`), the
+  original's number plus `-1`, `-2` for a correction (`"RE-20260009-1"`), or the original
+  number of an imported row. `null` for a draft.
 - `totals` is always computed by `internal/money` on the server. The Vue app never computes money.
-- `type` is `invoice`, `correction` or `offer`. `state` is `draft` or `issued`.
+- `type` is `invoice`, `correction` or `offer`. `state` is `draft` or `issued`, the only stored
+  states.
+- `chain_status` is derived for an issued invoice or correction: `effective` for the newest
+  issued document of its chain, `superseded` for every older one. `null` for a draft and an
+  offer. It is never stored.
 - An issued document is immutable. Every write to it answers `409`.
 
 ### `GET /api/v1/documents`
@@ -324,10 +358,12 @@ A document JSON:
 ### `POST /api/v1/documents`
 
 - Who: any.
-- Request: `type`, `customer_id`, `vat_regime`, `language`, the dates, the discount, `lines`.
-- `vat_regime` defaults to the regime of the period that applies today.
+- Request: `type` (`invoice` or `offer`), `customer_id`, `vat_regime`, `language`, the dates,
+  the discount, `payment_terms`, `notes`, `customer_reference`, `lines`.
+- `vat_regime`, when omitted, is the regime of the effective period that applies today. Only
+  without any period it falls back to the profile's `default_vat_regime`.
 - `language` defaults to the customer's `document_language`.
-- A correction needs `corrects_document_id` naming an issued invoice.
+- A correction draft is created by `POST /api/v1/documents/{id}/correction`, never here.
 - Response `201`: the draft.
 
 ### `POST /api/v1/documents/preview`
@@ -336,8 +372,8 @@ A document JSON:
 - Request: the same body as `POST /api/v1/documents`. Nothing is stored.
 - Response `200`: `{"totals": {...}, "lines": [{"net_after_line_discount_cents": 0,`
   `"document_discount_share_cents": 0, "net_after_all_discounts_cents": 0}, ...]}`.
-- `400` with `details.fields` when `internal/money` refuses the input, for example a VAT rate
-  above 0 under the Kleinunternehmer regime.
+- `400` with `details` when `internal/money` refuses the input, for example a VAT rate above 0
+  under the Kleinunternehmer regime.
 
 ### `GET /api/v1/documents/{id}`
 
@@ -359,19 +395,27 @@ A document JSON:
 
 - Who: owner.
 - Request: empty body.
-- In one transaction: validate the seller profile, build `FrozenPayloadV1`, validate it, allocate
-  the number, freeze, hash.
+- In one transaction: evaluate the VAT regime period on the issue date, validate the seller
+  profile, allocate the number (an invoice or an offer from `document_numbers`, a correction
+  as the next `correction_seq` of its chain under a lock on the root row), render the display
+  number, build `FrozenPayloadV1`, validate it, freeze, hash.
 - Response `200`: the issued document.
-- `400` with `details.fields` when the seller validation or `docpayload.Validate` reports a gap.
-  Field paths of the seller use the profile JSON names under `seller.`.
-- `409` when already issued. `400` when no VAT regime period covers the issue date.
+- `400 invalid_argument` with `details` when the seller validation or `docpayload.Validate`
+  reports a problem. Both use the same path scheme; the seller's paths start with `seller.`.
+- `400 vat_regime_missing` when no effective period covers the issue date.
+- `409 vat_regime_mismatch` when the draft's `vat_regime` differs from that period. `details`
+  is `{"vat_regime": "<regime of the period>"}`.
+- `409 conflict` when already issued.
 
 ### `POST /api/v1/documents/{id}/correction`
 
 - Who: owner.
-- Request: empty body. `{id}` is an issued invoice.
-- Response `201`: a new correction draft with the original's lines and `corrects_document_id`.
-- `409` when `{id}` is not an issued invoice.
+- Request: empty body. `{id}` is any issued invoice or correction of a chain.
+- Response `201`: a new correction draft. Its lines are a copy of the chain's effective
+  document, to be edited into the full corrected lines. `corrects_document_id` names the chain
+  root, the original invoice.
+- The draft gets its number and `correction_seq` only at issue.
+- `409` when `{id}` is a draft or an offer.
 
 ### `POST /api/v1/offers/{id}/to-invoice`
 
@@ -400,23 +444,33 @@ A payment JSON:
 }
 ```
 
+- `document_id` is always the chain root, the original invoice.
+- A refund is a negative amount without `reverses_payment_id`. A reversal of a recording
+  mistake names the reversed row in `reverses_payment_id`.
+
 ### `GET /api/v1/documents/{id}/payments`
 
 - Who: any.
-- Response `200`: `{"payments": [payment, ...], "paid_cents": 23750, "open_cents": 0}`.
-- `open_cents` is derived, never stored. It is the grand total minus the sum of payments.
+- `{id}` is any issued document of a chain. The server resolves it to the chain root.
+- Response `200`: `{"payments": [payment, ...], "paid_cents": 23750, "effective_document_id":`
+  `"...", "open_cents": 0}`.
+- `open_cents` is derived, never stored: the effective document's grand total minus the sum of
+  the chain's payments. Negative means a refund is due.
 
 ### `POST /api/v1/documents/{id}/payments`
 
 - Who: owner.
+- `{id}` is any issued document of a chain. The payment is stored against the chain root.
 - Request: `received_on`, `amount_cents`, `method`, `note`, and `reverses_payment_id` for a
   reversal.
 - A reversal has a negative amount equal to the reversed payment.
+- A refund has a negative amount, no `reverses_payment_id`, and `received_on` set to the day
+  the money left.
 - Response `201`: the payment.
 - `409` when the document is a draft or an offer, or when a reversal names a payment of another
-  document or one already reversed.
+  chain or one already reversed.
 - An overpayment is accepted and shows as a negative `open_cents`.
-- Payments are never edited or deleted.
+- Payments are never edited or deleted. The EÜR counts them, never document totals.
 
 ## PDF
 
@@ -428,7 +482,7 @@ Registered in `internal/httpapi/routes_pdf.go`. Owned by issue #74.
 - Response `200`: `application/pdf`, `Content-Disposition: attachment; filename="<number>.pdf"`.
 - An issued document renders from its frozen payload and the template version it names.
 - A draft renders with an "Entwurf" or "Draft" watermark and without a number.
-- `400` with `details.fields` when a draft lacks data the template needs.
+- `400` with `details` when a draft lacks data the template needs.
 - `503` when the renderer is not available.
 
 ## Files
@@ -455,8 +509,15 @@ A file JSON:
 
 - Who: any.
 - Request: `multipart/form-data` with the parts `purpose` (`receipt` or `import_original`) and
-  `file`. At most 10 MiB.
+  `file`.
+- Limit: the whole request body is at most 10 MiB plus 64 KiB (10,551,296 bytes), enforced by
+  `http.MaxBytesReader`. The `file` part alone is at most 10 MiB (10,485,760 bytes), counted
+  while streaming. The 64 KiB cover the multipart framing and the `purpose` part.
 - Accepted by magic bytes: PDF, JPEG, PNG, XML. The client's content type is ignored.
+- A file row is written once. The application role has `SELECT` and `INSERT` on `files` only,
+  so no endpoint can change or delete it.
+- Originals of a historic import are uploaded here first, with purpose `import_original`. The
+  import rows then reference their file ids.
 - Response `201`: `{"file": file, "duplicates": [file, ...]}`.
 - `duplicates` lists earlier files with the same sha256. It is a warning, not a refusal.
 - `413` over the limit. `415` outside the allowlist. `503` when the object store is down.
@@ -521,7 +582,7 @@ An expense JSON:
 - Who: any.
 - Request: the expense JSON without `id`, `state`, `storno_of_id`, `imported`, `booked_at` and
   the timestamps.
-- Response `201`: the draft. `400` with `details.fields` for an inconsistent amount or category.
+- Response `201`: the draft. `400` with `details` for an inconsistent amount or category.
 
 ### `GET /api/v1/expenses/{id}`
 
@@ -542,7 +603,7 @@ An expense JSON:
 
 - Who: owner.
 - Request: empty body. Response `200`: the booked expense.
-- `409` when booked already. `400` with `details.fields` when `paid_on` or the category is
+- `409` when booked already. `400` with `details` when `paid_on` or the category is
   missing.
 
 ### `POST /api/v1/expenses/{id}/storno`
@@ -647,10 +708,10 @@ An asset JSON:
 
 ### `POST /api/v1/assets`
 
-- Who: any.
+- Who: owner.
 - Request: the asset JSON without `id`, `disposed_on`, `disposal_proceeds_cents`, `imported` and
   the timestamps. `expense_id` names a booked expense with `is_asset` set.
-- Response `201`. `400` with `details.fields` when the method does not fit the cost
+- Response `201`. `400` with `details` when the method does not fit the cost
   (for example `gwg` above 800 EUR).
 
 ### `GET /api/v1/assets/{id}`
@@ -659,9 +720,12 @@ An asset JSON:
 
 ### `PUT /api/v1/assets/{id}`
 
-- Who: any.
+- Who: owner.
 - Request: as for `POST`. Response `200`.
-- `409` once a tax year with its depreciation is final.
+- Allowed only while the asset's first schedule year is open: the calendar year of
+  `acquired_on`, or `opening_book_value_year` for an imported asset, has not ended.
+- `409` afterwards, because a depreciation figure of a past year may already be in a filed EÜR.
+  A later change is a disposal.
 
 ### `POST /api/v1/assets/{id}/disposal`
 
@@ -711,17 +775,23 @@ Registered in `internal/httpapi/routes_reports.go`. Owned by issue #80.
     }
   ],
   "boundary_entries": [{ "kind": "expense", "id": "...", "date": "2027-01-08",
-    "amount_cents": 0, "note": "regularly recurring, assign the year" }],
-  "warnings": ["expense ... has no receipt"],
+    "amount_cents": 0, "assigned_tax_year": null }],
+  "warnings": [
+    { "code": "missing_receipt", "kind": "expense", "id": "..." },
+    { "code": "asset_expense_without_asset", "kind": "expense", "id": "..." }
+  ],
   "disclaimer": "Computed from your entries. No tax advice."
 }
 ```
 
 - `sources[].kind` is `payment`, `expense`, `other_income` or `asset`.
-- `boundary_entries` lists entries from 22 December to 10 January for the owner to assign.
+- `boundary_entries` lists entries from 22 December to 10 January. `assigned_tax_year` is the
+  effective assignment, or `null` when the entry counts in the year of its date.
+- `warnings[].code` is one of `missing_receipt`, `asset_expense_without_asset` (a booked
+  expense with `is_asset` set and no asset row), `unassigned_boundary_entry`.
 - `mapping.status` is `verified` or `unverified`. The view shows a banner when unverified.
 - `404` for a year whose documents are all imported archive years (2023 to 2025).
-- `400` for a year without any VAT regime period.
+- `400 vat_regime_missing` for a year without any VAT regime period.
 
 ### `GET /api/v1/reports/euer/{year}/csv`
 
@@ -730,6 +800,25 @@ Registered in `internal/httpapi/routes_reports.go`. Owned by issue #80.
   `Content-Disposition: attachment`.
 - Columns: `key;zeile;kennzahl;label;amount;source_kind;source_id;source_amount`.
 - One row per source, so every figure traces to its rows.
+
+### `GET /api/v1/euer-assignments`
+
+- Who: any.
+- Query: `tax_year`, optional.
+- Response `200`: `{"assignments": [assignment, ...]}`, effective rows only.
+- An assignment JSON: `{"id": "...", "entry_kind": "expense", "entry_id": "...",`
+  `"tax_year": 2026, "note": "Miete Dezember", "supersedes_id": null, "created_at": "..."}`.
+
+### `POST /api/v1/euer-assignments`
+
+- Who: owner.
+- Request: `{"entry_kind": "expense", "entry_id": "...", "tax_year": 2026, "note": "...",`
+  `"supersedes_id": null}`. `entry_kind` is `payment`, `expense` or `other_income`.
+- Append-only. A changed decision is a new row with `supersedes_id` naming the old one.
+- Response `201`: the assignment.
+- `400` when the entry's date lies outside 22 December to 10 January, or `tax_year` is neither
+  the year of the date nor the neighbouring year it belongs to.
+- `409` when the entry already has an effective assignment and `supersedes_id` does not name it.
 
 ## Historic import
 
@@ -747,18 +836,29 @@ A batch JSON:
   "created_at": "2026-12-14T10:00:00Z",
   "committed_at": null,
   "summary": { "documents": 18, "payments": 15, "expenses": 120, "assets": 4 },
-  "rows": [{ "entity": "document", "line": 3, "status": "ok", "original_number": "RE-2026-003" }],
+  "rows": [{ "entity": "document", "line": 3, "status": "ok", "original_number": "RE-20260003" }],
   "errors": [{ "entity": "expense", "line": 41, "field": "paid_on", "reason": "not a date" }],
-  "collisions": [{ "entity": "document", "line": 7, "original_number": "RE-2026-007",
+  "collisions": [{ "entity": "document", "line": 7, "original_number": "RE-20260007",
     "reason": "number already in solobill" }]
 }
 ```
 
+Order of an import:
+
+1. Upload every original PDF through `POST /api/v1/files` with purpose `import_original`.
+2. Reference those file ids in the import rows and run the dry run here.
+3. Commit. The frozen payload of each imported document names its original by file id and
+   SHA-256, both known before the commit.
+
 ### `POST /api/v1/imports`
 
 - Who: owner.
-- Request: `multipart/form-data`, the parts named by `docs/import.md`.
+- Request: `multipart/form-data`, the parts named by `docs/import.md`. The whole request body
+  is limited to 10 MiB (10,485,760 bytes) by `http.MaxBytesReader`. The import files hold rows,
+  never PDFs.
 - Runs the dry run. Nothing is written to the ledger. The batch and its findings are kept.
+- The dry run reports a referenced file id that does not exist, or whose purpose is not
+  `import_original`, as an error of its row.
 - Response `201`: the batch in state `dry_run`.
 
 ### `GET /api/v1/imports/{id}`

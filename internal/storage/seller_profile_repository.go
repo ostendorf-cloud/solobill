@@ -21,14 +21,16 @@ type SellerProfileRepository interface {
 // Every method must run inside a context TenantScope.WithTenant
 // produced. Implemented by issue #68 (I2).
 type VATRegimePeriodRepository interface {
-	// List returns every period ordered by ValidFrom ascending.
+	// List returns every period, superseded ones included, ordered by
+	// ValidFrom, then CreatedAt.
 	List(ctx context.Context) ([]VATRegimePeriod, error)
 
-	// Create adds a period. ErrConflict when a period with the same
-	// ValidFrom exists.
+	// Create adds a period. ErrConflict when an effective period with the
+	// same ValidFrom exists and is not the one superseded, or when the
+	// superseded row is superseded already.
 	Create(ctx context.Context, period VATRegimePeriod) (VATRegimePeriod, error)
 
-	// RegimeOn returns the period that applies on date, or ErrNotFound
-	// when date lies before the first period.
+	// RegimeOn returns the effective period that applies on date, or
+	// ErrNotFound when date lies before the first effective period.
 	RegimeOn(ctx context.Context, date time.Time) (VATRegimePeriod, error)
 }

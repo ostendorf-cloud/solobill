@@ -45,6 +45,9 @@ type Repositories struct {
 	// Issue #78 (I11a).
 	Assets storage.AssetRepository
 
+	// Issue #80 (I12).
+	EuerAssignments storage.EuerAssignmentRepository
+
 	// Issue #81 (I13).
 	Imports           storage.ImportRepository
 	ImportedDocuments storage.ImportedDocumentRepository

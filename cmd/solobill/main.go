@@ -126,6 +126,11 @@ func run() error {
 		return fmt.Errorf("solobill: %w", err)
 	}
 
+	repos, err := buildRepositories(ctx, wireEnv{cfg: cfg, logger: logger, store: store, health: healthRegistry})
+	if err != nil {
+		return fmt.Errorf("solobill: %w", err)
+	}
+
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:           logger,
 		Store:            store,
@@ -143,7 +148,7 @@ func run() error {
 		RateLimitPer:     cfg.RateLimitPer,
 		DefaultInviteTTL: cfg.DefaultInviteTTL,
 		DistFS:           spaFS,
-		Repositories:     repositories(store),
+		Repositories:     repos,
 	})
 	if err != nil {
 		return fmt.Errorf("solobill: build http handler: %w", err)

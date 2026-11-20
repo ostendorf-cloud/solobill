@@ -21,11 +21,12 @@ func standardInvoice(t *testing.T) docpayload.FrozenPayloadV1 {
 	percent := int32(1500)
 	p := docpayload.FrozenPayloadV1{
 		Version:         docpayload.Version1,
+		Currency:        docpayload.CurrencyEUR,
 		Type:            docpayload.TypeInvoice,
 		Language:        docpayload.LanguageGerman,
 		VATRegime:       docpayload.RegimeStandard,
 		TemplateVersion: "invoice-v1",
-		Number:          "RE-2026-018",
+		Number:          "RE-20260018",
 		NumberValue:     18,
 		NumberYear:      2026,
 		IssueDate:       "2026-12-01",
@@ -61,6 +62,26 @@ func standardInvoice(t *testing.T) docpayload.FrozenPayloadV1 {
 		t.Fatalf("ApplyLineResults() error = %v", err)
 	}
 	p.Totals = docpayload.TotalsFromMoney(result)
+
+	return p
+}
+
+// correctionOf is the first correction of standardInvoice under the
+// replace model: the full corrected lines, the original's number plus
+// "-1".
+func correctionOf(t *testing.T) docpayload.FrozenPayloadV1 {
+	t.Helper()
+
+	p := standardInvoice(t)
+	p.Type = docpayload.TypeCorrection
+	p.Corrects = &docpayload.DocumentReference{
+		ID:        "6f1c2a4e-0000-4000-8000-000000000003",
+		Number:    "RE-20260018",
+		IssueDate: "2026-12-01",
+	}
+	p.CorrectionSeq = 1
+	p.Number = "RE-20260018-1"
+	p.IssueDate = "2026-12-05"
 
 	return p
 }
@@ -196,6 +217,7 @@ func TestCompletePayloadsValidate(t *testing.T) {
 	for name, build := range map[string]func(*testing.T) docpayload.FrozenPayloadV1{
 		"standard":         standardInvoice,
 		"kleinunternehmer": kleinunternehmerInvoice,
+		"correction":       correctionOf,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -233,7 +255,45 @@ func TestSection14Fields(t *testing.T) {
 		{"Nr. 5 line quantity", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Lines[0].QuantityThousandths = 0 }, "lines[0].quantity_thousandths"},
 		{"Nr. 5 no lines", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Lines = nil }, "lines"},
 		{"Nr. 6 service period", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.ServicePeriod = nil }, "service_period"},
-		{"Nr. 7 and 8 VAT buckets", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Totals.VAT = nil }, "totals.vat"},
+		{"Nr. 7 and 8 VAT buckets", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
+			p.Totals.VAT = nil
+			p.Totals.VATTotalCents = 0
+			p.Totals.GrandTotalCents = p.Totals.NetAfterDocumentDiscountCents
+		}, "totals.vat"},
+		{"currency", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Currency = "USD" }, "currency"},
+		{"net total is the sum of the lines", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
+			p.Lines[0].NetAfterLineDiscountCents++
+			p.Lines[0].NetAfterAllDiscountsCents++
+		}, "totals.net_total_cents"},
+		{"line net after all discounts", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
+			p.Lines[1].NetAfterAllDiscountsCents++
+		}, "lines[1].net_after_all_discounts_cents"},
+		{"net after document discount", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
+			p.Totals.DocumentDiscountCents++
+		}, "totals.net_after_document_discount_cents"},
+		{"bucket VAT rounded once", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
+			p.Totals.VAT[0].VATCents++
+			p.Totals.VATTotalCents++
+			p.Totals.GrandTotalCents++
+		}, "totals.vat[0].vat_cents"},
+		{"VAT total is the sum of the buckets", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
+			p.Totals.VATTotalCents++
+			p.Totals.GrandTotalCents++
+		}, "totals.vat_total_cents"},
+		{"grand total", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.Totals.GrandTotalCents++ }, "totals.grand_total_cents"},
+		{"34a VAT total is 0", kleinunternehmerInvoice, func(p *docpayload.FrozenPayloadV1) {
+			p.Totals.VAT[0].RatePermyriad = 1900
+			// 19008 cents at 19 % is 3611.52, rounded once to 3612: the
+			// bucket itself adds up, only the regime forbids it.
+			p.Totals.VAT[0].VATCents = 3612
+			p.Totals.VATTotalCents = 3612
+			p.Totals.GrandTotalCents += 3612
+		}, "totals.vat_total_cents"},
+		{"correction number carries the suffix", correctionOf, func(p *docpayload.FrozenPayloadV1) { p.Number = "RE-20260018" }, "number"},
+		{"correction needs a sequence", correctionOf, func(p *docpayload.FrozenPayloadV1) {
+			p.CorrectionSeq = 0
+		}, "correction_seq"},
+		{"invoice has no sequence", standardInvoice, func(p *docpayload.FrozenPayloadV1) { p.CorrectionSeq = 1 }, "correction_seq"},
 		{"Nr. 8 exemption note for a 0 percent line", standardInvoice, func(p *docpayload.FrozenPayloadV1) {
 			p.Totals.VAT = append(p.Totals.VAT, docpayload.VATBucket{RatePermyriad: 0})
 		}, "tax_note"},

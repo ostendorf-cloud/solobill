@@ -20,7 +20,9 @@ type ImportedIssue struct {
 	IssuedAt       time.Time
 	// Payload is a FrozenPayloadV1 with Imported set, and PayloadSHA256
 	// its lowercase hex SHA-256, the same precondition
-	// DocumentRepository.Issue has.
+	// DocumentRepository.Issue has. The original PDF it names is
+	// uploaded through POST /api/v1/files before the import, so its file
+	// id and hash exist when the payload is frozen.
 	Payload       []byte
 	PayloadSHA256 string
 }

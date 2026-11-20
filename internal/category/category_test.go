@@ -49,12 +49,51 @@ func TestEveryKeyIsDocumented(t *testing.T) {
 		t.Fatalf("read concept: %v", err)
 	}
 
+	rows := map[string][]string{}
+	for line := range strings.Lines(string(concept)) {
+		if !strings.HasPrefix(line, "| `euer.") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		rows[strings.Trim(cells[0], "`")] = cells
+	}
+
 	for _, c := range category.All() {
-		row := "| `" + string(c.Key) + "` |"
-		if !strings.Contains(string(concept), row) {
-			t.Errorf("key %q has no row %q in docs/concepts/solobill.md", c.Key, row)
+		cells, ok := rows[string(c.Key)]
+		if !ok {
+			t.Errorf("key %q has no row in docs/concepts/solobill.md", c.Key)
+
+			continue
+		}
+		if len(cells) < 3 {
+			t.Errorf("row of %q has %d cells, want key, kind and Zeile at least", c.Key, len(cells))
+
+			continue
+		}
+		if cells[1] != string(c.Kind) {
+			t.Errorf("row of %q names kind %q, the code says %q", c.Key, cells[1], c.Kind)
+		}
+		if want := zeile(c.Key); cells[2] != want {
+			t.Errorf("row of %q names Zeile %q, the key says %q", c.Key, cells[2], want)
 		}
 	}
+
+	for key := range rows {
+		if _, ok := category.Lookup(category.Key(key)); !ok {
+			t.Errorf("docs/concepts/solobill.md has a row for %q, which is no key", key)
+		}
+	}
+}
+
+// zeile extracts the line number from a key: "euer.z62.nd" is "62".
+func zeile(key category.Key) string {
+	rest := strings.TrimPrefix(string(key), "euer.z")
+	number, _, _ := strings.Cut(rest, ".")
+
+	return number
 }
 
 func TestValid(t *testing.T) {

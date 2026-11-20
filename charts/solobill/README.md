@@ -86,16 +86,15 @@ issued invoice or read another tenant's rows, regardless of what either guarante
 to prevent - which is exactly why `config.databaseUser` must never be that role, and why this
 chart no longer defaults to letting it be.
 
-Grant `config.databaseUser` exactly the privileges `docker-compose.yaml`'s own
-`grant-app-role` service grants `solobill_app`, table by table, never ownership:
-`SELECT, INSERT` on `tenants`; `SELECT, INSERT, UPDATE` on `accounts`, `invites`, `customers`
-and `catalogue_items`; `SELECT, INSERT, UPDATE, DELETE` on `documents`; `SELECT, INSERT, DELETE`
-on `document_lines`; `SELECT, INSERT, UPDATE` on `document_numbers`; and the matching
-`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES` rule to cover a later
-migration's new table. `db/migrations`' own comments on `documents` and `document_lines`
-explain why each one needs exactly the privileges granted there (for example, why
-`document_lines` is granted `DELETE` but never `UPDATE`); that reasoning, not this list, is
-what to re-check before changing either one. This chart never issues a `GRANT` itself and has
+Grant `config.databaseUser` exactly the privileges the files in `docker/postgres/grants/`
+grant `solobill_app`, in file name order, with the role name replaced, never ownership. Those
+files are the one list: `docker-compose.yaml`'s `grant-app-role` service and the integration
+tests apply the same files, and each issue adds its own file instead of editing a shared list.
+Add the matching `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES` rule
+as well. The header of each file, and `db/migrations`' own comments, explain why each table
+needs exactly the privileges granted there (for example, why `document_lines` is granted
+`DELETE` but never `UPDATE`, and why `files` never gets `UPDATE` or `DELETE`); that reasoning
+is what to re-check before changing one. This chart never issues a `GRANT` itself and has
 no way to: it only ever runs `db/migrations` as `migrationJob.databaseUser`.
 
 Set `existingSecret.migrationDatabasePasswordKey` alongside `migrationJob.databaseUser` if its

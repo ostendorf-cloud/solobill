@@ -186,6 +186,9 @@ spec:
               value: {{ .Values.config.rateLimitPer | quote }}
             - name: INVITE_DEFAULT_TTL
               value: {{ .Values.config.inviteDefaultTtl | quote }}
+            {{- with include "solobill.objectStore.env" . }}
+            {{- . | nindent 12 }}
+            {{- end }}
           {{- if .Values.startupProbe.enabled }}
           startupProbe:
             httpGet:

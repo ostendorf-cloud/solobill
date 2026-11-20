@@ -11,9 +11,18 @@ function keyPaths(tree: object, prefix = ''): string[] {
   )
 }
 
+/** baseNames turns glob keys like './de/login.json' into ['login']. */
+function baseNames(paths: string[]): string[] {
+  return paths.map((p) => p.replace(/^.*\//, '').replace(/\.json$/, '')).sort()
+}
+
 describe('locales', () => {
-  it('merges the same feature namespaces for both languages', () => {
-    expect(Object.keys(en).sort()).toEqual(Object.keys(de).sort())
+  it('merges every German feature file, and only those', () => {
+    expect(Object.keys(de).sort()).toEqual(baseNames(Object.keys(import.meta.glob('./de/*.json'))))
+  })
+
+  it('merges every English feature file, and only those', () => {
+    expect(Object.keys(en).sort()).toEqual(baseNames(Object.keys(import.meta.glob('./en/*.json'))))
   })
 
   it('translates every German key into English and the reverse', () => {

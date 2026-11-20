@@ -2,76 +2,40 @@ package httpapi_test
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
+
+	"github.com/ostendorf-cloud/govue/health"
+	"github.com/ostendorf-cloud/govue/logging"
 
 	"github.com/ostendorf-cloud/solobill/internal/auth"
+	"github.com/ostendorf-cloud/solobill/internal/httpapi"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
-// reservedEndpoints is every endpoint the year end contract (issue #67)
-// reserves as a 501 stub. An issue that implements an endpoint removes
-// its row here in the same pull request.
-var reservedEndpoints = []string{
-	"GET /api/v1/profile",
-	"PUT /api/v1/profile",
-	"GET /api/v1/profile/logo",
-	"PUT /api/v1/profile/logo",
-	"GET /api/v1/vat-regimes",
-	"POST /api/v1/vat-regimes",
-	"GET /api/v1/customers",
-	"POST /api/v1/customers",
-	"GET /api/v1/customers/{id}",
-	"PUT /api/v1/customers/{id}",
-	"DELETE /api/v1/customers/{id}",
-	"GET /api/v1/catalogue-items",
-	"POST /api/v1/catalogue-items",
-	"GET /api/v1/catalogue-items/{id}",
-	"PUT /api/v1/catalogue-items/{id}",
-	"DELETE /api/v1/catalogue-items/{id}",
-	"GET /api/v1/documents",
-	"POST /api/v1/documents",
-	"POST /api/v1/documents/preview",
-	"GET /api/v1/documents/{id}",
-	"PUT /api/v1/documents/{id}",
-	"DELETE /api/v1/documents/{id}",
-	"POST /api/v1/documents/{id}/issue",
-	"POST /api/v1/documents/{id}/correction",
-	"POST /api/v1/offers/{id}/to-invoice",
-	"GET /api/v1/documents/{id}/payments",
-	"POST /api/v1/documents/{id}/payments",
-	"GET /api/v1/documents/{id}/pdf",
-	"POST /api/v1/files",
-	"GET /api/v1/files/{id}",
-	"GET /api/v1/files/{id}/content",
-	"GET /api/v1/expenses",
-	"POST /api/v1/expenses",
-	"GET /api/v1/expenses/{id}",
-	"PUT /api/v1/expenses/{id}",
-	"DELETE /api/v1/expenses/{id}",
-	"POST /api/v1/expenses/{id}/book",
-	"POST /api/v1/expenses/{id}/storno",
-	"GET /api/v1/other-income",
-	"POST /api/v1/other-income",
-	"GET /api/v1/other-income/{id}",
-	"PUT /api/v1/other-income/{id}",
-	"DELETE /api/v1/other-income/{id}",
-	"POST /api/v1/other-income/{id}/book",
-	"POST /api/v1/other-income/{id}/storno",
-	"GET /api/v1/categories",
-	"GET /api/v1/assets",
-	"POST /api/v1/assets",
-	"GET /api/v1/assets/{id}",
-	"PUT /api/v1/assets/{id}",
-	"POST /api/v1/assets/{id}/disposal",
-	"GET /api/v1/assets/{id}/schedule",
-	"GET /api/v1/reports/euer/{year}",
-	"GET /api/v1/reports/euer/{year}/csv",
-	"POST /api/v1/imports",
-	"GET /api/v1/imports/{id}",
-	"POST /api/v1/imports/{id}/commit",
+// reservedByFile maps each routes_<resource>.go to the endpoints it still
+// answers with a 501 stub. Every entry is added by the init of its own
+// reserved_<resource>_test.go, so no two issues edit the same lines: an
+// issue that implements its endpoints deletes its own test file.
+var reservedByFile = map[string][]string{}
+
+// reservedEndpoints flattens reservedByFile in a stable order.
+func reservedEndpoints() []string {
+	var all []string
+	for _, patterns := range reservedByFile {
+		all = append(all, patterns...)
+	}
+	sort.Strings(all)
+
+	return all
 }
 
 // memberEmail and memberPassword are the member account the reserved
@@ -88,6 +52,44 @@ func concrete(pattern string) (method, path string) {
 	path = strings.ReplaceAll(path, "{year}", "2026")
 
 	return method, path
+}
+
+// TestReservedListMatchesTheRouter compares the test's list with the
+// stubs the router actually registered, in both directions: a stub
+// nobody tests and a listed endpoint nobody registers both fail.
+func TestReservedListMatchesTheRouter(t *testing.T) {
+	t.Parallel()
+
+	handlers, err := httpapi.NewHandler(httpapi.Deps{
+		Logger:         logging.New(io.Discard, slog.LevelError),
+		Store:          newFakeStore(),
+		Sessions:       mustSessions(t),
+		CSRFKey:        fixedKey(t, 3),
+		LocalAuth:      auth.NewLocalAuthenticator(newFakeStore(), nil),
+		Invites:        auth.NewInviteManager(newFakeStore(), nil),
+		HealthRegistry: health.New(),
+		RateLimitBurst: 10,
+		RateLimitPer:   time.Minute,
+		DistFS:         fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
+	})
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	registered := httpapi.ReservedPatterns(handlers)
+	sort.Strings(registered)
+	listed := reservedEndpoints()
+
+	for _, p := range registered {
+		if !slices.Contains(listed, p) {
+			t.Errorf("router registers stub %q, but no reserved_*_test.go lists it", p)
+		}
+	}
+	for _, p := range listed {
+		if !slices.Contains(registered, p) {
+			t.Errorf("a reserved_*_test.go lists %q, but the router registers no stub for it", p)
+		}
+	}
 }
 
 // TestReservedEndpointsAnswer501WithASession checks every stub answers
@@ -117,7 +119,7 @@ func TestReservedEndpointsAnswer501WithASession(t *testing.T) {
 	})
 	cookie, token := loginAndCSRF(t, app, tenant.Slug, memberEmail, memberPassword, secret)
 
-	for _, pattern := range reservedEndpoints {
+	for _, pattern := range reservedEndpoints() {
 		t.Run(pattern, func(t *testing.T) {
 			t.Parallel()
 
@@ -143,26 +145,24 @@ func TestReservedEndpointsAnswer501WithASession(t *testing.T) {
 	}
 }
 
-// TestReservedEndpointsRequireASession checks that a reserved endpoint
-// tells an anonymous caller nothing more than "log in first". Only the
-// safe methods are checked: an unsafe one is already refused by the
-// CSRF protector before it reaches the handler.
+// TestReservedEndpointsRequireASession checks that a reserved endpoint,
+// whatever its method, tells an anonymous caller nothing more than "log
+// in first". A request without a session carries no CSRF token either,
+// and govue's CSRF protector lets it through, because there is no
+// session to forge: the stub's own session check answers.
 func TestReservedEndpointsRequireASession(t *testing.T) {
 	t.Parallel()
 
 	app := buildTestApp(t, 1000)
 
-	for _, pattern := range reservedEndpoints {
-		method, path := concrete(pattern)
-		if method != http.MethodGet {
-			continue
-		}
+	for _, pattern := range reservedEndpoints() {
 		t.Run(pattern, func(t *testing.T) {
 			t.Parallel()
 
+			method, path := concrete(pattern)
 			rec := doJSON(t, app.handler, method, path, nil, nil, "")
 			if rec.Code != http.StatusUnauthorized {
-				t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+				t.Errorf("status = %d, want %d, body = %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
 			}
 		})
 	}
@@ -178,7 +178,7 @@ func TestReservedEndpointsAreDocumented(t *testing.T) {
 		t.Fatalf("read docs/api.md: %v", err)
 	}
 
-	for _, pattern := range reservedEndpoints {
+	for _, pattern := range reservedEndpoints() {
 		heading := "### `" + pattern + "`"
 		if !strings.Contains(string(doc), heading) {
 			t.Errorf("docs/api.md has no heading %q", heading)

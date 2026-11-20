@@ -124,6 +124,11 @@ type Customer struct {
 	// migration; until then the postgres implementation leaves it empty,
 	// which a caller reads as DocumentLanguageGerman.
 	DocumentLanguage DocumentLanguage
+	// Number is the owner's own customer number, printed on documents,
+	// nil when none is used. AddressLine2 is an optional second address
+	// line. Both columns land with issue #69's migration.
+	Number       *string
+	AddressLine2 *string
 	// DeletedAt is nil for an active customer, set once soft deleted. A
 	// customer is never hard deleted: see db/migrations' customers
 	// migration for why.
@@ -190,6 +195,11 @@ const (
 	// original invoice via Document.CorrectsDocumentID, never a
 	// modification of it: see Document.CorrectsDocumentID and
 	// DocumentRepository for how immutability is actually enforced.
+	//
+	// From issue #70 on, a correction replaces the invoice: it carries
+	// the full corrected lines, and the newest issued correction of a
+	// chain is the effective document. See docs/concepts/solobill.md,
+	// "Corrections".
 	DocumentTypeCorrection DocumentType = "correction"
 	// DocumentTypeOffer is an offer (Angebot) with its own counter. The
 	// constant is part of the year end contract (issue #67). The
@@ -281,7 +291,18 @@ type Document struct {
 	// for Type == DocumentTypeCorrection: see db/migrations'
 	// documents_correction_requires_original.
 	CorrectsDocumentID *uuid.UUID
-	VATRegime          VATRegime
+	// CorrectionSeq is a correction's place in the chain of its original
+	// invoice: 1 for the first correction, 2 for the next. Set at issue,
+	// in the issuing transaction, never from document_numbers. The
+	// correction's display number is the original's plus "-" and this
+	// value. nil for every other type and for a correction draft. The
+	// column lands with issue #70's migration.
+	CorrectionSeq *int32
+	// CustomerReference is the customer's own reference (order number,
+	// "Ihr Zeichen"), printed on the document. The column lands with
+	// issue #70's migration.
+	CustomerReference *string
+	VATRegime         VATRegime
 	// ServiceDate is the Leistungsdatum/Lieferdatum German VAT law
 	// (§14 UStG) requires, separate from the document's own date
 	// (IssuedAt once issued). nil until known, which is routinely the

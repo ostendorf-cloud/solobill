@@ -27,6 +27,9 @@ import (
 // Version1 is the value of FrozenPayloadV1.Version.
 const Version1 = 1
 
+// CurrencyEUR is the only currency of version 1.
+const CurrencyEUR = "EUR"
+
 // DateLayout is the only date format in a payload: ISO 8601 calendar
 // date, no time and no zone, because every date on an invoice is a
 // calendar date.
@@ -78,13 +81,23 @@ type FrozenPayloadV1 struct {
 	// TemplateVersion names the embedded template the document was first
 	// rendered with. The renderer keeps every version it ever shipped.
 	TemplateVersion string `json:"template_version"`
+	// Currency is the ISO 4217 code of every amount. Only CurrencyEUR is
+	// accepted; the field exists so a later currency never needs a new
+	// payload version.
+	Currency string `json:"currency"`
 
-	// Number is the display number, for example "RE-2026-018". For an
-	// imported document it is the original number.
+	// Number is the display number, for example "RE-20260009", rendered
+	// from the seller's number format. For a correction it is the
+	// original's number plus "-" and CorrectionSeq. For an imported
+	// document it is the original number, unchanged.
 	Number string `json:"number"`
-	// NumberValue and NumberYear are the counter key behind Number.
+	// NumberValue and NumberYear are the counter key behind Number. A
+	// correction carries the values of its original.
 	NumberValue int64 `json:"number_value"`
 	NumberYear  int   `json:"number_year"`
+	// CorrectionSeq is a correction's place in its chain, 1 or higher.
+	// 0 for every other type.
+	CorrectionSeq int `json:"correction_seq,omitempty"`
 
 	// IssueDate is the Ausstellungsdatum, DateLayout.
 	IssueDate string `json:"issue_date"`
@@ -98,8 +111,13 @@ type FrozenPayloadV1 struct {
 
 	Seller   SellerSnapshot   `json:"seller"`
 	Customer CustomerSnapshot `json:"customer"`
+	// CustomerReference is the customer's own reference, for example an
+	// order number, printed as given. Optional.
+	CustomerReference string `json:"customer_reference,omitempty"`
 
-	// Corrects names the original of a correction, nil otherwise.
+	// Corrects names the original invoice of a correction, the root of
+	// the chain, nil otherwise. A correction replaces the invoice: its
+	// lines are the full corrected lines, never a difference.
 	Corrects *DocumentReference `json:"corrects,omitempty"`
 
 	Lines            []Line   `json:"lines"`
@@ -129,7 +147,9 @@ type ServicePeriod struct {
 
 // Address is a postal address as printed.
 type Address struct {
-	Street      string `json:"street"`
+	Street string `json:"street"`
+	// Line2 is an optional second line (c/o, building).
+	Line2       string `json:"line2,omitempty"`
 	PostalCode  string `json:"postal_code"`
 	City        string `json:"city"`
 	CountryCode string `json:"country_code"`
@@ -157,7 +177,9 @@ type SellerSnapshot struct {
 // CustomerSnapshot is the customer at issue time.
 type CustomerSnapshot struct {
 	// ID is the customer's id in solobill, for reference only.
-	ID      string  `json:"id"`
+	ID string `json:"id"`
+	// Number is the owner's own customer number, optional.
+	Number  string  `json:"number,omitempty"`
 	Name    string  `json:"name"`
 	Address Address `json:"address"`
 	VATID   string  `json:"vat_id,omitempty"`

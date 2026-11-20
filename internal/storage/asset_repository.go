@@ -18,10 +18,12 @@ type AssetRepository interface {
 	// AcquiredOn.
 	List(ctx context.Context) ([]Asset, error)
 
-	// Update replaces an asset. ErrConflict once a tax year containing
-	// its depreciation has been reported as final (issue #80 decides
-	// when that is).
-	Update(ctx context.Context, asset Asset) (Asset, error)
+	// Update replaces an asset while its first schedule year is still
+	// open: the calendar year of AcquiredOn (or OpeningBookValueYear for
+	// an imported asset) has not ended at now. ErrConflict afterwards,
+	// because a depreciation figure of a past year may already be in a
+	// filed EÜR. A later change is a disposal, never an edit.
+	Update(ctx context.Context, asset Asset, now time.Time) (Asset, error)
 
 	// RecordDisposal sets DisposedOn and DisposalProceedsCents once.
 	// ErrConflict when the asset is already disposed.

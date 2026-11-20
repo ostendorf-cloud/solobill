@@ -21,9 +21,14 @@ const (
 
 // File is the metadata row of one object in the S3 compatible store.
 // The bytes live in the store under ObjectKey. PostgreSQL holds the
-// authority: SHA256 and SizeBytes are written once at upload, and a
-// trigger refuses a DELETE or a change of SHA256, SizeBytes or ObjectKey
-// once the file is linked to a booked expense or an issued document.
+// authority: SHA256 and SizeBytes are written once at upload.
+//
+// The primary control is the grant: the application role gets SELECT
+// and INSERT on files, never UPDATE or DELETE, so no row can change
+// once written, linked or not. A link aware trigger is optional defence
+// in depth only: it sees expenses.file_id and other_income.file_id, but
+// not a link that lives only inside a frozen payload (the original of an
+// imported document, the logo hash), which the grant alone protects.
 // Issue #75 (I9) creates the table; see docs/concepts/solobill.md,
 // "Receipt storage and GoBD".
 type File struct {

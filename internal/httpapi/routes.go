@@ -91,9 +91,12 @@ func (a *app) notImplemented(_ http.ResponseWriter, r *http.Request) error {
 	return api.New(http.StatusNotImplemented, codeNotImplemented, "this endpoint is reserved and not implemented yet").Exposed()
 }
 
-// stub registers each pattern with the notImplemented handler.
+// stub registers each pattern with the notImplemented handler and
+// records it, so a test can compare the registered stubs with its own
+// list in both directions (see Handlers.reserved).
 func stub(mux *http.ServeMux, route routeFunc, a *app, patterns ...string) {
 	for _, p := range patterns {
 		mux.Handle(p, route(api.Handle(a.notImplemented)))
+		a.reserved = append(a.reserved, p)
 	}
 }

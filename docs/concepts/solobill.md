@@ -153,15 +153,24 @@ the milestone (#68 to #82) builds against. Only #67 edits this document in the m
 - Documents are rendered in German and in English.
 - Nothing is cut from the scope.
 - The EÜR mapping is data per tax year. 2025 is verified, 2026 is a copy marked unverified.
+- A correction replaces the invoice. It carries the full corrected lines and the original's
+  number with a suffix. See "Corrections".
+- The display number format is configurable per document type by a template. The owner's
+  numbers look like `RE-20260009`. See "Number format".
 
 ### Payments
 
 - A `payments` table, append-only. A trigger blocks UPDATE and DELETE.
-- A payment belongs to an issued invoice or correction. Partial payments are allowed.
-- A mistake is undone by a reversal row: a negative amount naming the reversed payment.
-- `received_on` is the Zufluss date section 11 Abs. 1 EStG counts by. The EÜR uses it, never
-  the invoice date.
-- The open amount is derived from the grand total and the payments, never stored.
+- A payment belongs to an invoice chain: `document_id` is always the original invoice, the root
+  every correction of the chain references. Partial payments are allowed.
+- A recording mistake is undone by a reversal row: a negative amount naming the reversed payment
+  in `reverses_payment_id`.
+- Money paid back to the customer is a refund: a negative amount without
+  `reverses_payment_id`, dated the day the money left.
+- `received_on` is the Zufluss or Abfluss date section 11 EStG counts by. The EÜR uses payments
+  only, never document totals or invoice dates.
+- The open amount is the effective document's grand total minus the sum of the chain's
+  payments. It is derived, never stored. A negative open amount means a refund is due.
 - An issued invoice cannot carry a paid date, because `documents_block_issued_mutation` refuses
   every change. This is why payments are a table of their own.
 - Under the standard regime the VAT share of a partial payment is split pro rata. This is an
@@ -170,17 +179,72 @@ the milestone (#68 to #82) builds against. Only #67 edits this document in the m
 ### Offers
 
 - `offer` is a third document type with its own gapless counter per year.
-- Issue #70 widens `documents_type_check` by a new migration. The old migration stays untouched.
+- Issue #70 widens both `documents_type_check` and `document_numbers_type_check` by a new
+  migration. The old migrations stay untouched.
 - An offer has a validity date and no service period. It is never paid and never in the EÜR.
 - `POST /api/v1/offers/{id}/to-invoice` copies the lines into an invoice draft and sets
   `source_offer_id` (composite foreign key, same tenant).
+
+### Corrections
+
+The owner's decision: a correction replaces the invoice.
+
+- A correction is its own document of type `correction`. It is issued and frozen like an
+  invoice and never changes the original.
+- It carries the full corrected lines, never a difference and never negative quantities.
+  `internal/money` is unchanged.
+- `corrects_document_id` always names the original invoice, the root of the chain, also for a
+  correction of a correction.
+- Its number is the original's display number plus `-1`, `-2` and so on.
+  `documents.correction_seq` counts per original and is set in the issuing transaction, under a
+  lock on the root row. It never comes from `document_numbers`.
+- The numeric `number` and `number_year` of a correction repeat the original's. Issue #70
+  therefore restricts `documents_number_year_number_unique` to the other types and adds a unique
+  index on `(tenant_id, corrects_document_id, correction_seq)`.
+- The newest issued correction of a chain is the effective document. Every older document of
+  the chain is shown as superseded. "Superseded" is derived when reading, never written onto an
+  issued row.
+- Payments belong to the chain and the open amount is computed against the effective document.
+  A lower corrected total leaves a negative open amount, settled by a refund payment.
+- The EÜR counts payments only, so a correction changes the EÜR only through the payments and
+  refunds that follow it.
+- A new correction copies the lines of the current effective document as its draft.
+
+Not verified, and not claimed:
+
+- Whether a number with a suffix satisfies section 14 Abs. 4 Satz 1 Nr. 4 UStG and section 31
+  UStDV for a correction. The owner or a Steuerberater confirms it before the first correction
+  is issued.
+- GoBD does not prescribe how a correction looks. This model follows the owner's decision, not
+  a requirement of the GoBD and not the behaviour of another product.
+
+### Number format
+
+The owner's decision: the display number format is a template per document type.
+
+- The profile holds `number_formats`, one template for `invoice` and one for `offer`.
+- Tokens: `{year}` is the four digit number year, `{yy}` its last two digits, `{seq}` the
+  number without padding, `{seq:N}` the number padded with zeros to at least N digits (N from 1
+  to 9).
+- Every other character is literal. A template must contain exactly one `{seq}` or `{seq:N}`
+  and one `{year}` or `{yy}`, so a number is unique per year.
+- The owner's format is `RE-{year}{seq:4}`: number 9 of 2026 renders as `RE-20260009`.
+- The default, when no template is saved, is `{year}-{seq:4}`.
+- A template change applies to the next issued document only. An issued document keeps the
+  number frozen in its payload.
+- A correction has no template: it is the original's number plus `-1`, `-2` and so on.
+- The numeric counter in `document_numbers` stays gapless per tenant, type and year. The
+  template only renders it.
+- Issue #68 validates and stores the template. Issue #70 renders it at issue.
 
 ### Imported documents and original numbers
 
 - `documents.original_number text` keeps the number exactly as the customer holds it, for
   example `RE-2024-017`. Display uses it when set.
-- `documents.number` stays the numeric key of `documents_number_year_number_unique`. The import
-  derives it from the original number by a rule `docs/import.md` states.
+- `documents.number` stays the numeric key of `documents_number_year_number_unique`. When the
+  original number matches the type's template, the import reads the number back out of it
+  (`RE-20260009` under `RE-{year}{seq:4}` is 9 of 2026). Otherwise it applies the rule
+  `docs/import.md` states. `original_number` keeps the original unchanged in both cases.
 - An imported row is `imported = true` and never passes through `document_numbers`.
 - The import enters an issued document by the one controlled path
   `storage.ImportedDocumentRepository`: it creates a draft with its lines, then moves that draft
@@ -188,6 +252,11 @@ the milestone (#68 to #82) builds against. Only #67 edits this document in the m
   so it stays as strict as today. No trigger is relaxed and no second table is added.
 - An imported document still has a frozen payload: a `FrozenPayloadV1` with `imported` set, its
   totals from the import row and `original` naming the original PDF by file id and SHA-256.
+- Order of the import: first every original PDF is uploaded through `POST /api/v1/files` with
+  purpose `import_original`. The import rows then reference those file ids. The dry run checks
+  that each file exists. The commit freezes the payload with the file id and its hash.
+- That link lives only inside the frozen payload, which no trigger on `files` can see. The
+  grant protects it: the application role cannot update or delete a `files` row.
 - For 2026 the counter of each type is raised to the highest imported number in the commit
   transaction, so the next issued number continues the sequence.
 - Payments of imported 2026 invoices are imported too (`payments.imported`), because the EÜR
@@ -196,14 +265,22 @@ the milestone (#68 to #82) builds against. Only #67 edits this document in the m
 
 ### VAT regime per period
 
-- The regime is not one profile flag. A table `vat_regime_periods(tenant_id, valid_from, regime,
-  note)` holds the history. A switch inside a year is one more row.
-- The regime on a date is the regime of the latest period starting on or before that date.
-- A document copies the regime into `documents.vat_regime` when drafted. That column, frozen
-  into the payload at issue, is what the document is taxed under.
+- The period table is the source. A table `vat_regime_periods(tenant_id, valid_from, regime,
+  note, supersedes_id)` holds the history. A switch inside a year is one more row.
+- The table is append-only. A wrong row is corrected by a new row naming it in `supersedes_id`.
+  The new row carries its own `valid_from`. A row is superseded at most once.
+- The effective periods are the rows no other row supersedes. The regime on a date is the
+  regime of the latest effective period starting on or before that date.
+- A new draft's form is prefilled with the regime of the period that applies today. Only when
+  no period exists yet does the profile's `default_vat_regime` prefill it. The default never
+  decides a tax treatment.
+- At issue the regime is evaluated again against the issue date. When the draft's regime
+  differs, the issue is refused with `409 vat_regime_mismatch`. The owner changes the draft.
+- An issued document keeps the regime frozen in its payload. A later period row never changes
+  it.
 - An expense and other income use the period of their payment date.
-- The profile's `default_vat_regime` only prefills a new draft.
-- No period covering a date blocks issuing and the report with a `400`.
+- No period covering a date refuses issuing, booking and the report with
+  `400 vat_regime_missing`.
 
 ### Seller data validation
 
@@ -219,14 +296,25 @@ func Validate(p storage.SellerProfile, regime storage.VATRegime) map[string]stri
 - Standard regime: legal name, full address, and a Steuernummer or USt-IdNr.
 - Kleinunternehmer: legal name, full address, and one of Steuernummer, USt-IdNr or
   Kleinunternehmer-Identifikationsnummer.
-- Issue #70 merges this map with `docpayload.Validate` and answers both as `details.fields`.
+- Issue #70 merges this map with the one `docpayload.Validate` returns and answers both as the
+  error's `details`, unchanged.
+- One field path scheme for every validation: JSON names joined by `.`, an array index as
+  `[i]`. Examples: `seller.tax_number`, `lines[1].description`. The path is a key directly in
+  `details`, the same place govue's JSON decoder puts a wrongly typed field.
 
 ### Frozen payload
 
 - `internal/docpayload.FrozenPayloadV1` is the shape of `documents.frozen_payload`.
 - It carries a `version` field. A later shape is a new type, a stored payload is never migrated.
+- Version 1 is fixed forever. A golden JSON test pins every field name.
 - It holds every field of section 14 Abs. 4 Satz 1 Nr. 1 to 8 UStG and of section 34a UStDV,
   a seller snapshot, a customer snapshot, the lines and the totals from `internal/money`.
+- It also holds, so no version 2 is needed for them: `currency` (only `EUR`), a second address
+  line, the customer number, the customer's own reference, and for a correction `corrects` and
+  `correction_seq`.
+- `Validate` checks the totals arithmetic: the lines add up to the net total, net minus
+  discount, the VAT buckets, each bucket's VAT rounded once, the grand total, and a VAT total
+  of 0 under the Kleinunternehmer regime.
 - The payload holds the printed tax note as text in the document language, so a later wording
   change never alters an issued document.
 - The renderer formats and never computes.
@@ -240,9 +328,12 @@ The rules: section 146 Abs. 4 AO (no change may hide the original), section 147 
 - PostgreSQL is the authority. `files` holds object key, version id, SHA-256, size, the sniffed
   content type, the original filename as data only, and the upload time.
 - The SHA-256 is computed while streaming the upload. A download recomputes it and aborts on a
-  mismatch, so altered bytes are detected even when the store would allow the change.
-- A trigger on `files` refuses DELETE, and any change of key, hash or size, once the file is
-  linked to a booked expense, booked other income or an issued document.
+  mismatch.
+- The primary control on the metadata is the grant: the application role gets `SELECT` and
+  `INSERT` on `files`, never `UPDATE` or `DELETE`. No row can change once written.
+- A trigger that refuses a change of a file linked to a booked expense or booked other income is
+  optional defence in depth. It cannot see a link that lives only in a frozen payload (an
+  imported original, the logo hash); the grant protects those.
 - Booked expenses, payments and issued documents are immutable by trigger. A booked row
   references the file by id, so the hash it was booked with cannot drift.
 - The application has no delete path for an object. `storage.ObjectStore` has no Delete.
@@ -251,18 +342,33 @@ The rules: section 146 Abs. 4 AO (no change may hide the original), section 147 
   default is ten years for everything, counted from the end of the calendar year.
 - The PostgreSQL backup of the cluster covers the metadata. The bucket needs its own backup.
 
-The store side is a hardening step, not a blocker for the milestone:
+What the hash does not do:
 
-- Bucket versioning: an overwrite keeps the old version. solobill checks it at startup and logs
-  a warning when it is off.
-- Object lock in compliance mode with a retention date of the end of the year plus ten years,
+- The hash detects a changed object only when it is read: on a download or in the integrity
+  scan. It does not prevent the change.
+- Without versioning or object lock, an object overwritten or deleted in the store with the
+  bucket credentials or an admin key is gone. It cannot be recovered. That breaks the retention
+  duty of section 147 AO.
+
+So the store side is a production requirement:
+
+- Bucket versioning on, so an overwrite or delete keeps the earlier version.
+- Object lock in compliance mode, with a retention date of the end of the year plus ten years,
   requested per object when `S3_OBJECT_LOCK` is on. A locked object cannot be deleted or
   overwritten before that date, even with admin credentials.
 - Both are set up by the owner in the infrastructure repository: a new bucket created with
   object lock enabled (SeaweedFS allows it only at bucket creation), versioning on, and a bucket
   policy that adds the versioning, retention and legal hold actions.
-- The application works against a bucket without lock and without versioning. The database
-  hash and triggers alone already detect every change. The store side only prevents it.
+- solobill checks versioning at startup and on every readiness probe. With
+  `S3_REQUIRE_VERSIONING=true`, the default, the readiness check fails while the bucket reports
+  no versioning, so the pod takes no traffic. Local development sets it to `false` and gets a
+  loud warning in the log instead.
+- An integrity scan reads every object, recomputes its SHA-256 and compares it with the
+  database. It runs as `solobill files verify`, a subcommand of the same binary, scheduled as a
+  Kubernetes CronJob (weekly by default) by the chart. A mismatch or a missing object exits
+  non-zero and is logged with the file id. Issue #75 builds both.
+- Until the bucket with lock and versioning exists, the milestone runs with the readiness
+  check failing in production. The owner sets the bucket up first.
 
 What remains unverified:
 
@@ -270,8 +376,8 @@ What remains unverified:
   but names no version.
 - Whether the AWS provider's `object_lock_enabled` works against SeaweedFS, and whether its IAM
   mapper accepts the versioning and retention action names.
-- Whether the hash in the database plus triggers satisfies an auditor without object lock. The
-  GoBD letter (BMF, 28 November 2019, amended 2024 and 2025) was not read in full.
+- Whether this design satisfies an auditor. The GoBD letter (BMF, 28 November 2019, amended
+  2024 and 2025) was not read in full. Nothing here claims GoBD conformity.
 - Whether the cluster backup of the bucket exists and covers ten years.
 
 ### Object store client and configuration
@@ -294,6 +400,7 @@ What remains unverified:
 | `S3_ACCESS_KEY_ID`, `S3_ACCESS_KEY_ID_FILE` | Key id, or a file holding it |
 | `S3_SECRET_ACCESS_KEY`, `S3_SECRET_ACCESS_KEY_FILE` | Secret, or a file holding it |
 | `S3_OBJECT_LOCK` | `true` requests retention per object and fails startup without a lock |
+| `S3_REQUIRE_VERSIONING` | `true` (default) fails readiness while the bucket has no versioning |
 
 - In the cluster the bucket, the user and the key come from the infrastructure repository and
   OpenBao. The chart takes a secret reference only.
@@ -314,6 +421,11 @@ What remains unverified:
 - A Kleinunternehmer has no Vorsteuer deduction, so the thresholds apply to the gross price.
   This reading of section 6 Abs. 2 and section 9b EStG is not verified with a Steuerberater.
 - The useful life is entered per asset. The AfA tables were not read.
+- Only the owner edits an asset, and only while its first schedule year is open: the calendar
+  year of `acquired_on` (or the opening year of an imported asset) has not ended. Afterwards a
+  depreciation figure may already be in a filed EÜR, so the asset is refused with `409`. A
+  later change is a disposal.
+- The EÜR report warns for every booked expense with `is_asset` set and no asset row.
 
 ### EÜR mapping as data per tax year
 
@@ -323,9 +435,13 @@ What remains unverified:
   on steuerschroeder.de, not on the BMF host.
 - 2026 ships as a copy of 2025 marked `unverified`. The report shows a banner until the owner
   compares every line with the BMF letter of 1 September 2026 or the ELSTER form.
-- Zufluss by `payments.received_on`, Abfluss by `expenses.paid_on`. Entries from 22 December
-  to 10 January are listed for the owner to assign. The 10 day reading of section 11 EStG is
-  from secondary sources only.
+- Zufluss by `payments.received_on`, Abfluss by `expenses.paid_on`. The 10 day reading of
+  section 11 EStG is from secondary sources only.
+- Entries from 22 December to 10 January are listed for the owner to assign to a tax year.
+  The decision is a row in `euer_assignments(tenant_id, entry_kind, entry_id, tax_year, note,
+  supersedes_id, created_by, created_at)`, append-only. A changed decision is a new row naming
+  the old one. Without a row an entry counts in the year of its payment date.
+- Issue #80 creates the table and `GET` and `POST /api/v1/euer-assignments`.
 
 ### EÜR line keys
 
@@ -398,39 +514,67 @@ Open points of the set:
 - A merged migration is never edited. A fix is a new file in the same range.
 - dbmate applies a pending version that is lower than one already applied, unless run with
   `--strict`. Not verified against dbmate 2.38.
-- Every new table also needs its grants in `docker-compose.yaml` (`grant-app-role`) and in
-  `internal/storage/postgres/integration_test.go`. Both lists are shared: append, and on a
-  conflict keep both lines.
+- Every new table also needs its grants: one file `docker/postgres/grants/<range start>_<name>.sql`
+  per issue, applied by compose and by the integration tests. See "Conflict zones".
 
 | Issue | Range | Planned migrations |
 | --- | --- | --- |
 | #67 contract | none | ships no table |
-| #68 seller profile | `20261121100000` to `20261121100099` | `seller_profiles`, `vat_regime_periods` |
-| #69 customers, catalogue | `20261121110000` to `20261121110099` | `customers.document_language` |
-| #70 documents | `20261121120000` to `20261121120099` | offer type, `original_number`, `source_offer_id`, `language`, `valid_until`, `service_date_to`, `payment_terms`, `notes` |
-| #71 payments | `20261121130000` to `20261121130099` | `payments` with trigger |
+| #68 seller profile | `20261121100000` to `20261121100099` | `seller_profiles` with `number_formats`, `vat_regime_periods` with `supersedes_id` |
+| #69 customers, catalogue | `20261121110000` to `20261121110099` | `customers.document_language`, `customers.number`, `customers.address_line2` |
+| #70 documents | `20261121120000` to `20261121120099` | widen `documents_type_check` and `document_numbers_type_check` for offers; `original_number`, `source_offer_id`, `language`, `valid_until`, `service_date_to`, `payment_terms`, `notes`, `customer_reference`, `correction_seq`; number uniqueness without corrections plus a unique `(tenant_id, corrects_document_id, correction_seq)` |
+| #71 payments | `20261121130000` to `20261121130099` | `payments` with trigger, root invoice reference |
 | #72 Vue shell | none | Vue only |
 | #73 Vue documents | none | Vue only |
 | #74 PDF | `20261121140000` to `20261121140099` | reserved, none planned |
-| #75 files on S3 | `20261121150000` to `20261121150099` | `files` with trigger, `seller_profiles.logo_file_id` |
-| #76 expenses | `20261121160000` to `20261121160099` | `expenses`, `other_income`, both with trigger |
+| #75 files on S3 | `20261121150000` to `20261121150099` | `files` (grant SELECT and INSERT only), `seller_profiles.logo_file_id` |
+| #76 expenses | `20261121160000` to `20261121160099` | `expenses` with `is_asset`, `other_income`, both with trigger |
 | #77 Vue expenses | none | Vue only |
 | #78 assets | `20261121170000` to `20261121170099` | `assets` |
 | #79 Vue assets | none | Vue only |
-| #80 EÜR report | `20261121180000` to `20261121180099` | reserved, the mapping is embedded data |
+| #80 EÜR report | `20261121180000` to `20261121180099` | `euer_assignments`, append-only; the mapping is embedded data |
 | #81 import | `20261121190000` to `20261121190099` | `import_batches`, batch references on imported rows |
 | #82 hardening | `20261121200000` to `20261121200099` | reserved for fixes |
 
 ### Conflict zones
 
+Every file that several issues would otherwise edit, and the rule that keeps them apart:
+
 - `internal/httpapi`: one `routes_<resource>.go` per resource with its `registerX`. `NewHandler`
   and `routes.go` are not edited again. `Repositories` already has every field.
-- `cmd/solobill/repositories.go`: each issue sets only its own field.
+- `internal/httpapi/reserved_<resource>_test.go`: one file per routes file lists its 501 stubs.
+  The issue that implements the routes deletes its own file.
 - `internal/storage`: one domain file and one interface file per resource.
-- `web/src/router/routes/<feature>.ts` and `web/src/i18n/locales/{de,en}/<feature>.json`: one
-  per feature. The two index files are not edited again.
+- `internal/storage/postgres`: every `func (s *Store) X()` accessor lives in its own
+  `store_<resource>.go`. `store.go` is not edited again.
 - `internal/storage/postgres/sqlcgen/models.go`: regenerated after a rebase, never hand merged.
-- `AGENTS.md` layout: only issue #82 edits it.
+- `cmd/solobill`: a feature wires itself in its own `wire_<feature>.go`, whose `init` appends a
+  `wireFunc` to `wirers`. `main.go` and `wire.go` are not edited again.
+- `internal/config`: a feature loads its variables in its own `config_<feature>.go`. `Config`
+  already carries `ObjectStore` (#75) and `PDF` (#74), and `Load` already calls both loaders.
+- `charts/solobill`: #75 alone owns `templates/_objectstore.tpl`, which `deployment.yaml` and
+  `networkpolicy.yaml` already include, plus the top level `objectStore` values block, its
+  `values.schema.json` property, a CronJob template for `files verify` and its tests. #82 owns
+  every other chart change (body size limit, notes). No other issue edits the chart.
+- Grants: one SQL file per issue in `docker/postgres/grants/`, named after the issue's range
+  start. `docker-compose.yaml`, `integration_test.go` and `charts/solobill/README.md` all read
+  or point to that directory and are not edited for a new table.
+- Row level security: every new table enables and forces RLS with a policy in its own
+  migration. `TestEveryTenantScopedTableEnforcesRowLevelSecurity` finds the tables itself, so
+  no list needs an edit.
+- `go.mod` and `go.sum`: only #74 (if Typst needs a Go module) and #75 (minio-go) add
+  dependencies. The second to merge rebases onto `main`, runs `go mod tidy`, and never hand
+  merges `go.sum`.
+- `web/src/router/routes/<feature>.ts` and `web/src/i18n/locales/{de,en}/<feature>.json`: one
+  per feature. The two index files are not edited again. A test fails when a file there is not
+  imported.
+- Navigation: derived from route meta. A feature adds `meta.nav` (`labelKey`, `order`,
+  optional `roles`) to its own route. `navigationEntries` in `web/src/router/meta.ts` lists
+  them, the navigation component of #72 renders them, and no feature edits that component.
+- `docs/concepts/solobill.md` and `docs/api.md`: only #67 edits them in this milestone. A
+  needed change goes back to the owner as a contract change.
+- `AGENTS.md` layout: only issue #82 edits it. Until then the layout section is stale on
+  purpose.
 
 ### Unverified tax points
 
@@ -441,6 +585,8 @@ Open points of the set:
 - A one year useful life for computer hardware and software (BMF letter of 22 February 2022),
   and whether the acquisition year is pro rata.
 - The pro rata VAT split of partial payments under the standard regime.
+- Whether a correction numbered as the original plus a suffix satisfies section 14 Abs. 4 Satz
+  1 Nr. 4 UStG and section 31 UStDV.
 - Every figure is a computation over the owner's own entries, not tax advice.
 
 ## Alternatives
