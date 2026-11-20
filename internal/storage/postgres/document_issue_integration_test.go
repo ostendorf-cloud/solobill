@@ -564,32 +564,69 @@ func TestDocuments_CrossTenant(t *testing.T) {
 		}); !errors.Is(err, storage.ErrConflict) {
 			t.Errorf("Issue = %v, want ErrConflict", err)
 		}
-		if _, err := docs.Create(ctx, storage.Document{
-			TenantID: tenantB.ID, Type: storage.DocumentTypeCorrection, CustomerID: customerB.ID,
-			VATRegime: storage.VATRegimeKleinunternehmer, CorrectsDocumentID: &rootA.ID,
-		}, nil); err == nil {
-			t.Errorf("a correction of A's invoice was created in B")
-		}
-		if _, err := docs.Create(ctx, storage.Document{
-			TenantID: tenantB.ID, Type: storage.DocumentTypeInvoice, CustomerID: customerB.ID,
-			VATRegime: storage.VATRegimeKleinunternehmer, SourceOfferID: &offerA.ID,
-		}, nil); err == nil {
-			t.Errorf("an invoice from A's offer was created in B")
-		}
-		if _, err := docs.Create(ctx, storage.Document{
-			TenantID: e.tenant.ID, Type: storage.DocumentTypeInvoice, CustomerID: e.customer.ID,
-			VATRegime: storage.VATRegimeKleinunternehmer,
-		}, nil); err == nil {
-			t.Errorf("B wrote a row of tenant A")
-		}
 
+		// Every call above matches zero rows and raises no SQL error, so
+		// this scope still commits. A refused write aborts its
+		// transaction: each one below runs in a scope of its own.
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("tenant B scope: %v", err)
 	}
 
-	if got := e.find(t, draftA.ID); got.State != storage.DocumentStateDraft || got.CustomerID != e.customer.ID {
+	// marker tags every forged row, so the read backs below find it if a
+	// refusal ever stops working.
+	marker := "forged-" + uuid.NewString()
+	createInB := func(d storage.Document) error {
+		d.CustomerReference = &marker
+
+		return e.store.WithTenant(e.ctx, tenantB.ID, func(ctx context.Context) error {
+			_, err := e.store.Documents().Create(ctx, d, nil)
+
+			return err
+		})
+	}
+
+	// documents_check_references looks the root up under B's tenant and
+	// finds nothing: 23514 before the composite foreign key runs.
+	requireSQLState(t, createInB(storage.Document{
+		TenantID: tenantB.ID, Type: storage.DocumentTypeCorrection, CustomerID: customerB.ID,
+		VATRegime: storage.VATRegimeKleinunternehmer, CorrectsDocumentID: &rootA.ID,
+	}), "23514", "a correction of A's invoice created in B")
+	requireSQLState(t, createInB(storage.Document{
+		TenantID: tenantB.ID, Type: storage.DocumentTypeInvoice, CustomerID: customerB.ID,
+		VATRegime: storage.VATRegimeKleinunternehmer, SourceOfferID: &offerA.ID,
+	}), "23514", "an invoice from A's offer created in B")
+	// A row naming tenant A, written in B's scope: row level security's
+	// WITH CHECK refuses it.
+	requireSQLState(t, createInB(storage.Document{
+		TenantID: e.tenant.ID, Type: storage.DocumentTypeInvoice, CustomerID: e.customer.ID,
+		VATRegime: storage.VATRegimeKleinunternehmer,
+	}), sqlStateInsufficientPrivilege, "B writing a row of tenant A")
+
+	// Read back in both owning tenants' scopes: no forged row exists, and
+	// A's draft is exactly as it was.
+	for _, tenantID := range []uuid.UUID{e.tenant.ID, tenantB.ID} {
+		if err := e.store.WithTenant(e.ctx, tenantID, func(ctx context.Context) error {
+			list, err := e.store.Documents().List(ctx)
+			if err != nil {
+				return err
+			}
+			for _, d := range list {
+				if d.CustomerReference != nil && *d.CustomerReference == marker {
+					t.Errorf("tenant %s holds a forged row: %+v", tenantID, d)
+				}
+			}
+
+			return nil
+		}); err != nil {
+			t.Fatalf("read back in tenant %s: %v", tenantID, err)
+		}
+	}
+
+	got := e.find(t, draftA.ID)
+	if got.State != storage.DocumentStateDraft || got.CustomerID != e.customer.ID || got.VATRegime != draftA.VATRegime ||
+		!got.UpdatedAt.Equal(draftA.UpdatedAt) || len(got.Lines) != len(draftA.Lines) {
 		t.Errorf("A's draft changed: %+v", got)
 	}
 }
