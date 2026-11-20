@@ -47,6 +47,10 @@ kubeconform = "0.8.0"
 # rendered from its frozen payload and must look the same on every render. Renovate proposes
 # bumps.
 typst = "0.14.2"
+# poppler provides pdftotext, which internal/pdf's golden tests use to compare the text a
+# rendered PDF shows. Pinned to the patch like typst, because pdftotext's layout output is
+# part of those golden files. Same pin as ostendorf.tech.
+poppler = "26.11.0"
 
 # helm-unittest (charts/solobill's own verification plugin) is a Helm plugin, not a
 # conventional CLI, but it still comes from mise, never from "helm plugin install <url>":

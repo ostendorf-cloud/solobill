@@ -21,12 +21,12 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ostendorf-cloud/solobill/internal/docpayload"
@@ -199,40 +199,74 @@ func (r *Renderer) compile(ctx context.Context, src Source) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.opts.Timeout)
 	defer cancel()
 
-	out := filepath.Join(dir, "out.pdf")
 	// #nosec G204: the binary is configuration, every argument is fixed
 	// or a path inside dir.
 	cmd := exec.CommandContext(ctx, bin, compileArgs(dir, src.CreationTime)...)
 	cmd.Dir = dir
-	// A minimal environment: no TYPST_* variable from the host can add a
-	// font path, a package path or a root.
-	cmd.Env = []string{"HOME=" + dir, "XDG_CACHE_HOME=" + filepath.Join(dir, "cache"), "TZ=UTC"}
+	cmd.Env = minimalEnv(dir)
+	// The PDF streams to stdout into a capped buffer: past the limit the
+	// buffer cancels the render, so Typst never writes an unbounded file.
+	out := &cappedBuffer{max: r.opts.MaxOutputBytes, cancel: cancel}
 	stderr := &limitedBuffer{max: maxStderrBytes}
-	cmd.Stdout = io.Discard
+	cmd.Stdout = out
 	cmd.Stderr = stderr
 	cmd.WaitDelay = time.Second
 
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("%w: %w", ErrCompile, ctx.Err())
-		}
-
+	err = cmd.Run()
+	switch {
+	case out.exceeded:
+		return nil, fmt.Errorf("%w: more than %d bytes", ErrOutputTooLarge, r.opts.MaxOutputBytes)
+	case err != nil && ctx.Err() != nil:
+		return nil, fmt.Errorf("%w: %w", ErrCompile, ctx.Err())
+	case err != nil:
 		return nil, fmt.Errorf("%w: %w: %s", ErrCompile, err, bytes.TrimSpace(stderr.Bytes()))
+	case !bytes.HasPrefix(out.buf.Bytes(), []byte("%PDF-")):
+		return nil, fmt.Errorf("%w: output is no PDF", ErrCompile)
 	}
 
-	info, err := os.Stat(out)
+	return out.buf.Bytes(), nil
+}
+
+// minimalEnv is Typst's whole environment: no TYPST_* variable from the
+// host can add a font path, a package path or a root, and no proxy or
+// home directory of the host is visible.
+func minimalEnv(dir string) []string {
+	return []string{"HOME=" + dir, "XDG_CACHE_HOME=" + filepath.Join(dir, "cache"), "TZ=UTC"}
+}
+
+// TypstVersion is the Typst release the templates and the PDF hashes in
+// the tests are pinned to, the same as mise.toml.
+const TypstVersion = "0.14.2"
+
+// ErrTypstVersion is a Typst binary of another version than
+// TypstVersion.
+var ErrTypstVersion = errors.New("pdf: unexpected typst version")
+
+// CheckVersion runs "typst --version" and compares it with TypstVersion.
+// The wiring calls it at startup: another Typst release may lay out a
+// stored payload differently.
+func (r *Renderer) CheckVersion(ctx context.Context) error {
+	bin, err := exec.LookPath(r.opts.Binary)
 	if err != nil {
-		return nil, fmt.Errorf("%w: no output: %w", ErrCompile, err)
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	if info.Size() > r.opts.MaxOutputBytes {
-		return nil, fmt.Errorf("%w: %d bytes, limit %d", ErrOutputTooLarge, info.Size(), r.opts.MaxOutputBytes)
+	ctx, cancel := context.WithTimeout(ctx, r.opts.Timeout)
+	defer cancel()
+	// #nosec G204: the binary is configuration, the argument is fixed.
+	cmd := exec.CommandContext(ctx, bin, "--version")
+	cmd.Env = minimalEnv(os.TempDir())
+	out := &limitedBuffer{max: maxStderrBytes}
+	cmd.Stdout = out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
-	pdf, err := os.ReadFile(out)
-	if err != nil {
-		return nil, fmt.Errorf("pdf: read output: %w", err)
+	// The output is "typst 0.14.2 (b33de9de)".
+	fields := strings.Fields(string(out.Bytes()))
+	if len(fields) < 2 || fields[0] != "typst" || fields[1] != TypstVersion {
+		return fmt.Errorf("%w: %q, want %s", ErrTypstVersion, bytes.TrimSpace(out.Bytes()), TypstVersion)
 	}
 
-	return pdf, nil
+	return nil
 }
 
 // compileArgs is the typst command line. Paths are relative to dir,
@@ -249,9 +283,11 @@ func compileArgs(dir string, created time.Time) []string {
 		"--pdf-standard", PDFStandard,
 		"--creation-timestamp", strconv.FormatInt(created.Unix(), 10),
 		"--diagnostic-format", "short",
+		"--jobs", "1",
 		"--format", "pdf",
 		filepath.Join(dir, "main.typ"),
-		filepath.Join(dir, "out.pdf"),
+		// "-" writes the PDF to stdout.
+		"-",
 	}
 }
 
@@ -321,3 +357,24 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 
 // Bytes returns what was kept.
 func (b *limitedBuffer) Bytes() []byte { return b.buf.Bytes() }
+
+// cappedBuffer collects the PDF. A write past max marks it exceeded,
+// cancels the render and fails, which stops the copy from Typst.
+type cappedBuffer struct {
+	buf      bytes.Buffer
+	max      int64
+	cancel   context.CancelFunc
+	exceeded bool
+}
+
+// Write appends p or, past the limit, cancels the render.
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if int64(b.buf.Len())+int64(len(p)) > b.max {
+		b.exceeded = true
+		b.cancel()
+
+		return 0, ErrOutputTooLarge
+	}
+
+	return b.buf.Write(p)
+}

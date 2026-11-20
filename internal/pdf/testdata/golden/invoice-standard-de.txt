@@ -1,0 +1,112 @@
+                                                                                                        Example GmbH
+
+
+
+Example GmbH · Musterstraße 1 · 12345 Musterstadt
+
+Mustermann Consulting GmbH                                      Rechnungsnummer                                   RE-20260042
+Beispielweg 7                                                   Datum                                                 05.12.2026
+z. Hd. Max Mustermann                                           Leistungszeitraum                      01.11.2026 bis 30.11.2026
+                                                                Kundennummer                                             K-1001
+54321 Beispielstadt
+                                                                Ihre Referenz                                   Bestellung 4711
+                                                                Zahlbar bis                                           19.12.2026
+
+
+
+
+Rechnung
+
+ Pos. Beschreibung                                                    Menge Einheit          Einzelpreis     USt.          Betrag
+     1 Softwareentwicklung Modul 1                                        4 Std.             95,00 EUR 19 %           380,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+     2 Softwareentwicklung Modul 2                                       4,5 Std.            95,00 EUR 19 %           427,50 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+     3 Softwareentwicklung Modul 3                                        5 Std.             95,00 EUR 19 %           475,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+     4 Softwareentwicklung Modul 4                                       5,5 Std.            95,00 EUR 19 %           522,50 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+     5 Softwareentwicklung Modul 5                                        6 Std.             95,00 EUR 19 %           570,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+     6 Softwareentwicklung Modul 6                                        4 Std.             95,00 EUR 19 %           380,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+     7 Softwareentwicklung Modul 7                                       4,5 Std.            95,00 EUR 19 %           427,50 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+     8 Softwareentwicklung Modul 8                                        5 Std.             95,00 EUR 19 %           475,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+     9 Softwareentwicklung Modul 9                                       5,5 Std.            95,00 EUR 19 %           522,50 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+    10 Softwareentwicklung Modul 10                                       6 Std.             95,00 EUR 19 %           570,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+    11 Softwareentwicklung Modul 11                                       4 Std.             95,00 EUR 19 %           380,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+    12 Softwareentwicklung Modul 12                                      4,5 Std.            95,00 EUR 19 %           427,50 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+    13 Softwareentwicklung Modul 13                                       5 Std.             95,00 EUR 19 %           475,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+    14 Softwareentwicklung Modul 14                                      5,5 Std.            95,00 EUR 19 %           522,50 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+    15 Softwareentwicklung Modul 15                                       6 Std.             95,00 EUR 19 %           570,00 EUR
+       Umsetzung laut Leistungsbeschreibun​g
+
+
+
+
+                                                                                                                         Seite 1 von 2
+
+Example GmbH                     Tel. +49 000 0000000            Steuernummer 12/345/67890     Bank Musterbank
+Musterstraße 1                   E-Mail rechnung@example.com     USt-IdNr. DE000000000         IBAN DE00 0000 0000 0000 0000 00
+12345 Musterstadt                Web www.example.com                                           BIC MUSTDEXXXXX
+Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000
+ Pos. Beschreibung                                                    Menge Einheit          Einzelpreis     USt.          Betrag
+   16 Softwareentwicklung Modul 16                                        4 Std.             95,00 EUR 19 %           380,00 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   17 Softwareentwicklung Modul 17                                       4,5 Std.            95,00 EUR 19 %           427,50 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   18 Softwareentwicklung Modul 18                                        5 Std.             95,00 EUR 19 %           475,00 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   19 Softwareentwicklung Modul 19                                       5,5 Std.            95,00 EUR 19 %           522,50 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   20 Softwareentwicklung Modul 20                                        6 Std.             95,00 EUR 19 %           570,00 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   21 Softwareentwicklung Modul 21                                        4 Std.             95,00 EUR 19 %           380,00 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   22 Softwareentwicklung Modul 22                                       4,5 Std.            95,00 EUR 19 %           427,50 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   23 Softwareentwicklung Modul 23                                        5 Std.             95,00 EUR 19 %           475,00 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   24 Softwareentwicklung Modul 24                                       5,5 Std.            95,00 EUR 19 %           522,50 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   25 Softwareentwicklung Modul 25                                        6 Std.             95,00 EUR 19 %           570,00 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   26 Softwareentwicklung Modul 26                                        4 Std.             95,00 EUR 19 %           380,00 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   27 Softwareentwicklung Modul 27                                       4,5 Std.            95,00 EUR 19 %           427,50 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   28 Softwareentwicklung Modul 28                                        5 Std.             95,00 EUR 19 %           475,00 EUR
+      Umsetzung laut Leistungsbeschreibun​g
+   29 Fachbuch Betriebssysteme                                            2 Stück            39,90 EUR       7%        79,80 EUR
+   30 Lizenz Entwicklungsumgebung​, 12 Monate                             1 Stück        1.234,56 EUR 19 % 1.234,56 EUR
+
+
+                                                      Summe netto                                                   14.471,86 EUR
+                                                      Umsatzsteuer 7 % auf 79,80 EUR                                     5,59 EUR
+                                                      Umsatzsteuer 19 % auf 14.392,06 EUR                            2.734,49 EUR
+                                                      Gesamtbetrag                                                17.211,94 EUR
+
+Zahlungsbedingungen
+Zahlbar innerhalb von 14 Tagen ohne Abzug.
+
+Hinweise
+Vielen Dank für Ihren Auftrag.
+
+
+
+
+                                                                                                                         Seite 2 von 2
+
+Example GmbH                   Tel. +49 000 0000000              Steuernummer 12/345/67890     Bank Musterbank
+Musterstraße 1                 E-Mail rechnung@example.com       USt-IdNr. DE000000000         IBAN DE00 0000 0000 0000 0000 00
+12345 Musterstadt              Web www.example.com                                             BIC MUSTDEXXXXX
+Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000
+

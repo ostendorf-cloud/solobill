@@ -93,12 +93,16 @@ func formatQuantity(thousandths int64, lang string) string {
 	return formatFixed(thousandths, 3, lang)
 }
 
+// noBreakSpace (U+00A0) keeps a number and its percent sign on one line.
+// Written as a rune value so the source holds no invisible character.
+const noBreakSpace rune = 0xA0
+
 // formatPercent prints a rate in permyriad: 1900 is "19 %" in German
-// (DIN 5008 sets a space) and "19%" in English.
+// (DIN 5008 sets a no-break space) and "19%" in English.
 func formatPercent(permyriad int64, lang string) string {
 	n := formatFixed(permyriad, 2, lang)
 	if lang == docpayload.LanguageGerman {
-		return n + " %"
+		return n + string(noBreakSpace) + "%"
 	}
 
 	return n + "%"
@@ -122,6 +126,21 @@ func formatDate(s, lang string) string {
 	}
 
 	return fmt.Sprintf("%d %s %d", t.Day(), monthsEnglish[t.Month()-1], t.Year())
+}
+
+// groupIBAN prints an IBAN in groups of four characters (DIN 5008), so
+// it never forms a token long enough to get a break opportunity.
+func groupIBAN(s string) string {
+	compact := strings.Join(strings.Fields(s), "")
+	var b strings.Builder
+	for i, r := range []rune(compact) {
+		if i > 0 && i%4 == 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteRune(r)
+	}
+
+	return b.String()
 }
 
 // splitLines splits free text into printed lines. Carriage returns are

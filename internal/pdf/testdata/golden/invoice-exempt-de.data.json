@@ -1,0 +1,137 @@
+{
+  "template_version": "document-v1",
+  "lang": "de",
+  "draft": false,
+  "watermark": "Entwurf",
+  "document_title": "Rechnung RE-20260044",
+  "title": "Rechnung",
+  "sender_line": "Example GmbH · Musterstraße 1 · 12345 Musterstadt",
+  "seller_name": "Example GmbH",
+  "recipient_lines": [
+    "Mustermann Consulting GmbH",
+    "Beispielweg 7",
+    "z. Hd. Max Mustermann",
+    "54321 Beispielstadt"
+  ],
+  "meta": [
+    {
+      "label": "Rechnungsnummer",
+      "value": "RE-20260044"
+    },
+    {
+      "label": "Datum",
+      "value": "08.12.2026"
+    },
+    {
+      "label": "Leistungsdatum",
+      "value": "01.12.2026"
+    },
+    {
+      "label": "Kundennummer",
+      "value": "K-1001"
+    },
+    {
+      "label": "Zahlbar bis",
+      "value": "22.12.2026"
+    }
+  ],
+  "corrects_line": "",
+  "show_vat": true,
+  "columns": {
+    "position": "Pos.",
+    "description": "Beschreibung",
+    "quantity": "Menge",
+    "unit": "Einheit",
+    "unit_price": "Einzelpreis",
+    "vat_rate": "USt.",
+    "amount": "Betrag"
+  },
+  "lines": [
+    {
+      "position": "1",
+      "description": [
+        "Prüfungsvorbereitung IHK, Unterricht"
+      ],
+      "discount": "",
+      "quantity": "6",
+      "unit": "Std.",
+      "unit_price": "60,00 EUR",
+      "vat_rate": "0 %",
+      "amount": "360,00 EUR"
+    },
+    {
+      "position": "2",
+      "description": [
+        "Lernmaterial"
+      ],
+      "discount": "",
+      "quantity": "1",
+      "unit": "Stück",
+      "unit_price": "49,00 EUR",
+      "vat_rate": "19 %",
+      "amount": "49,00 EUR"
+    }
+  ],
+  "totals": [
+    {
+      "label": "Summe netto",
+      "value": "409,00 EUR",
+      "strong": false
+    },
+    {
+      "label": "Umsatzsteuer 0 % auf 360,00 EUR",
+      "value": "0,00 EUR",
+      "strong": false
+    },
+    {
+      "label": "Umsatzsteuer 19 % auf 49,00 EUR",
+      "value": "9,31 EUR",
+      "strong": false
+    },
+    {
+      "label": "Gesamtbetrag",
+      "value": "418,31 EUR",
+      "strong": true
+    }
+  ],
+  "sections": [
+    {
+      "title": "",
+      "lines": [
+        "Die Unterrichtsleistung ist nach § 4 Nr. 21 UStG steuerfrei."
+      ]
+    },
+    {
+      "title": "Zahlungsbedingungen",
+      "lines": [
+        "Zahlbar innerhalb von 14 Tagen ohne Abzug."
+      ]
+    }
+  ],
+  "footer": [
+    [
+      "Example GmbH",
+      "Musterstraße 1",
+      "12345 Musterstadt"
+    ],
+    [
+      "Tel. +49 000 0000000",
+      "E-Mail rechnung@example.com",
+      "Web www.example.com"
+    ],
+    [
+      "Steuernummer 12/345/67890",
+      "USt-IdNr. DE000000000"
+    ],
+    [
+      "Bank Musterbank",
+      "IBAN DE00 0000 0000 0000 0000 00",
+      "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_text": [
+    "Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000"
+  ],
+  "page_label": "Seite",
+  "page_of_label": "von"
+}

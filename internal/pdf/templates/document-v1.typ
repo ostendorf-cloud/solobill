@@ -14,26 +14,40 @@
 #let muted = luma(90)
 #let rule = luma(190)
 
-#set document(title: d.document_title, author: d.seller_name)
+#set document(title: d.document_title, author: d.seller_name, keywords: (d.template_version,))
 #set text(font: "Go", size: 9pt, lang: d.lang)
 #set par(leading: 0.55em, spacing: 0.9em)
 
+// A run of more than 20 characters without a space gets a break
+// opportunity (a zero width space) after every 20, so a long token
+// wraps inside its column instead of running over the next one. The
+// text stays extractable; a copied token of that length carries the
+// invisible zero width spaces. Shorter tokens are never touched.
+#show regex("\S{21,}"): it => it.text.clusters().chunks(20).map(c => c.join()).join(sym.zws)
+
 #let lines(arr) = arr.join(linebreak())
 
+// The footer has a fixed height and clips what does not fit, so an
+// overlong seller value can never push it off the page. Clipped text is
+// cut from the PDF; the length limits in printable.go keep real seller
+// data inside the footer.
+#let footer-widths = (1fr, 1.1fr, 1fr, 1.4fr)
 #let page-footer = context {
   set text(size: 7pt)
   align(right, [#d.page_label #counter(page).display() #d.page_of_label #counter(page).final().first()])
   v(-1mm)
-  line(length: 100%, stroke: 0.4pt + rule)
-  grid(
-    columns: d.footer.len() * (auto,),
-    column-gutter: 1fr,
-    ..d.footer.map(col => lines(col)),
-  )
-  if d.footer_text.len() > 0 {
-    v(0.5mm)
-    text(fill: muted, lines(d.footer_text))
-  }
+  block(height: 24mm, width: 100%, clip: true, {
+    line(length: 100%, stroke: 0.4pt + rule)
+    grid(
+      columns: footer-widths.slice(4 - d.footer.len()),
+      column-gutter: 3mm,
+      ..d.footer.map(col => lines(col)),
+    )
+    if d.footer_text.len() > 0 {
+      v(0.5mm)
+      text(fill: muted, lines(d.footer_text))
+    }
+  })
 }
 
 #set page(

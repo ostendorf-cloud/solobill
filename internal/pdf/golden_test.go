@@ -2,9 +2,15 @@ package pdf
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ostendorf-cloud/solobill/internal/docpayload"
@@ -33,6 +39,22 @@ func writeOrCompare(t *testing.T, path string, got []byte) {
 	}
 }
 
+// renderCase is one golden render: a fixture, issued or as a draft.
+type renderCase struct {
+	name    string
+	fixture string
+	draft   bool
+}
+
+func renderCases() []renderCase {
+	cases := make([]renderCase, 0, len(fixtures)+1)
+	for _, f := range fixtures {
+		cases = append(cases, renderCase{name: f.name, fixture: f.name})
+	}
+
+	return append(cases, renderCase{name: "offer-de-draft", fixture: "offer-de", draft: true})
+}
+
 // TestFixtures keeps the payload fixtures in step with internal/money
 // and proves each one is a valid frozen payload.
 func TestFixtures(t *testing.T) {
@@ -42,42 +64,120 @@ func TestFixtures(t *testing.T) {
 			if problems := docpayload.Validate(p); len(problems) > 0 {
 				t.Fatalf("fixture is not a valid payload: %v", problems)
 			}
+			if err := CheckPrintable(p); err != nil {
+				t.Fatalf("fixture is not printable: %v", err)
+			}
 			data, err := docpayload.Marshal(p)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var buf bytes.Buffer
-			buf.Write(indentJSON(t, data))
-			writeOrCompare(t, fixturePath(f.name), buf.Bytes())
+			writeOrCompare(t, fixturePath(f.name), indentJSON(t, data))
 		})
 	}
 }
 
 // TestGolden compares the data file Typst reads, which holds every text
-// the PDF prints, with a golden file per fixture. The template is fixed
-// per version, so the data file is the whole variable part of a render.
+// the PDF prints, with a golden file per case.
 func TestGolden(t *testing.T) {
-	cases := []struct {
-		name    string
-		fixture string
-		draft   bool
-	}{
-		{name: "invoice-standard-de", fixture: "invoice-standard-de"},
-		{name: "invoice-kleinunternehmer-de", fixture: "invoice-kleinunternehmer-de"},
-		{name: "invoice-line-discount-en", fixture: "invoice-line-discount-en"},
-		{name: "offer-de", fixture: "offer-de"},
-		{name: "offer-de-draft", fixture: "offer-de", draft: true},
-	}
-	for _, c := range cases {
+	for _, c := range renderCases() {
 		t.Run(c.name, func(t *testing.T) {
-			p := loadFixture(t, c.fixture)
-			src, err := BuildSource(p, c.draft)
+			src, err := BuildSource(loadFixture(t, c.fixture), c.draft)
 			if err != nil {
 				t.Fatal(err)
 			}
 			writeOrCompare(t, goldenPath(c.name), src.Data)
 		})
 	}
+}
+
+// templateHashes pins every shipped template version. A stored payload
+// names its version forever, so a shipped template never changes.
+var templateHashes = map[string]string{
+	"document-v1": "b837618a528708f90ecdc7c30df51e88de32ef664724d9169f71d09d9779d9e7",
+}
+
+func TestTemplateHashes(t *testing.T) {
+	for version, file := range templates {
+		b, err := assets.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(b)
+		got := hex.EncodeToString(sum[:])
+		want, ok := templateHashes[version]
+		if !ok {
+			t.Errorf("template %s has no pinned hash: add %q to templateHashes", version, got)
+
+			continue
+		}
+		if got != want {
+			t.Errorf("template %s changed (sha256 %s, pinned %s). A shipped template version never changes: "+
+				"add the change as a new version (document-v2) and keep %s as it is", version, got, want, version)
+		}
+	}
+}
+
+// renderAll renders every case once with the real Typst binary.
+func renderAll(t *testing.T) map[string][]byte {
+	t.Helper()
+	bin := typstOrSkip(t)
+	r := New(Options{Binary: bin, TempDir: t.TempDir()})
+	out := map[string][]byte{}
+	for _, c := range renderCases() {
+		payload, err := os.ReadFile(fixturePath(c.fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		pdf, err := r.Render(context.Background(), payload, c.draft)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		out[c.name] = pdf
+	}
+
+	return out
+}
+
+// TestTextGolden compares the text pdftotext extracts in layout mode
+// with a golden file per case: what a reader sees, not only the data.
+func TestTextGolden(t *testing.T) {
+	pdftotext, err := exec.LookPath("pdftotext")
+	if err != nil {
+		t.Skip("pdftotext (poppler) is not on PATH: the extracted text golden files are not compared")
+	}
+	pdfs := renderAll(t)
+	dir := t.TempDir()
+	for _, c := range renderCases() {
+		t.Run(c.name, func(t *testing.T) {
+			in := filepath.Join(dir, c.name+".pdf")
+			if err := os.WriteFile(in, pdfs[c.name], 0o600); err != nil {
+				t.Fatal(err)
+			}
+			text, err := exec.CommandContext(context.Background(), pdftotext, "-layout", "-enc", "UTF-8", in, "-").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeOrCompare(t, filepath.Join("testdata", "golden", c.name+".txt"), text)
+		})
+	}
+}
+
+// TestPDFHashes pins the bytes of every case to the Typst version, so a
+// Typst bump, a font change or a layout change shows as a diff of
+// testdata/golden/pdf-sha256.txt.
+func TestPDFHashes(t *testing.T) {
+	pdfs := renderAll(t)
+	version, err := exec.CommandContext(context.Background(), typstOrSkip(t), "--version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n", strings.TrimSpace(string(version)))
+	for _, c := range renderCases() {
+		sum := sha256.Sum256(pdfs[c.name])
+		fmt.Fprintf(&b, "%s  %s.pdf\n", hex.EncodeToString(sum[:]), c.name)
+	}
+	writeOrCompare(t, filepath.Join("testdata", "golden", "pdf-sha256.txt"), []byte(b.String()))
 }
 
 func loadFixture(t *testing.T, name string) docpayload.FrozenPayloadV1 {

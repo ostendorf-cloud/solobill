@@ -7,6 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/minio/minio-go/v7 v7.4.1
 	github.com/ostendorf-cloud/govue v0.5.0
+	golang.org/x/image v0.24.0
 )
 
 require (

@@ -42,6 +42,7 @@ func TestFormatCents(t *testing.T) {
 }
 
 func TestFormatQuantityAndPercent(t *testing.T) {
+	nbsp := string(noBreakSpace)
 	cases := []struct {
 		got, want string
 	}{
@@ -50,10 +51,10 @@ func TestFormatQuantityAndPercent(t *testing.T) {
 		{formatQuantity(12250, "en"), "12.25"},
 		{formatQuantity(1, "de"), "0,001"},
 		{formatQuantity(1234000, "de"), "1.234"},
-		{formatPercent(1900, "de"), "19 %"},
+		{formatPercent(1900, "de"), "19" + nbsp + "%"},
 		{formatPercent(700, "en"), "7%"},
-		{formatPercent(1050, "de"), "10,5 %"},
-		{formatPercent(0, "de"), "0 %"},
+		{formatPercent(1050, "de"), "10,5" + nbsp + "%"},
+		{formatPercent(0, "de"), "0" + nbsp + "%"},
 		{formatPercent(25, "en"), "0.25%"},
 	}
 	for _, c := range cases {

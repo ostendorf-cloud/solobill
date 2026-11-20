@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,10 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/docpayload"
 	"github.com/ostendorf-cloud/solobill/internal/httpapi"
 )
+
+// zeroWidthSpace is U+200B, written as a rune value so the source holds
+// no invisible character.
+const zeroWidthSpace rune = 0x200B
 
 // Renderer is the documents API's renderer.
 var _ httpapi.DocumentRenderer = (*Renderer)(nil)
@@ -42,7 +48,8 @@ func hostilePayload(t *testing.T) docpayload.FrozenPayloadV1 {
 	p.CustomerReference = hostile[3]
 	p.Customer.Number = hostile[4]
 	p.Lines[0].Description = hostile[5] + "\n" + hostile[6]
-	p.Lines[0].Unit = hostile[7]
+	p.Customer.VATID = hostile[7]
+	p.Lines[0].Unit = `#u $ \`
 	p.Notes = hostile[8]
 
 	return p
@@ -69,18 +76,28 @@ func TestInjectionStaysData(t *testing.T) {
 			t.Errorf("hostile text %q is not in the data unchanged", h)
 		}
 	}
-	// The template never evaluates data as code or reads a path from it.
-	for i, line := range strings.Split(string(src.Template), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "//") {
-			continue
+}
+
+// fileAccess matches every Typst function or keyword that reads a file
+// or evaluates code.
+var fileAccess = regexp.MustCompile(`\b(?:json|yaml|csv|toml|xml|cbor|read|image|plugin|eval|bytes)\s*\([^)]*\)?|\b(?:include|import)\b`)
+
+// TestTemplateFileAccess allows exactly one file access in a template:
+// json("data.json"). Nothing else may read a file or evaluate code, so
+// no data value can ever name a path or become code.
+func TestTemplateFileAccess(t *testing.T) {
+	for version, file := range templates {
+		b, err := assets.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, call := range []string{"eval(", "read(", "include", "image(", "plugin("} {
-			if strings.Contains(line, call) {
-				t.Errorf("template line %d calls %s: %s", i+1, call, line)
-			}
+		var found []string
+		for _, line := range strings.Split(string(b), "\n") {
+			code, _, _ := strings.Cut(line, "//")
+			found = append(found, fileAccess.FindAllString(code, -1)...)
 		}
-		if strings.Contains(line, "json(") && !strings.Contains(line, `json("data.json")`) {
-			t.Errorf("template line %d reads JSON from elsewhere: %s", i+1, line)
+		if want := []string{`json("data.json")`}; !slices.Equal(found, want) {
+			t.Errorf("template %s: file access %q, want exactly %q", version, found, want)
 		}
 	}
 }
@@ -95,26 +112,19 @@ func typstOrSkip(t *testing.T) string {
 	return bin
 }
 
-// TestCompile renders every fixture with the real Typst binary and
-// checks the output is a reproducible PDF/A-3b. When SOLOBILL_PDF_OUT is
-// set, the PDFs are written there for a visual check.
+// TestCompile renders every case with the real Typst binary and checks
+// the output is a reproducible PDF/A-3b naming its template version.
+// When SOLOBILL_PDF_OUT is set, the PDFs are written there for a
+// visual check.
 func TestCompile(t *testing.T) {
 	bin := typstOrSkip(t)
 	r := New(Options{Binary: bin, TempDir: t.TempDir()})
+	if err := r.CheckVersion(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	outDir := os.Getenv("SOLOBILL_PDF_OUT")
 
-	cases := []struct {
-		name    string
-		fixture string
-		draft   bool
-	}{
-		{"invoice-standard-de", "invoice-standard-de", false},
-		{"invoice-kleinunternehmer-de", "invoice-kleinunternehmer-de", false},
-		{"invoice-line-discount-en", "invoice-line-discount-en", false},
-		{"offer-de", "offer-de", false},
-		{"offer-de-draft", "offer-de", true},
-	}
-	for _, c := range cases {
+	for _, c := range renderCases() {
 		t.Run(c.name, func(t *testing.T) {
 			payload, err := os.ReadFile(fixturePath(c.fixture))
 			if err != nil {
@@ -130,6 +140,9 @@ func TestCompile(t *testing.T) {
 			if !bytes.Contains(pdf, []byte("<pdfaid:part>3</pdfaid:part>")) {
 				t.Error("output does not declare PDF/A-3")
 			}
+			if !bytes.Contains(pdf, []byte(CurrentTemplateVersion)) {
+				t.Errorf("metadata does not name %s", CurrentTemplateVersion)
+			}
 			again, err := r.Render(context.Background(), payload, c.draft)
 			if err != nil {
 				t.Fatal(err)
@@ -137,12 +150,18 @@ func TestCompile(t *testing.T) {
 			if !bytes.Equal(pdf, again) {
 				t.Error("two renders of the same payload differ")
 			}
-			if outDir != "" {
-				if err := os.WriteFile(filepath.Join(outDir, c.name+".pdf"), pdf, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
+			writeOut(t, outDir, c.name, pdf)
 		})
+	}
+}
+
+func writeOut(t *testing.T, dir, name string, pdf []byte) {
+	t.Helper()
+	if dir == "" {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".pdf"), pdf, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -156,11 +175,7 @@ func TestCompileInjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hostile payload did not render as text: %v", err)
 	}
-	if outDir := os.Getenv("SOLOBILL_PDF_OUT"); outDir != "" {
-		if err := os.WriteFile(filepath.Join(outDir, "hostile.pdf"), pdf, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeOut(t, os.Getenv("SOLOBILL_PDF_OUT"), "hostile", pdf)
 
 	// The text check needs pdftotext; the compile above already proves
 	// nothing executed.
@@ -178,11 +193,251 @@ func TestCompileInjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := strings.Join(strings.Fields(string(out)), " ")
+	// The template adds a zero width space after every 20 characters of a
+	// longer token (a line break opportunity); it is not part of the text.
+	text := strings.Join(strings.Fields(strings.ReplaceAll(string(out), string(zeroWidthSpace), "")), " ")
 	for _, h := range hostile {
 		if !strings.Contains(text, strings.Join(strings.Fields(h), " ")) {
 			t.Errorf("printed text lacks %q", h)
 		}
+	}
+}
+
+// TestLongTokens renders 5000 character tokens in the fields that have
+// overrun their columns. The PDFs are written to SOLOBILL_PDF_OUT for a
+// visual check; here the render must succeed and keep the text.
+func TestLongTokens(t *testing.T) {
+	token := func(n int) string { return strings.Repeat("ABCDEFGHIJ", n/10) }
+	long := token(5000)
+	p := loadFixture(t, "invoice-standard-de")
+	p.Lines = p.Lines[28:]
+
+	// Single line and footer fields are capped: a 5000 character token
+	// is refused with its field.
+	refused := p
+	refused.Customer.Name = long
+	refused.Seller.IBAN = long
+	refused.Seller.FooterText = long
+	refused.Lines = slices.Clone(p.Lines)
+	refused.Lines[0].Unit = token(MaxUnitChars + 10)
+	var invalid *InvalidPayloadError
+	if err := CheckPrintable(refused); !errors.As(err, &invalid) {
+		t.Fatalf("CheckPrintable = %v, want *InvalidPayloadError", err)
+	}
+	for _, path := range []string{"customer.name", "seller.iban", "seller.footer_text", "lines[0].unit"} {
+		if invalid.Details[path] == "" {
+			t.Errorf("%s is not refused: %v", path, invalid.Details)
+		}
+	}
+
+	// Free text has no cap of its own; the longest allowed values must
+	// wrap inside their columns.
+	bin := typstOrSkip(t)
+	r := New(Options{Binary: bin, TempDir: t.TempDir()})
+	p.Lines[0].Description = long
+	p.Lines[1].Unit = "ABCDEFGHIJKLMNOP"[:MaxUnitChars]
+	p.Customer.Name = token(MaxLineChars)
+	p.Seller.LegalName = token(MaxSellerChars)
+	p.Seller.Email = token(MaxSellerChars)
+	p.Seller.IBAN = token(MaxSellerChars)
+	p.Seller.FooterText = token(MaxFooterTextChars)
+	p.CustomerReference = token(MaxLineChars)
+	if err := CheckPrintable(p); err != nil {
+		t.Fatal(err)
+	}
+	// Rendered as issued: the draft check would recompute the totals of
+	// the shortened lines, and only the layout matters here.
+	pdf, err := r.RenderPayload(context.Background(), p, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeOut(t, os.Getenv("SOLOBILL_PDF_OUT"), "long-tokens", pdf)
+
+	pdftotext, err := exec.LookPath("pdftotext")
+	if err != nil {
+		return
+	}
+	in := filepath.Join(t.TempDir(), "long.pdf")
+	if err := os.WriteFile(in, pdf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.CommandContext(context.Background(), pdftotext, "-raw", in, "-").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The wrapped tokens interleave with their neighbour columns in the
+	// extracted text, so the check counts their letters: the
+	// description's 500 "J", the unit's, the name's and the reference's
+	// 20 each, and the footer's on every page.
+	if n, want := strings.Count(string(out), "J"), 500+2*20+30; n < want {
+		t.Errorf("the extracted text holds %d of the long tokens' letters, want at least %d", n, want)
+	}
+}
+
+// unprintable are characters the bundled Go fonts cannot show, or that
+// are refused on purpose. Typst fails on each under PDF/A-3b.
+var unprintable = []struct {
+	name string
+	s    string
+}{
+	{"cjk", "Müller 中文"},
+	{"emoji", "Max \U0001F600"},
+	{"arabic", "مرحبا"},
+	{"capital sharp s", "STRAẞE"},
+	{"non-breaking hyphen", "IT‑Beratung"},
+	{"check mark", "erledigt ✓"},
+	{"bell", "a\x07b"},
+	{"escape", "a\x1bb"},
+	{"right to left override", "IBAN " + string(rune(0x202E)) + "0000"},
+	{"left to right isolate", "a" + string(rune(0x2066)) + "b"},
+	{"zero width space", "a" + string(zeroWidthSpace) + "b"},
+}
+
+func TestCheckPrintableRefuses(t *testing.T) {
+	base := loadFixture(t, "invoice-standard-de")
+	for _, c := range unprintable {
+		t.Run(c.name, func(t *testing.T) {
+			p := base
+			p.Customer.Name = c.s
+			var invalid *InvalidPayloadError
+			if err := CheckPrintable(p); !errors.As(err, &invalid) || invalid.Details["customer.name"] == "" {
+				t.Fatalf("CheckPrintable = %v, want customer.name refused", err)
+			}
+			if _, err := BuildInput(p, false); !errors.As(err, &invalid) {
+				t.Fatalf("BuildInput = %v, want *InvalidPayloadError", err)
+			}
+
+			p = base
+			p.Lines = slices.Clone(base.Lines)
+			p.Lines[3].Description = "ok\n" + c.s
+			if err := CheckPrintable(p); !errors.As(err, &invalid) || invalid.Details["lines[3].description"] == "" {
+				t.Fatalf("CheckPrintable = %v, want lines[3].description refused", err)
+			}
+		})
+	}
+}
+
+func TestCheckPrintableControlCharacters(t *testing.T) {
+	p := loadFixture(t, "invoice-standard-de")
+	p.Notes = "Zeile 1\r\nZeile 2\tmit Tab"
+	if err := CheckPrintable(p); err != nil {
+		t.Errorf("line feed, carriage return and tab in a free text field: %v", err)
+	}
+	p.Customer.Name = "Zeile 1\nZeile 2"
+	var invalid *InvalidPayloadError
+	if err := CheckPrintable(p); !errors.As(err, &invalid) || invalid.Details["customer.name"] == "" {
+		t.Errorf("line feed in a single line field: %v", err)
+	}
+}
+
+// TestPrintableCompiles renders every character class the check accepts
+// that the fixtures do not hold, so the check never accepts what Typst
+// refuses.
+func TestPrintableCompiles(t *testing.T) {
+	bin := typstOrSkip(t)
+	p := loadFixture(t, "offer-de")
+	p.Customer.Name = "ÄÖÜäöüß àéîõç ÆØÅæøå ŁłŚśŹźŻż ČčŠšŽž €£¥ „“ ‚‘ «» – — … · • ° ± × ÷ § ¶ © ® ™"
+	p.Notes = "Tab\tdanach\r\nZeile"
+	if err := CheckPrintable(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Options{Binary: bin, TempDir: t.TempDir()}).RenderPayload(context.Background(), p, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLabelsPrintable checks the template's own texts against the
+// bundled fonts.
+func TestLabelsPrintable(t *testing.T) {
+	pr, err := newPrinter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for lang, l := range labelsByLanguage {
+		b, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pr.check(lang, string(b), false)
+	}
+	pr.check("separators", " · "+string(noBreakSpace)+"%", false)
+	if len(pr.problems) > 0 {
+		t.Errorf("labels cannot be printed: %v", pr.problems)
+	}
+}
+
+func TestLogoUnsupported(t *testing.T) {
+	p := loadFixture(t, "offer-de")
+	p.Seller.LogoSHA256 = strings.Repeat("a", 64)
+	if _, err := BuildInput(p, false); !errors.Is(err, ErrLogoUnsupported) {
+		t.Errorf("BuildInput = %v, want ErrLogoUnsupported", err)
+	}
+	if _, err := New(Options{Binary: "typst"}).RenderPayload(context.Background(), p, true); !errors.Is(err, ErrLogoUnsupported) {
+		t.Errorf("draft render = %v, want ErrLogoUnsupported", err)
+	}
+	// Issuing with a logo stays possible; only rendering waits.
+	if err := CheckPrintable(p); err != nil {
+		t.Errorf("CheckPrintable = %v", err)
+	}
+}
+
+func TestCaps(t *testing.T) {
+	p := loadFixture(t, "offer-de")
+	line := p.Lines[1]
+	p.Lines = make([]docpayload.Line, MaxLines+1)
+	for i := range p.Lines {
+		p.Lines[i] = line
+	}
+	var invalid *InvalidPayloadError
+	if err := CheckPrintable(p); !errors.As(err, &invalid) || invalid.Details["lines"] == "" {
+		t.Errorf("%d lines: CheckPrintable = %v", len(p.Lines), err)
+	}
+	if _, err := BuildInput(p, false); !errors.As(err, &invalid) || invalid.Details["lines"] == "" {
+		t.Errorf("%d lines: BuildInput = %v", len(p.Lines), err)
+	}
+
+	p.Lines = p.Lines[:10]
+	p.Lines[0].Description = strings.Repeat("Lorem ipsum ", MaxDataBytes/12+1)
+	if err := CheckPrintable(p); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Errorf("large data: CheckPrintable = %v", err)
+	}
+	if _, err := BuildSource(p, false); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Errorf("large data: BuildSource = %v", err)
+	}
+}
+
+// TestCapsKeepOutputSmall renders the largest payload the caps allow:
+// MaxLines lines whose descriptions fill MaxDataBytes. It must stay
+// below DefaultMaxOutputBytes. Skipped with -short.
+func TestCapsKeepOutputSmall(t *testing.T) {
+	if testing.Short() {
+		t.Skip("renders several hundred pages")
+	}
+	bin := typstOrSkip(t)
+	p := loadFixture(t, "offer-de")
+	line := p.Lines[1]
+	p.Lines = make([]docpayload.Line, MaxLines)
+	// Each line's share of the data limit, minus the formatted fields.
+	desc := strings.Repeat("Wartung und Betrieb ", (MaxDataBytes/MaxLines-400)/20)
+	for i := range p.Lines {
+		p.Lines[i] = line
+		p.Lines[i].Description = desc
+	}
+	src, err := BuildSource(p, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(src.Data) < MaxDataBytes*9/10 {
+		t.Fatalf("data is %d bytes, want close to %d", len(src.Data), MaxDataBytes)
+	}
+	r := New(Options{Binary: bin, TempDir: t.TempDir(), Timeout: 5 * time.Minute})
+	pdf, err := r.compile(context.Background(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%d bytes of data render to %d bytes of PDF", len(src.Data), len(pdf))
+	if len(pdf) > DefaultMaxOutputBytes {
+		t.Errorf("PDF is %d bytes, over %d", len(pdf), DefaultMaxOutputBytes)
 	}
 }
 
@@ -220,12 +475,17 @@ func TestRenderTimeout(t *testing.T) {
 	}
 }
 
+// TestRenderOutputTooLarge streams an endless output: the cap must stop
+// the process long before the timeout.
 func TestRenderOutputTooLarge(t *testing.T) {
-	// The last argument is the output path.
-	bin := fakeTypst(t, `for last; do :; done; head -c 4096 /dev/zero > "$last"`)
-	r := New(Options{Binary: bin, MaxOutputBytes: 1024, TempDir: t.TempDir()})
+	bin := fakeTypst(t, `printf '%%PDF-1.7'; exec yes`)
+	r := New(Options{Binary: bin, MaxOutputBytes: 1 << 20, Timeout: 20 * time.Second, TempDir: t.TempDir()})
+	start := time.Now()
 	if _, err := r.Render(context.Background(), offerPayload(t), false); !errors.Is(err, ErrOutputTooLarge) {
 		t.Fatalf("err = %v, want ErrOutputTooLarge", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Errorf("render took %s, the cap did not stop typst", time.Since(start))
 	}
 }
 
@@ -238,10 +498,13 @@ func TestRenderCompileError(t *testing.T) {
 	}
 }
 
-// TestRenderArguments pins the isolation flags typst is called with.
+// TestRenderArguments pins the whole typst command line and environment.
 func TestRenderArguments(t *testing.T) {
+	// A host variable that would add a font path must not reach typst.
+	t.Setenv("TYPST_FONT_PATHS", "/injected/fonts")
+	t.Setenv("TYPST_ROOT", "/")
 	argsFile := filepath.Join(t.TempDir(), "args")
-	bin := fakeTypst(t, `printf '%s\n' "$@" > "`+argsFile+`"; env > "`+argsFile+`.env"; for last; do :; done; printf '%%PDF-1.7' > "$last"`)
+	bin := fakeTypst(t, `printf '%s\n' "$@" > "`+argsFile+`"; env > "`+argsFile+`.env"; printf '%%PDF-1.7'`)
 	r := New(Options{Binary: bin, TempDir: t.TempDir()})
 	if _, err := r.Render(context.Background(), offerPayload(t), false); err != nil {
 		t.Fatal(err)
@@ -251,32 +514,47 @@ func TestRenderArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	joined := strings.Join(args, " ")
-	for _, want := range []string{"--ignore-system-fonts", "--ignore-embedded-fonts", "--pdf-standard a-3b", "--creation-timestamp 1795132800"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("typst arguments lack %q: %s", want, joined)
-		}
+	if len(args) < 3 || args[1] != "--root" {
+		t.Fatalf("args = %q", args)
 	}
-	root := ""
-	for i, a := range args {
-		if a == "--root" && i+1 < len(args) {
-			root = args[i+1]
-		}
+	root := args[2]
+	want := []string{
+		"compile",
+		"--root", root,
+		"--font-path", filepath.Join(root, "fonts"),
+		"--ignore-system-fonts",
+		"--ignore-embedded-fonts",
+		"--package-path", filepath.Join(root, "packages"),
+		"--package-cache-path", filepath.Join(root, "package-cache"),
+		"--pdf-standard", "a-3b",
+		"--creation-timestamp", "1795132800",
+		"--diagnostic-format", "short",
+		"--jobs", "1",
+		"--format", "pdf",
+		filepath.Join(root, "main.typ"),
+		"-",
 	}
-	if root == "" {
-		t.Fatal("no --root")
+	if !slices.Equal(args, want) {
+		t.Errorf("typst arguments\n got %q\nwant %q", args, want)
 	}
-	for i, a := range args {
-		if strings.HasPrefix(a, "/") && !strings.HasPrefix(a, root) && (i == 0 || args[i-1] != "--root") {
-			t.Errorf("argument %q is outside the root %s", a, root)
-		}
-	}
-	env, err := os.ReadFile(argsFile + ".env")
+
+	envRaw, err := os.ReadFile(argsFile + ".env")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(env), "TYPST_") {
-		t.Errorf("typst inherits a TYPST_ variable:\n%s", env)
+	var env []string
+	for _, kv := range strings.Split(strings.TrimSpace(string(envRaw)), "\n") {
+		// The shell itself adds PWD, SHLVL and "_".
+		name, _, _ := strings.Cut(kv, "=")
+		if name != "PWD" && name != "SHLVL" && name != "_" && name != "OLDPWD" {
+			env = append(env, kv)
+		}
+	}
+	slices.Sort(env)
+	wantEnv := minimalEnv(root)
+	slices.Sort(wantEnv)
+	if !slices.Equal(env, wantEnv) {
+		t.Errorf("typst environment\n got %q\nwant %q", env, wantEnv)
 	}
 }
 
@@ -284,6 +562,20 @@ func TestRenderUnavailable(t *testing.T) {
 	r := New(Options{Binary: filepath.Join(t.TempDir(), "no-typst")})
 	if _, err := r.Render(context.Background(), offerPayload(t), false); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if err := r.CheckVersion(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("CheckVersion = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestCheckVersion(t *testing.T) {
+	ok := New(Options{Binary: fakeTypst(t, `echo "typst `+TypstVersion+` (b33de9de)"`)})
+	if err := ok.CheckVersion(context.Background()); err != nil {
+		t.Errorf("pinned version: %v", err)
+	}
+	other := New(Options{Binary: fakeTypst(t, `echo "typst 0.13.1 (8ace67d9)"`)})
+	if err := other.CheckVersion(context.Background()); !errors.Is(err, ErrTypstVersion) {
+		t.Errorf("other version: %v, want ErrTypstVersion", err)
 	}
 }
 
@@ -351,19 +643,14 @@ func TestDraft(t *testing.T) {
 }
 
 func TestCorrection(t *testing.T) {
-	p := loadFixture(t, "invoice-line-discount-en")
-	p.Type = docpayload.TypeCorrection
-	p.CorrectionSeq = 1
-	p.Number = "RE-20260043-1"
-	p.Corrects = &docpayload.DocumentReference{ID: "x", Number: "RE-20260043", IssueDate: "2026-12-07"}
-	in, err := BuildInput(p, false)
+	in, err := BuildInput(loadFixture(t, "correction-de"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if in.Title != "Corrected invoice" || in.Meta[0].Value != "RE-20260043-1" {
+	if in.Title != "Rechnungskorrektur" || in.Meta[0].Value != "RE-20260042-1" {
 		t.Errorf("title %q, meta %+v", in.Title, in.Meta)
 	}
-	if want := "This corrected invoice replaces invoice RE-20260043 of 7 December 2026."; in.CorrectsLine != want {
+	if want := "Diese Rechnungskorrektur ersetzt die Rechnung RE-20260042 vom 05.12.2026."; in.CorrectsLine != want {
 		t.Errorf("corrects line %q, want %q", in.CorrectsLine, want)
 	}
 }

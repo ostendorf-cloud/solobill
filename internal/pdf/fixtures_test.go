@@ -111,6 +111,106 @@ var fixtures = []fixture{
 	{name: "invoice-kleinunternehmer-de", build: invoiceKleinunternehmerDE},
 	{name: "invoice-line-discount-en", build: invoiceLineDiscountEN},
 	{name: "offer-de", build: offerDE},
+	{name: "correction-de", build: correctionDE},
+	{name: "offer-en", build: offerEN},
+	{name: "invoice-kleinunternehmer-en", build: invoiceKleinunternehmerEN},
+	{name: "invoice-exempt-de", build: invoiceExemptDE},
+}
+
+// correctionDE corrects invoice RE-20260042 with a single replaced line.
+func correctionDE(t *testing.T) docpayload.FrozenPayloadV1 {
+	return withFigures(t, docpayload.FrozenPayloadV1{
+		Version:         docpayload.Version1,
+		Type:            docpayload.TypeCorrection,
+		Language:        docpayload.LanguageGerman,
+		VATRegime:       docpayload.RegimeStandard,
+		TemplateVersion: CurrentTemplateVersion,
+		Currency:        docpayload.CurrencyEUR,
+		Number:          "RE-20260042-1",
+		NumberValue:     42,
+		NumberYear:      2026,
+		CorrectionSeq:   1,
+		IssueDate:       "2026-12-10",
+		ServicePeriod:   &docpayload.ServicePeriod{From: "2026-11-01", To: "2026-11-30"},
+		DueDate:         "2026-12-24",
+		Seller:          exampleSeller(),
+		Customer:        exampleCustomer(),
+		Corrects: &docpayload.DocumentReference{
+			ID:        "00000000-0000-4000-8000-000000000042",
+			Number:    "RE-20260042",
+			IssueDate: "2026-12-05",
+		},
+		Lines: []docpayload.Line{
+			{Position: 1, Description: "Softwareentwicklung laut Leistungsbeschreibung", QuantityThousandths: 120000, Unit: "Std.", UnitPriceCents: 9500, VATRatePermyriad: 1900},
+		},
+		PaymentTerms: "Zahlbar innerhalb von 14 Tagen ohne Abzug.",
+	})
+}
+
+// offerEN is an English offer with a document discount amount.
+func offerEN(t *testing.T) docpayload.FrozenPayloadV1 {
+	return withFigures(t, docpayload.FrozenPayloadV1{
+		Version:         docpayload.Version1,
+		Type:            docpayload.TypeOffer,
+		Language:        docpayload.LanguageEnglish,
+		VATRegime:       docpayload.RegimeStandard,
+		TemplateVersion: CurrentTemplateVersion,
+		Currency:        docpayload.CurrencyEUR,
+		Number:          "AN-20260013",
+		NumberValue:     13,
+		NumberYear:      2026,
+		IssueDate:       "2026-11-20",
+		ValidUntil:      "2027-01-15",
+		Seller:          exampleSeller(),
+		Customer:        exampleCustomer(),
+		Lines: []docpayload.Line{
+			{Position: 1, Description: "Kubernetes cluster setup", QuantityThousandths: 1000, Unit: "flat", UnitPriceCents: 380000, VATRatePermyriad: 1900},
+			{Position: 2, Description: "Training, two days", QuantityThousandths: 2000, Unit: "days", UnitPriceCents: 120000, VATRatePermyriad: 1900},
+		},
+		DocumentDiscount: docpayload.Discount{AmountCents: amount(20000)},
+		Notes:            "We look forward to hearing from you.",
+	})
+}
+
+// invoiceKleinunternehmerEN is the section 19 invoice in English.
+func invoiceKleinunternehmerEN(t *testing.T) docpayload.FrozenPayloadV1 {
+	p := invoiceKleinunternehmerDE(t)
+	p.Language = docpayload.LanguageEnglish
+	p.Lines[0].Description = "Kubernetes basics workshop"
+	p.Lines[0].Unit = "day"
+	p.Lines[1].Description = "Travel expenses, flat rate"
+	p.Lines[1].Unit = "flat"
+	p.TaxNote = "No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung)."
+	p.PaymentTerms = "Payable within 14 days without deduction."
+
+	return p
+}
+
+// invoiceExemptDE is a standard regime invoice with a tax exempt line
+// and the exemption note.
+func invoiceExemptDE(t *testing.T) docpayload.FrozenPayloadV1 {
+	return withFigures(t, docpayload.FrozenPayloadV1{
+		Version:         docpayload.Version1,
+		Type:            docpayload.TypeInvoice,
+		Language:        docpayload.LanguageGerman,
+		VATRegime:       docpayload.RegimeStandard,
+		TemplateVersion: CurrentTemplateVersion,
+		Currency:        docpayload.CurrencyEUR,
+		Number:          "RE-20260044",
+		NumberValue:     44,
+		NumberYear:      2026,
+		IssueDate:       "2026-12-08",
+		ServicePeriod:   &docpayload.ServicePeriod{From: "2026-12-01", To: "2026-12-01"},
+		DueDate:         "2026-12-22",
+		Seller:          exampleSeller(),
+		Customer:        exampleCustomer(),
+		Lines: []docpayload.Line{
+			{Position: 1, Description: "Prüfungsvorbereitung IHK, Unterricht", QuantityThousandths: 6000, Unit: "Std.", UnitPriceCents: 6000},
+			{Position: 2, Description: "Lernmaterial", QuantityThousandths: 1000, Unit: "Stück", UnitPriceCents: 4900, VATRatePermyriad: 1900},
+		},
+		TaxNote:      "Die Unterrichtsleistung ist nach § 4 Nr. 21 UStG steuerfrei.",
+		PaymentTerms: "Zahlbar innerhalb von 14 Tagen ohne Abzug.",
+	})
 }
 
 // invoiceStandardDE is a normal invoice under the standard regime with

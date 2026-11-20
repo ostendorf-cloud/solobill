@@ -5,9 +5,8 @@ import "github.com/ostendorf-cloud/solobill/internal/docpayload"
 // labels are the fixed texts of the template in one language. They are
 // product content: German and English, chosen by the document language.
 type labels struct {
-	Invoice            string
-	Correction         string
-	Offer              string
+	// Title is the document title by payload type.
+	Title              map[string]string
 	Watermark          string
 	Number             map[string]string
 	Date               string
@@ -54,10 +53,12 @@ type labels struct {
 
 var labelsByLanguage = map[string]labels{
 	docpayload.LanguageGerman: {
-		Invoice:    "Rechnung",
-		Correction: "Rechnungskorrektur",
-		Offer:      "Angebot",
-		Watermark:  "Entwurf",
+		Title: map[string]string{
+			docpayload.TypeInvoice:    "Rechnung",
+			docpayload.TypeCorrection: "Rechnungskorrektur",
+			docpayload.TypeOffer:      "Angebot",
+		},
+		Watermark: "Entwurf",
 		Number: map[string]string{
 			docpayload.TypeInvoice:    "Rechnungsnummer",
 			docpayload.TypeCorrection: "Rechnungsnummer",
@@ -111,10 +112,12 @@ var labelsByLanguage = map[string]labels{
 		},
 	},
 	docpayload.LanguageEnglish: {
-		Invoice:    "Invoice",
-		Correction: "Corrected invoice",
-		Offer:      "Offer",
-		Watermark:  "Draft",
+		Title: map[string]string{
+			docpayload.TypeInvoice:    "Invoice",
+			docpayload.TypeCorrection: "Corrected invoice",
+			docpayload.TypeOffer:      "Offer",
+		},
+		Watermark: "Draft",
 		Number: map[string]string{
 			docpayload.TypeInvoice:    "Invoice number",
 			docpayload.TypeCorrection: "Invoice number",

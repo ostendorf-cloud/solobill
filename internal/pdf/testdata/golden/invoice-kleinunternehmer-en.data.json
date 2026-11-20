@@ -1,0 +1,118 @@
+{
+  "template_version": "document-v1",
+  "lang": "en",
+  "draft": false,
+  "watermark": "Draft",
+  "document_title": "Invoice RE-20260007",
+  "title": "Invoice",
+  "sender_line": "Max Mustermann IT-Beratung · Musterstraße 1 · 12345 Musterstadt",
+  "seller_name": "Max Mustermann IT-Beratung",
+  "recipient_lines": [
+    "Mustermann Consulting GmbH",
+    "Beispielweg 7",
+    "54321 Beispielstadt"
+  ],
+  "meta": [
+    {
+      "label": "Invoice number",
+      "value": "RE-20260007"
+    },
+    {
+      "label": "Date",
+      "value": "20 November 2026"
+    },
+    {
+      "label": "Date of supply",
+      "value": "18 November 2026"
+    },
+    {
+      "label": "Customer number",
+      "value": "K-1001"
+    },
+    {
+      "label": "Due date",
+      "value": "4 December 2026"
+    }
+  ],
+  "corrects_line": "",
+  "show_vat": false,
+  "columns": {
+    "position": "No.",
+    "description": "Description",
+    "quantity": "Qty",
+    "unit": "Unit",
+    "unit_price": "Unit price",
+    "vat_rate": "VAT",
+    "amount": "Amount"
+  },
+  "lines": [
+    {
+      "position": "1",
+      "description": [
+        "Kubernetes basics workshop"
+      ],
+      "discount": "",
+      "quantity": "1",
+      "unit": "day",
+      "unit_price": "1,200.00 EUR",
+      "vat_rate": "",
+      "amount": "1,200.00 EUR"
+    },
+    {
+      "position": "2",
+      "description": [
+        "Travel expenses, flat rate"
+      ],
+      "discount": "",
+      "quantity": "1",
+      "unit": "flat",
+      "unit_price": "85.50 EUR",
+      "vat_rate": "",
+      "amount": "85.50 EUR"
+    }
+  ],
+  "totals": [
+    {
+      "label": "Total",
+      "value": "1,285.50 EUR",
+      "strong": true
+    }
+  ],
+  "sections": [
+    {
+      "title": "",
+      "lines": [
+        "No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung)."
+      ]
+    },
+    {
+      "title": "Payment terms",
+      "lines": [
+        "Payable within 14 days without deduction."
+      ]
+    }
+  ],
+  "footer": [
+    [
+      "Max Mustermann IT-Beratung",
+      "Musterstraße 1",
+      "12345 Musterstadt"
+    ],
+    [
+      "Phone +49 000 0000000",
+      "Email rechnung@example.com",
+      "Web www.example.com"
+    ],
+    [
+      "Tax number 12/345/67890"
+    ],
+    [
+      "Bank Musterbank",
+      "IBAN DE00 0000 0000 0000 0000 00",
+      "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_text": [],
+  "page_label": "Page",
+  "page_of_label": "of"
+}
