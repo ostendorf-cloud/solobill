@@ -622,38 +622,56 @@ const maxXMLAttributes = 256
 // XHTML namespace a browser does not run script in it.
 var refusedXMLRoots = map[string]bool{"svg": true, "html": true}
 
-// refusedXMLNamespaces are the SVG and XHTML namespaces, in which a
-// browser renders elements with script. An e-invoice never uses them.
-var refusedXMLNamespaces = map[string]bool{
-	"http://www.w3.org/2000/svg":   true,
-	"http://www.w3.org/1999/xhtml": true,
-}
+// maxXMLAttributeBytes bounds one attribute value. No e-invoice carries an
+// attribute this large; an attachment is a base64 text node, which is not
+// capped. encoding/xml has already copied the value when it is seen, so
+// this stops the parse early rather than saving that copy.
+const maxXMLAttributeBytes = 64 << 10
 
+// The SVG and XHTML namespaces, in which a browser renders elements with
+// script. An e-invoice never uses them.
+const (
+	svgNamespace   = "http://www.w3.org/2000/svg"
+	xhtmlNamespace = "http://www.w3.org/1999/xhtml"
+)
+
+// refusedXMLNamespace compares without copying uri: an attribute value
+// can be large.
 func refusedXMLNamespace(uri string) bool {
-	return refusedXMLNamespaces[strings.ToLower(strings.TrimSpace(uri))]
+	uri = strings.TrimSpace(uri)
+
+	return strings.EqualFold(uri, svgNamespace) || strings.EqualFold(uri, xhtmlNamespace)
 }
 
 // xmlAllowed parses the whole document with encoding/xml and accepts it
-// only when it is well formed UTF-8 with exactly one root element and
-// nothing a browser could run. It refuses:
+// only when every token parses and nothing in it is a known way to run
+// script. A body encoded other than UTF-8 is refused; XRechnung requires
+// UTF-8. It is not a full well formedness check: encoding/xml also accepts,
+// for example, text outside the root element, a second <?xml?> later in
+// the body and an unbound prefix. It refuses:
 //
-//   - any parse error, which includes an encoding other than UTF-8 (no
-//     CharsetReader) and an entity other than the five predefined ones;
+//   - any token that does not parse, which includes an encoding other
+//     than UTF-8 (no CharsetReader) and an entity other than the five
+//     predefined ones;
 //   - any directive, so no DOCTYPE and no internal subset, which also means
 //     no entity is ever defined, let alone expanded;
-//   - an xml-stylesheet processing instruction;
+//   - an xml-stylesheet processing instruction, in any letter case;
 //   - an element or attribute in the SVG or XHTML namespace, after
 //     namespace resolution, and an attribute whose value (character
 //     references resolved) is one of those namespaces;
-//   - a root whose local name is svg or html;
+//   - a root whose local name is svg or html, and a second root element;
 //   - nesting deeper than maxXMLDepth, more than maxXMLAttributes on one
-//     element, a repeated attribute, and a body without a root.
+//     element, an attribute value over maxXMLAttributeBytes, a repeated
+//     attribute (also through two prefixes bound to the same namespace),
+//     and a body without a root element.
 //
 // The work is linear in the body, which the upload limit already caps at
-// 10 MiB; the decoder keeps a stack, not a recursion. The file is still
-// only stored and served as an attachment with nosniff and a sandbox
-// policy: this check keeps script carrying documents out of the store, it
-// is not the only line.
+// 10 MiB; the decoder keeps a stack, not a recursion. encoding/xml copies
+// every text node and attribute value, which is the memory cost of the
+// parse on top of the upload buffer. The file is still only stored and
+// served as an attachment with nosniff and a sandbox policy: this check
+// keeps script carrying documents out of the store, it is not the only
+// line.
 func xmlAllowed(data []byte) bool {
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = true
@@ -687,7 +705,8 @@ func xmlAllowed(data []byte) bool {
 			// not well formed XML.
 			seen := make(map[xml.Name]bool, len(t.Attr))
 			for _, attr := range t.Attr {
-				if seen[attr.Name] || refusedXMLNamespace(attr.Name.Space) || refusedXMLNamespace(attr.Value) {
+				if len(attr.Value) > maxXMLAttributeBytes || seen[attr.Name] ||
+					refusedXMLNamespace(attr.Name.Space) || refusedXMLNamespace(attr.Value) {
 					return false
 				}
 				seen[attr.Name] = true

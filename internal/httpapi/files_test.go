@@ -860,6 +860,11 @@ func TestLogo(t *testing.T) {
 	})
 }
 
+// nestXML is a closed document of depth elements nested in each other.
+func nestXML(depth int) string {
+	return "<?xml version=\"1.0\"?>" + strings.Repeat("<a>", depth) + strings.Repeat("</a>", depth)
+}
+
 func TestSniffContentType(t *testing.T) {
 	t.Parallel()
 
@@ -896,6 +901,13 @@ func TestSniffContentType(t *testing.T) {
 		{"xhtml attribute namespace", "<?xml version=\"1.0\"?><r xmlns:h=\"http://www.w3.org/1999/xhtml\" h:onload=\"x\"/>", ""},
 		{"xml-stylesheet pi", "<?xml version=\"1.0\"?><?xml-stylesheet type=\"text/xsl\" href=\"x.xsl\"?><Invoice/>", ""},
 		{"two roots", "<?xml version=\"1.0\"?><Invoice/><Invoice/>", ""},
+		{"depth 256 accepted", nestXML(256), "application/xml"},
+		{"depth 257 refused", nestXML(257), ""},
+		{"repeated attribute", "<?xml version=\"1.0\"?><r a=\"1\" a=\"2\"/>", ""},
+		{"same attribute through two prefixes of one namespace", "<?xml version=\"1.0\"?><r xmlns:p=\"urn:x\" xmlns:q=\"urn:x\" p:a=\"1\" q:a=\"2\"/>", ""},
+		{"upper case xml-stylesheet pi", "<?xml version=\"1.0\"?><?XML-STYLESHEET type=\"text/xsl\" href=\"x.xsl\"?><Invoice/>", ""},
+		{"attribute value of 64 KiB accepted", "<?xml version=\"1.0\"?><r a=\"" + strings.Repeat("c", 64<<10) + "\"/>", "application/xml"},
+		{"attribute value over 64 KiB refused", "<?xml version=\"1.0\"?><r a=\"" + strings.Repeat("c", 64<<10+1) + "\"/>", ""},
 		{"not well formed", "<?xml version=\"1.0\"?><Invoice><a></Invoice>", ""},
 		{"latin-1 encoding", "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><Invoice/>", ""},
 		{"unterminated comment", "<?xml version=\"1.0\"?><!-- never closed", ""},
@@ -1004,7 +1016,12 @@ func TestSniffAcceptsEInvoices(t *testing.T) {
 // expansion never happens, deep nesting stops at the depth cap, and a
 // 10 MiB body is parsed in linear time.
 func TestSniffXMLIsBounded(t *testing.T) {
-	t.Parallel()
+	// Not parallel: the time bounds would otherwise measure the other
+	// tests too.
+	large := 2 * time.Second
+	if raceEnabled {
+		large = 12 * time.Second
+	}
 
 	var laughs strings.Builder
 	laughs.WriteString(`<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol">`)
@@ -1036,11 +1053,15 @@ func TestSniffXMLIsBounded(t *testing.T) {
 		want  string
 		bound time.Duration
 	}{
+		// About 0.3 s without and 5 s with the race detector were
+		// measured; the bounds catch a tenfold regression.
 		{"billion laughs", laughs.String(), "", 100 * time.Millisecond},
-		{"10 MiB of nesting", nested, "", 2 * time.Second},
-		{"10 MiB of distinct attributes on one element", attrs.String(), "", 20 * time.Second},
-		{"10 MiB of one repeated attribute", "<?xml version=\"1.0\"?><a " + strings.Repeat("b=\"c\" ", 10<<20/6) + "/>", "", 20 * time.Second},
-		{"10 MiB of small elements", manyElements, "application/xml", 20 * time.Second},
+		{"10 MiB of nesting", nested, "", large},
+		{"10 MiB of distinct attributes on one element", attrs.String(), "", large},
+		{"10 MiB of one repeated attribute", "<?xml version=\"1.0\"?><a " + strings.Repeat("b=\"c\" ", 10<<20/6) + "/>", "", large},
+		{"10 MiB attribute value", "<?xml version=\"1.0\"?><a b=\"" + strings.Repeat("c", 10<<20) + "\"/>", "", large},
+		{"10 MiB of small elements", manyElements, "application/xml", large},
+		{"10 MiB base64 text node", "<?xml version=\"1.0\"?><Invoice><Attachment>" + strings.Repeat("QUJD", 10<<20/4) + "</Attachment></Invoice>", "application/xml", large},
 	}
 	for _, tt := range tests {
 		start := time.Now()

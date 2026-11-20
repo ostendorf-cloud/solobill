@@ -164,6 +164,50 @@ func (s *fakeStore) BucketVersioning(context.Context) (bool, error) {
 	return true, nil
 }
 
+// versionedFakeStore is fakeStore that can also read versions, counting
+// those calls.
+type versionedFakeStore struct {
+	fakeStore
+	versionCalls int
+}
+
+func (s *versionedFakeStore) GetVersion(context.Context, string, string) (io.ReadCloser, storage.ObjectInfo, error) {
+	s.versionCalls++
+
+	return io.NopCloser(strings.NewReader("")), storage.ObjectInfo{}, nil
+}
+
+func TestGuardedGetVersionReachesAVersionedStoreOnlyWhileOpen(t *testing.T) {
+	t.Parallel()
+
+	checker := &fakeChecker{versioning: false}
+	store := &versionedFakeStore{}
+	m := objectstore.NewMonitor(objectstore.MonitorConfig{Checker: checker, RequireVersioning: true, Now: fixedNow})
+	g := &objectstore.Guarded{Store: store, Monitor: m}
+	ctx := context.Background()
+
+	// Unchecked, then checked and gated: refused, and the store is never
+	// reached.
+	for _, label := range []string{"unchecked", "gated"} {
+		if _, _, err := g.GetVersion(ctx, "k", "v1"); !errors.Is(err, storage.ErrObjectStoreUnavailable) {
+			t.Errorf("%s: GetVersion() error = %v, want ErrObjectStoreUnavailable", label, err)
+		}
+		m.Check(ctx)
+	}
+	if store.versionCalls != 0 {
+		t.Fatalf("store got %d GetVersion calls while gated, want 0", store.versionCalls)
+	}
+
+	checker.versioning = true
+	m.Check(ctx)
+	if _, _, err := g.GetVersion(ctx, "k", "v1"); err != nil {
+		t.Fatalf("open: GetVersion() error = %v, want nil", err)
+	}
+	if store.versionCalls != 1 || store.calls != 0 {
+		t.Errorf("store got %d GetVersion and %d other calls, want 1 and 0", store.versionCalls, store.calls)
+	}
+}
+
 func TestGuardedRefusesWhileGated(t *testing.T) {
 	t.Parallel()
 
