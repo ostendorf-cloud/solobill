@@ -32,7 +32,7 @@ WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')
 SELECT id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at
 FROM catalogue_items
 WHERE deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-ORDER BY name;
+ORDER BY name, id;
 
 -- UpdateCatalogueItem is guarded by "AND deleted_at IS NULL": a
 -- soft-deleted item cannot be edited back to life through an ordinary

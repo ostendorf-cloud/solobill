@@ -37,18 +37,21 @@ type CatalogueItem struct {
 }
 
 type Customer struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	Name        string
-	Email       pgtype.Text
-	VatID       pgtype.Text
-	Street      pgtype.Text
-	PostalCode  pgtype.Text
-	City        pgtype.Text
-	CountryCode pgtype.Text
-	DeletedAt   pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	Name             string
+	Email            pgtype.Text
+	VatID            pgtype.Text
+	Street           pgtype.Text
+	PostalCode       pgtype.Text
+	City             pgtype.Text
+	CountryCode      pgtype.Text
+	DeletedAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	DocumentLanguage string
+	Number           pgtype.Text
+	AddressLine2     pgtype.Text
 }
 
 type Document struct {

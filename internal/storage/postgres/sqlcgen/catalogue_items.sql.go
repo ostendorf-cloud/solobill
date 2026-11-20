@@ -112,7 +112,7 @@ const listCatalogueItems = `-- name: ListCatalogueItems :many
 SELECT id, tenant_id, name, description, sku, unit_price_cents, unit, deleted_at, created_at, updated_at
 FROM catalogue_items
 WHERE deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-ORDER BY name
+ORDER BY name, id
 `
 
 // ListCatalogueItems filters deleted_at IS NULL, unlike
