@@ -21,17 +21,44 @@ func TestInviteManagerIssueTOTPEnrolmentNamesTheInviteEmail(t *testing.T) {
 	}
 }
 
-func TestInviteManagerAcceptInviteChecksTheLogin(t *testing.T) {
+func TestSameInviteLogin(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range []struct {
+		login, email string
+		want         bool
+	}{
+		{"kim@acme.example", "kim@acme.example", true},
+		{"KIM@Acme.Example", "kim@acme.example", true},
+		{"", "", false},
+		{"", "kim@acme.example", false},
+		{"Kim@acme.example", "kim@acme.example", false}, // Kelvin sign
+		{"kim@acme.example ", "kim@acme.example", false},
+		{"Ümit@acme.example", "ümit@acme.example", false}, // non-ASCII case stays exact
+		{"ümit@acme.example", "ümit@acme.example", true},
+	} {
+		if got := SameInviteLogin(tt.login, tt.email); got != tt.want {
+			t.Errorf("SameInviteLogin(%q, %q) = %v, want %v", tt.login, tt.email, got, tt.want)
+		}
+	}
+}
+
+func TestInviteManagerAcceptInviteChecksTheLogin(t *testing.T) {
+	t.Parallel()
+
+	login := func(s string) *string { return &s }
+
+	for _, tt := range []struct {
 		name  string
-		login string
+		login *string
 		want  error
 	}{
-		{"another address", "someone-else@acme.example", ErrInviteInvalid},
-		{"the invite's address in another letter case", "Invitee@ACME.example", nil},
-		{"no login, the json accept route", "", nil},
+		{"another address", login("someone-else@acme.example"), ErrInviteInvalid},
+		{"an empty login", login(""), ErrInviteInvalid},
+		{"a padded login", login(" invitee@acme.example"), ErrInviteInvalid},
+		{"a fullwidth look alike that NFKC would fold", login("ｉnvitee@acme.example"), ErrInviteInvalid},
+		{"the invite's address in another letter case", login("Invitee@ACME.example"), nil},
+		{"no login, the json accept route", nil, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

@@ -24,9 +24,12 @@ import (
 )
 
 // LoginAccounts is an in memory storage.LoginAccountRepository over
-// Accounts.
+// Accounts. Put writes a whole account back into the test's fake: the
+// fake's Update writes only the role, the status and the OIDC subject,
+// like the real one, so the credential writes need their own way in.
 type LoginAccounts struct {
 	Accounts storage.AccountRepository
+	Put      func(storage.Account)
 
 	mu sync.Mutex
 }
@@ -149,9 +152,9 @@ func (r *LoginAccounts) update(ctx context.Context, id uuid.UUID, change func(a 
 		return storage.ErrNotFound
 	}
 
-	_, err = r.Accounts.Update(ctx, a)
+	r.Put(a)
 
-	return err
+	return nil
 }
 
 func nonEmpty(s string) *string {

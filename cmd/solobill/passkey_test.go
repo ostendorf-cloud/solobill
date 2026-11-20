@@ -30,4 +30,17 @@ func TestPasskeyConfig(t *testing.T) {
 		!slices.Equal(got.Origins, []string{"http://localhost:8080"}) || !got.AllowPlainHTTP {
 		t.Errorf("passkeyConfig = %+v", got)
 	}
+
+	// A production setup never gets the plain HTTP challenge cookie: it
+	// follows SESSION_ALLOW_PLAIN_HTTP and nothing else.
+	production := passkeyConfig(config.Config{
+		Auth: config.AuthConfig{
+			PasskeysEnabled: true,
+			PasskeyRPID:     "solobill.example.com",
+			PasskeyOrigins:  []string{"https://solobill.example.com"},
+		},
+	})
+	if production == nil || production.AllowPlainHTTP {
+		t.Errorf("passkeyConfig without SESSION_ALLOW_PLAIN_HTTP = %+v, want AllowPlainHTTP false", production)
+	}
 }

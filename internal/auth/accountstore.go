@@ -32,7 +32,7 @@ func NewAccountStore(store Store) *AccountStore {
 func (s *AccountStore) FindByLogin(ctx context.Context, login string) (account.Record, error) {
 	var found storage.LoginAccount
 
-	err := withScope(ctx, s.store, func(ctx context.Context) error {
+	err := withReadScope(ctx, s.store, func(ctx context.Context) error {
 		var err error
 		found, err = s.store.LoginAccounts().FindActiveByEmail(ctx, login)
 

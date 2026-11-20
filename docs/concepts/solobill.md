@@ -177,7 +177,18 @@ PHC strings with govue's parameters, and the TOTP secrets are base32 of 160 bits
 invite still can. `accounttest.Run` and `passkeytest.Run` prove the adapters against PostgreSQL.
 
 The session store and the passkey challenge store are in process memory, so the chart stays at
-one replica. Scaling out needs a shared session store first.
+one replica, and a restart or a rollout signs everybody out. Scaling out needs a shared session
+store first.
+
+Known limits:
+
+- Lockout: the ceiling per login counts every address. A few addresses guessing at a known login
+  keep it used up, and the password login of that account is refused until the bucket refills
+  (100 per hour by default). Passkey and OIDC logins still work. Against a sustained attack, add
+  a passkey and block the addresses at the ingress.
+- Timing: an unknown tenant runs its account lookup in a scope no tenant has, so it costs the
+  same transaction as a known one, and govue runs the same Argon2id derivation for both. The
+  tenant slug lookup itself is the same for both. Not measured.
 
 ## Year end milestone 2026
 

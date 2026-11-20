@@ -45,6 +45,12 @@ type AccountRepository interface {
 	// to somebody else.
 	FindByOIDCSubject(ctx context.Context, subject string) (Account, error)
 	List(ctx context.Context) ([]Account, error)
+
+	// Update writes the account's Role, Status and OIDCSubject, and
+	// nothing else. PasswordHash, TOTPSecret and TOTPLastCounter are
+	// ignored: they change only through LoginAccountRepository's
+	// conditional writes, so an update from a stale read can never move a
+	// consumed TOTP counter back or put back a replaced password hash.
 	Update(ctx context.Context, account Account) (Account, error)
 }
 

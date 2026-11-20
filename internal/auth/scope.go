@@ -25,7 +25,9 @@ import (
 //   - an unknown tenant: the login request named a slug no tenant has. A
 //     lookup answers not found, so govue runs the same work and gives the
 //     same 401 as for a wrong password. A tenant slug is not a secret, but
-//     the answer still does not tell the two apart, as before #86.
+//     the answer still does not tell the two apart, as before #86. The
+//     lookup still runs, in a scope no tenant has (withReadScope), so it
+//     costs the same database round trips as for a known tenant.
 //   - no tenant at all: a wiring mistake. The adapters fail closed with
 //     ErrNoTenant, never an unscoped query.
 
@@ -81,6 +83,33 @@ func withScope(ctx context.Context, store Store, fn func(ctx context.Context) er
 	return store.WithTenant(ctx, scope.id, fn)
 }
 
+// noTenant is the scope a lookup for an unknown tenant runs in. No tenant
+// has the nil UUID (tenants.id comes from gen_random_uuid), so row level
+// security answers no row.
+var noTenant = uuid.Nil
+
+// withReadScope is withScope for the lookups a login makes before it
+// knows the account: FindByLogin, FindByUserHandle, Credentials. For an
+// unknown tenant it still runs fn, inside WithTenant for noTenant, and
+// discards the outcome. The lookup then costs the same transaction and
+// round trips as for a known tenant, so the answer time does not tell an
+// unknown tenant from an unknown login. govue's service runs the same
+// Argon2id derivation for both already; this closes the few database
+// round trips that were left.
+func withReadScope(ctx context.Context, store Store, fn func(ctx context.Context) error) error {
+	scope, ok := ctx.Value(tenantContextKey{}).(tenantScope)
+	if !ok {
+		return ErrNoTenant
+	}
+	if !scope.known {
+		_ = store.WithTenant(ctx, noTenant, fn)
+
+		return errUnknownTenant
+	}
+
+	return store.WithTenant(ctx, scope.id, fn)
+}
+
 // TenantFromPath scopes a request to the tenant whose slug is the path
 // value name, for the routes that run before a session exists: the
 // password login and the passkey login. A slug that matches no tenant
@@ -110,7 +139,10 @@ func TenantFromPath(store Store, name string, next http.Handler) http.Handler {
 
 // TenantFromSession scopes a request to the tenant of the session it
 // carries, for the routes of a logged in account: logout, password change
-// and passkey management. A request without a session passes unscoped,
+// and passkey management. The session is the only source: a header, a
+// query parameter or a path value naming a tenant is never read here
+// (TestTenantFromSessionTakesTheTenantOnlyFromTheSession). A request
+// without a session passes unscoped,
 // and the handler behind answers 401 itself. A session store failure
 // passes unscoped as well: the handler reads the session again and
 // answers 503.

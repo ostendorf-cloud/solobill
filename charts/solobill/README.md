@@ -486,9 +486,18 @@ whether it is safe behind your routing:
   Argon2id derivation, and govue runs one at a time. `config.loginRateLimits` tunes the limits
   per client address, per login and client, and per login. Unset keeps `cmd/solobill`'s
   defaults: 5 per minute, 10 per 15 minutes, 100 per hour.
+- Lockout: the ceiling per login counts every address, so a few addresses guessing at a known
+  login keep it used up and block the password login of that account until the bucket refills.
+  Passkey and OIDC logins still work. Against a sustained attack, register a passkey and block
+  the addresses at the ingress. A shorter `config.loginRateLimits.ceilingPer` refills the bucket
+  sooner, at the price of more guesses per hour.
 - One replica: the sessions and the passkey challenges live in the memory of the pod. A
   second replica would not know them. `values.schema.json` and a template guard both refuse a
-  `replicaCount` above 1. Scaling out needs a shared session store first.
+  `replicaCount` above 1. A restart or a rollout signs everybody out. Scaling out needs a
+  shared session store first.
+- Invite cookie: `__Host-solobill_invite`, Secure, HttpOnly, SameSite Strict, Path `/`, for one
+  hour between the TOTP secret request and the confirm, cleared by the confirm. Plain HTTP
+  development drops Secure and the prefix, as for the session cookie.
 - Passkeys: off while `config.passkey.rpId` is empty. Set `config.passkey.rpId` to the host
   the SPA is served from and `config.passkey.origins` to its exact `https://` origin. Both are
   configuration only, never read off a request. The RP id cannot change later: every passkey is

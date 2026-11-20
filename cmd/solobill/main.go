@@ -52,8 +52,9 @@ func main() {
 // runtime overhead, so even 1000 of them cost on the order of 1 MiB,
 // against charts/solobill/values.yaml's 256Mi memory limit. A session is
 // only ever created by a login that already succeeded (a verified local
-// password plus TOTP code, a verified OIDC identity, or a redeemed
-// single-use invite token), never by an anonymous request, so nothing
+// password plus TOTP code, a verified passkey, a verified OIDC identity,
+// or a redeemed single-use invite token), never by an anonymous request,
+// and a login ends the session the browser already carried, so nothing
 // short of a credential compromise can drive the store toward this
 // bound. docs/concepts/solobill.md frames this application's own scale
 // as "a single-user start" where "a second tenant can be added without a

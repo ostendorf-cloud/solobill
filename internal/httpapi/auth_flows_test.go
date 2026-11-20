@@ -18,6 +18,7 @@ import (
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/passkey"
 	"github.com/ostendorf-cloud/govue/passkey/passkeytest"
+	"github.com/ostendorf-cloud/govue/session"
 
 	"github.com/ostendorf-cloud/solobill/internal/auth"
 	"github.com/ostendorf-cloud/solobill/internal/httpapi"
@@ -36,8 +37,20 @@ const (
 func buildAuthApp(t *testing.T, limits httpapi.LoginLimits, withPasskeys bool) testApp {
 	t.Helper()
 
+	return buildAuthAppWith(t, limits, withPasskeys, true)
+}
+
+// buildAuthAppWith is buildAuthApp with plain HTTP under the test's
+// control: false is a production setup, Secure cookies with the __Host-
+// prefix.
+func buildAuthAppWith(t *testing.T, limits httpapi.LoginLimits, withPasskeys, plainHTTP bool) testApp {
+	t.Helper()
+
 	store := newFakeStore()
-	sessions := mustSessions(t)
+	sessions, err := session.New(session.Config{Store: session.NewMemoryStore(nil, 100), AllowPlainHTTP: plainHTTP})
+	if err != nil {
+		t.Fatalf("session.New: %v", err)
+	}
 
 	cfg := auth.LoginConfig{
 		Store:    store,
@@ -50,7 +63,7 @@ func buildAuthApp(t *testing.T, limits httpapi.LoginLimits, withPasskeys bool) t
 			RPID:           testRPID,
 			RPDisplayName:  "solobill test",
 			Origins:        []string{testOrigin},
-			AllowPlainHTTP: true,
+			AllowPlainHTTP: plainHTTP,
 		}
 	}
 
@@ -70,7 +83,7 @@ func buildAuthApp(t *testing.T, limits httpapi.LoginLimits, withPasskeys bool) t
 		Invites:          newTestInvites(t, store),
 		LoginLimits:      limits,
 		HealthRegistry:   health.New(),
-		AllowPlainHTTP:   true,
+		AllowPlainHTTP:   plainHTTP,
 		RateLimitBurst:   1000,
 		RateLimitPer:     time.Minute,
 		DefaultInviteTTL: time.Hour,
@@ -418,15 +431,13 @@ func TestInviteConfirmInGovuesShape(t *testing.T) {
 		t.Errorf("totp-secret email = %q, want the invite's address", enrolment.Email)
 	}
 
-	var inviteCookie *http.Cookie
-	for _, c := range secretRec.Result().Cookies() {
-		if c.Name == "solobill_invite" {
-			inviteCookie = c
-		}
-	}
-	if inviteCookie == nil || !inviteCookie.HttpOnly || inviteCookie.SameSite != http.SameSiteStrictMode ||
-		inviteCookie.Path != "/api/v1/invites" {
-		t.Fatalf("invite cookie = %+v, want HttpOnly, SameSite=Strict on /api/v1/invites", inviteCookie)
+	// Plain HTTP development: no __Host- prefix and no Secure, as for the
+	// session cookie. TestInviteCookieIsHostPrefixedInProduction covers
+	// the production name.
+	inviteCookie := cookieNamed(secretRec, "solobill_invite")
+	if inviteCookie == nil || inviteCookie.Value == "" || !inviteCookie.HttpOnly ||
+		inviteCookie.SameSite != http.SameSiteStrictMode || inviteCookie.Path != "/" || inviteCookie.Domain != "" {
+		t.Fatalf("invite cookie = %+v, want HttpOnly, SameSite=Strict, Path=/ and no Domain", inviteCookie)
 	}
 
 	code := totpCode(t, enrolment.Secret)
@@ -444,9 +455,21 @@ func TestInviteConfirmInGovuesShape(t *testing.T) {
 		}
 	}
 
-	rec := confirm(cookies, "new@acme.test", "a-new-password", code)
+	// The browser still carries the owner's session: the confirm ends it
+	// before it starts the member's, as a login does.
+	rec := doJSON(t, app.handler, http.MethodPost, "/api/v1/invites/confirm",
+		loginBody("new@acme.test", "a-new-password", code), []*http.Cookie{inviteCookie, ownerCookie}, ownerToken)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("confirm = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if me := doJSON(t, app.handler, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{ownerCookie}, ""); me.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/v1/me with the owner's session after the confirm = %d, want %d: the old session must end", me.Code, http.StatusUnauthorized)
+	}
+
+	cleared := cookieNamed(rec, "solobill_invite")
+	if cleared == nil || cleared.Value != "" || cleared.MaxAge >= 0 {
+		t.Errorf("invite cookie after the confirm = %+v, want it cleared", cleared)
 	}
 
 	var result account.LoginResult
@@ -465,6 +488,106 @@ func TestInviteConfirmInGovuesShape(t *testing.T) {
 
 	if again := confirm(cookies, "new@acme.test", "a-new-password", code); again.Code != http.StatusBadRequest {
 		t.Errorf("a second confirm of the used invite = %d, want %d", again.Code, http.StatusBadRequest)
+	}
+}
+
+// cookieNamed is the last cookie of that name a response set, or nil.
+func cookieNamed(rec *httptest.ResponseRecorder, name string) *http.Cookie {
+	var found *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == name {
+			found = c
+		}
+	}
+
+	return found
+}
+
+func TestInviteCookieIsHostPrefixedInProduction(t *testing.T) {
+	t.Parallel()
+
+	app := buildAuthAppWith(t, roomyLimits, false, false)
+	tenant, ownerSecret := seedActiveAccount(t, app.store)
+	ownerCookie, ownerToken := loginAndCSRF(t, app, tenant.Slug, ownerEmail, ownerPassword, ownerSecret)
+
+	if !strings.HasPrefix(ownerCookie.Name, "__Host-") || !ownerCookie.Secure {
+		t.Fatalf("session cookie = %+v, want the __Host- prefix and Secure", ownerCookie)
+	}
+
+	inviteRec := doJSON(t, app.handler, http.MethodPost, "/api/v1/invites",
+		map[string]string{"email": "new@acme.test", "role": "member"}, []*http.Cookie{ownerCookie}, ownerToken)
+	var invite struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(inviteRec.Body.Bytes(), &invite); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	secretRec := doJSON(t, app.handler, http.MethodPost, "/api/v1/invites/totp-secret",
+		map[string]string{"tenant_slug": tenant.Slug, "token": invite.Token}, nil, "")
+	if secretRec.Code != http.StatusOK {
+		t.Fatalf("totp-secret = %d, body = %s", secretRec.Code, secretRec.Body.String())
+	}
+
+	c := cookieNamed(secretRec, "__Host-solobill_invite")
+	if c == nil || !c.Secure || !c.HttpOnly || c.Path != "/" || c.Domain != "" || c.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("invite cookie = %+v, want __Host-solobill_invite, Secure, HttpOnly, Path=/, no Domain, SameSite=Strict", c)
+	}
+	if plain := cookieNamed(secretRec, "solobill_invite"); plain != nil {
+		t.Errorf("a production answer also set the plain invite cookie %+v", plain)
+	}
+}
+
+// TestLoginEndsThePreviousSession: a browser that logs in as another
+// account while it holds a session keeps only the new one.
+func TestLoginEndsThePreviousSession(t *testing.T) {
+	t.Parallel()
+
+	app := buildAuthApp(t, roomyLimits, false)
+	tenant, ownerSecret := seedActiveAccount(t, app.store)
+	memberTenant, memberSecret, memberAccount := seedMember(t, app.store, tenant, "member@acme.test", "correct-password")
+	ownerCookie, ownerToken := loginAndCSRF(t, app, tenant.Slug, ownerEmail, ownerPassword, ownerSecret)
+
+	rec := doJSON(t, app.handler, http.MethodPost, loginPath(memberTenant.Slug),
+		loginBody("member@acme.test", "correct-password", totpCode(t, memberSecret)), []*http.Cookie{ownerCookie}, ownerToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second login = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if me := doJSON(t, app.handler, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{ownerCookie}, ""); me.Code != http.StatusUnauthorized {
+		t.Errorf("GET /api/v1/me with the first session after the second login = %d, want %d", me.Code, http.StatusUnauthorized)
+	}
+
+	member := sessionCookieNamedNot(t, rec, "")
+	if me := doJSON(t, app.handler, http.MethodGet, "/api/v1/me", nil, []*http.Cookie{member}, ""); me.Code != http.StatusOK ||
+		!strings.Contains(me.Body.String(), `"email":"`+memberAccount.Email+`"`) {
+		t.Errorf("GET /api/v1/me with the new session = %d %s, want the member", me.Code, me.Body.String())
+	}
+}
+
+// TestPasswordChangeHasTheClientLimit: the password change answers 403
+// or 200 depending on the current password, so a stolen session could
+// test passwords; the per client login limit bounds that.
+func TestPasswordChangeHasTheClientLimit(t *testing.T) {
+	t.Parallel()
+
+	// The login takes one token from the client bucket, the first wrong
+	// guess the second.
+	app := buildAuthApp(t, httpapi.LoginLimits{ClientBurst: 2, LoginBurst: 1000, CeilingBurst: 1000}, false)
+	tenant, secret := seedActiveAccount(t, app.store)
+	cookie, token := loginAndCSRF(t, app, tenant.Slug, ownerEmail, ownerPassword, secret)
+
+	guess := func() int {
+		return doJSON(t, app.handler, http.MethodPost, "/api/v1/auth/password",
+			map[string]string{"current_password": "a wrong guess here", "new_password": "a new long passphrase"},
+			[]*http.Cookie{cookie}, token).Code
+	}
+
+	if got := guess(); got != http.StatusForbidden {
+		t.Fatalf("first wrong guess = %d, want %d", got, http.StatusForbidden)
+	}
+	if got := guess(); got != http.StatusTooManyRequests {
+		t.Errorf("second wrong guess = %d, want %d", got, http.StatusTooManyRequests)
 	}
 }
 

@@ -192,6 +192,27 @@ func TestLoginFailsIndistinguishably(t *testing.T) {
 	}
 }
 
+// TestLoginForAnUnknownTenantStillRunsTheLookup: the lookup of an
+// unknown tenant runs in a scope no tenant has, the nil UUID, so it costs
+// the same transaction as a known one, and its result is discarded.
+func TestLoginForAnUnknownTenantStillRunsTheLookup(t *testing.T) {
+	t.Parallel()
+
+	f := newLoginFixture(t, storage.AccountStatusActive)
+
+	_, err := f.service.Login(ContextWithUnknownTenant(t.Context()), f.account.Email, f.password, f.code(t))
+	if !errors.Is(err, account.ErrInvalidCredentials) {
+		t.Fatalf("err = %v, want account.ErrInvalidCredentials, although the fake finds the account in any scope", err)
+	}
+
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+
+	if len(f.store.scopes) != 1 || f.store.scopes[0] != uuid.Nil {
+		t.Errorf("scopes = %v, want exactly one lookup in the nil scope", f.store.scopes)
+	}
+}
+
 func TestLoginRejectsAPendingOrDisabledAccount(t *testing.T) {
 	t.Parallel()
 

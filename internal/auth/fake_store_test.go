@@ -49,7 +49,10 @@ func newFakeStore() *fakeStore {
 		accounts:      map[uuid.UUID]storage.Account{},
 		invites:       map[uuid.UUID]storage.Invite{},
 	}
-	s.login = &authtest.LoginAccounts{Accounts: &fakeAccountRepository{s}}
+	s.login = &authtest.LoginAccounts{
+		Accounts: &fakeAccountRepository{s},
+		Put:      func(a storage.Account) { s.addAccount(a) },
+	}
 	s.passkeys = &authtest.Passkeys{Accounts: &fakeAccountRepository{s}}
 
 	return s
@@ -222,9 +225,8 @@ func (r *fakeAccountRepository) Update(_ context.Context, account storage.Accoun
 		return storage.Account{}, storage.ErrNotFound
 	}
 
-	existing.PasswordHash = account.PasswordHash
-	existing.TOTPSecret = account.TOTPSecret
-	existing.TOTPLastCounter = account.TOTPLastCounter
+	// Mirrors queries/accounts.sql's UpdateAccount: the credentials change
+	// only through LoginAccounts' conditional writes.
 	existing.OIDCSubject = account.OIDCSubject
 	existing.Role = account.Role
 	existing.Status = account.Status

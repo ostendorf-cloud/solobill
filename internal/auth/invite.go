@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -194,6 +193,36 @@ func (m *InviteManager) IssueTOTPEnrolment(ctx context.Context, tenantID uuid.UU
 	return InviteEnrolment{Secret: secret, ProvisioningURI: provisioningURI, Email: invite.Email}, nil
 }
 
+// SameInviteLogin reports whether login names the invite's email. An
+// empty login never does. The comparison folds ASCII letter case only and
+// is otherwise exact: no trimming, no Unicode case folding and no NFKC.
+// The SPA sends back the very email the TOTP secret request answered with,
+// so only letter case can differ in an honest request. Unicode folding or
+// NFKC would make look alike strings equal, the Kelvin sign U+212A and
+// "k" among them (strings.EqualFold already does), which is exactly what
+// a login check must not accept.
+func SameInviteLogin(login, email string) bool {
+	if login == "" || len(login) != len(email) {
+		return false
+	}
+
+	for i := range len(login) {
+		if asciiLower(login[i]) != asciiLower(email[i]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func asciiLower(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+
+	return b
+}
+
 // AcceptInviteParams is AcceptInvite's input.
 //
 // There is no TOTPSecret field: the secret is server-owned, issued by a
@@ -205,11 +234,14 @@ func (m *InviteManager) IssueTOTPEnrolment(ctx context.Context, tenantID uuid.UU
 type AcceptInviteParams struct {
 	TenantID uuid.UUID
 	RawToken string
-	// Login, when set, has to be the invite's email, compared case
-	// insensitively, or the invite is refused like an invalid one. govue's
-	// TOTP enrolment component sends the login it showed; the account's
-	// email is always the invite's own either way.
-	Login    string
+	// Login is the login govue's TOTP enrolment component sends with the
+	// confirm (POST /api/v1/invites/confirm). When it is set it has to
+	// name the invite's email, see SameInviteLogin, or the invite is
+	// refused like an invalid one; an empty login is refused too. Nil is
+	// the JSON accept route, whose body names no login: there the token
+	// alone admits, as before. The account's email is always the invite's
+	// own either way.
+	Login    *string
 	Password string
 	TOTPCode string
 }
@@ -267,7 +299,7 @@ func (m *InviteManager) AcceptInvite(ctx context.Context, params AcceptInvitePar
 			return ErrInviteInvalid
 		}
 
-		if params.Login != "" && !strings.EqualFold(params.Login, invite.Email) {
+		if params.Login != nil && !SameInviteLogin(*params.Login, invite.Email) {
 			return ErrInviteInvalid
 		}
 

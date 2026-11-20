@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@ostendorf-cloud/govue':
-        specifier: ostendorf-cloud/govue#v0.4.0&path:/web
-        version: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/478702ca39c27ef1df806bc875235823c20ea8ba#path:/web(tailwindcss@4.3.5)(vue@3.5.45(typescript@5.9.3))
+        specifier: ostendorf-cloud/govue#v0.5.0&path:/web
+        version: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/1059877bbc8848e6adf4b7e175abc9b6c10aee42#path:/web(tailwindcss@4.3.5)(vue-i18n@11.4.22(vue@3.5.45(typescript@5.9.3)))(vue@3.5.45(typescript@5.9.3))
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.5
@@ -275,12 +275,15 @@ packages:
   '@one-ini/wasm@0.2.1':
     resolution: {integrity: sha512-TUqERXGNTifZ9y2g3wPxQrw3HpHv/02DsW3D90T9x0hhonrL1ZqpSmNrU2XkoIq0fP1N6gZfVQzy2Fw1ZvGBNg==}
 
-  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/478702ca39c27ef1df806bc875235823c20ea8ba#path:/web':
-    resolution: {gitHosted: true, integrity: sha512-Smx0EqQ3pEo5XuQeo4pZkXRo2iNuT0Bso3Yg4eCfwBV83ttnklyPIkcq+3OR09miDp6ust0ycazWhmaPIS97ZA==, path: /web, tarball: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/478702ca39c27ef1df806bc875235823c20ea8ba}
-    version: 0.4.0
+  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/1059877bbc8848e6adf4b7e175abc9b6c10aee42#path:/web':
+    resolution: {gitHosted: true, integrity: sha512-xPKeQD3tIoXchaT7CuBAr8XaLozRhE9f+MwNgHLnw4eoowqnLX3p3MCpkKUQ+piachfTrXG+hgSo1t1DVLNJRQ==, path: /web, tarball: https://codeload.github.com/ostendorf-cloud/govue/tar.gz/1059877bbc8848e6adf4b7e175abc9b6c10aee42}
+    version: 0.5.0
+    engines: {node: '>=24'}
+    hasBin: true
     peerDependencies:
       tailwindcss: ^4.1.0
       vue: ^3.5.0
+      vue-i18n: ^11.1.5
 
   '@oxc-project/types@0.156.0':
     resolution: {integrity: sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==}
@@ -1876,11 +1879,12 @@ snapshots:
 
   '@one-ini/wasm@0.2.1': {}
 
-  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/478702ca39c27ef1df806bc875235823c20ea8ba#path:/web(tailwindcss@4.3.5)(vue@3.5.45(typescript@5.9.3))':
+  '@ostendorf-cloud/govue@https://codeload.github.com/ostendorf-cloud/govue/tar.gz/1059877bbc8848e6adf4b7e175abc9b6c10aee42#path:/web(tailwindcss@4.3.5)(vue-i18n@11.4.22(vue@3.5.45(typescript@5.9.3)))(vue@3.5.45(typescript@5.9.3))':
     dependencies:
       reka-ui: 2.11.0(vue@3.5.45(typescript@5.9.3))
       tailwindcss: 4.3.5
       vue: 3.5.45(typescript@5.9.3)
+      vue-i18n: 11.4.22(vue@3.5.45(typescript@5.9.3))
 
   '@oxc-project/types@0.156.0': {}
 

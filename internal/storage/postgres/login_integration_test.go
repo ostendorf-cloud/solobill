@@ -189,15 +189,43 @@ func TestLoginAdaptersStayInTheirTenant(t *testing.T) {
 		t.Errorf("A's account after B's writes = %+v, want it unchanged", got)
 	}
 
+	// A's secret is unconfirmed: B must not replace it.
+	if err := inB.ReplaceTOTPSecret(ctx, created.ID, "OTHERSECRETOTHERSECRETOTHERSECRE"); !errors.Is(err, account.ErrNotFound) {
+		t.Errorf("ReplaceTOTPSecret in B of A's account = %v, want account.ErrNotFound", err)
+	}
+	if err := inA.ConfirmTOTP(ctx, created.ID, secret, 100); err != nil {
+		t.Fatalf("ConfirmTOTP in A: %v", err)
+	}
+	// Confirmed now: B must not advance its counter.
+	if err := inB.AdvanceTOTPCounter(ctx, created.ID, 200); !errors.Is(err, account.ErrNotFound) {
+		t.Errorf("AdvanceTOTPCounter in B of A's account = %v, want account.ErrNotFound", err)
+	}
+	if got, err := inA.FindByLogin(ctx, "shared@login.example"); err != nil || got.TOTPSecret != secret || got.TOTPCounter != 100 {
+		t.Errorf("A's account after B's TOTP writes = %+v, %v, want secret and counter 100 unchanged", got, err)
+	}
+
 	passkeysA := authtest.ScopedPasskeyStore{Store: auth.NewPasskeyStore(store), Scope: scopeTo(tenantA.ID)}
 	passkeysB := authtest.ScopedPasskeyStore{Store: auth.NewPasskeyStore(store), Scope: scopeTo(tenantB.ID)}
 
 	handle := []byte("tenant-a-handle-" + uuid.NewString())
-	if err := passkeysA.AddCredential(ctx, passkey.Credential{
+	credA := passkey.Credential{
 		ID: []byte("tenant-a-credential-" + uuid.NewString()), AccountID: created.ID, UserHandle: handle,
 		Data: []byte(`{"fake":true}`), CreatedAt: time.Now(),
-	}); err != nil {
+	}
+	if err := passkeysA.AddCredential(ctx, credA); err != nil {
 		t.Fatalf("AddCredential in A: %v", err)
+	}
+
+	moved := credA
+	moved.SignCount = 9
+	if err := passkeysB.UpdateCredential(ctx, moved, 0); !errors.Is(err, passkey.ErrNotFound) {
+		t.Errorf("UpdateCredential in B of A's passkey = %v, want passkey.ErrNotFound", err)
+	}
+	if err := passkeysB.DeleteCredential(ctx, created.ID, credA.ID, false); !errors.Is(err, passkey.ErrNotFound) {
+		t.Errorf("DeleteCredential in B of A's passkey = %v, want passkey.ErrNotFound", err)
+	}
+	if creds, err := passkeysA.Credentials(ctx, created.ID); err != nil || len(creds) != 1 || creds[0].SignCount != 0 {
+		t.Errorf("A's passkeys after B's writes = %+v, %v, want the one passkey unchanged", creds, err)
 	}
 
 	if _, _, err := passkeysB.FindByUserHandle(ctx, handle); !errors.Is(err, passkey.ErrNotFound) {
@@ -211,6 +239,77 @@ func TestLoginAdaptersStayInTheirTenant(t *testing.T) {
 		Data: []byte(`{"fake":true}`), CreatedAt: time.Now(),
 	}); !errors.Is(err, passkey.ErrNotFound) {
 		t.Errorf("AddCredential in B for A's account = %v, want passkey.ErrNotFound", err)
+	}
+}
+
+// TestAccountUpdateNeverMovesTheCredentialsBack: AccountRepository.Update
+// from a row read before a login consumed a code must not put the old
+// counter back (which would let the consumed code log in again, #50), nor
+// an old password hash. It writes the role, the status and the OIDC
+// subject only.
+func TestAccountUpdateNeverMovesTheCredentialsBack(t *testing.T) {
+	store, _, tenant := loginTestStore(t)
+	ctx := context.Background()
+
+	scoped := authtest.ScopedAccountStore{Store: auth.NewAccountStore(store), Scope: scopeTo(tenant.ID)}
+
+	const hash = "$argon2id$v=19$m=65536,t=3,p=4$ZmFrZS1zYWx0$ZmFrZS1oYXNoLW5vdC1hLXJlYWwtb25l" // gitleaks:allow
+	const secret = "FAKESECRETFAKESECRETFAKESECRETFA"                                           // gitleaks:allow
+
+	created, err := scoped.Create(ctx, account.Record{Login: "stale@login.example", PasswordHash: hash, TOTPSecret: secret})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := scoped.ConfirmTOTP(ctx, created.ID, secret, 100); err != nil {
+		t.Fatalf("ConfirmTOTP: %v", err)
+	}
+
+	accountID := uuid.MustParse(created.ID)
+
+	var stale storage.Account
+	if err := store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
+		stale, err = store.Accounts().FindByID(ctx, accountID)
+
+		return err
+	}); err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+
+	// A login consumes a code after the stale read.
+	if err := scoped.AdvanceTOTPCounter(ctx, created.ID, 150); err != nil {
+		t.Fatalf("AdvanceTOTPCounter: %v", err)
+	}
+
+	otherHash := hash + "-stale"
+	stale.PasswordHash = &otherHash
+	stale.Role = storage.AccountRoleOwner
+	if err := store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
+		_, err := store.Accounts().Update(ctx, stale)
+
+		return err
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := scoped.FindByLogin(ctx, "stale@login.example")
+	if err != nil {
+		t.Fatalf("FindByLogin: %v", err)
+	}
+	if got.TOTPCounter != 150 || got.PasswordHash != hash {
+		t.Errorf("after Update from a stale read = %+v, want counter 150 and the hash unchanged", got)
+	}
+	if err := scoped.AdvanceTOTPCounter(ctx, created.ID, 150); !errors.Is(err, account.ErrNotFound) {
+		t.Errorf("the consumed counter advanced again after Update = %v, want account.ErrNotFound", err)
+	}
+
+	var role string
+	if err := store.WithTenant(ctx, tenant.ID, func(ctx context.Context) error {
+		a, err := store.Accounts().FindByID(ctx, accountID)
+		role = string(a.Role)
+
+		return err
+	}); err != nil || role != string(storage.AccountRoleOwner) {
+		t.Errorf("role after Update = %q, %v, want owner", role, err)
 	}
 }
 

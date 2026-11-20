@@ -61,7 +61,7 @@ func (s *PasskeyStore) Credentials(ctx context.Context, accountID string) ([]pas
 
 	var found []storage.PasskeyCredential
 
-	err = withScope(ctx, s.store, func(ctx context.Context) error {
+	err = withReadScope(ctx, s.store, func(ctx context.Context) error {
 		var err error
 		found, err = s.store.Passkeys().List(ctx, id)
 
@@ -85,7 +85,7 @@ func (s *PasskeyStore) FindByUserHandle(ctx context.Context, handle []byte) (acc
 		found     []storage.PasskeyCredential
 	)
 
-	err := withScope(ctx, s.store, func(ctx context.Context) error {
+	err := withReadScope(ctx, s.store, func(ctx context.Context) error {
 		var err error
 		accountID, email, found, err = s.store.Passkeys().FindByUserHandle(ctx, handle)
 

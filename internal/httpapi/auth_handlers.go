@@ -201,28 +201,58 @@ type inviteTOTPSecretResponse struct {
 	Email           string `json:"email"`
 }
 
-// inviteCookieName carries the tenant slug and the raw invite token from
+// The invite cookie carries the tenant slug and the raw invite token from
 // the TOTP secret request to POST /api/v1/invites/confirm, whose body is
 // govue's account.CredentialsRequest and so has no field for either. It
-// is HttpOnly, SameSite=Strict and limited to the invite routes. It holds
-// nothing the browser did not already have: the invite link carried both
-// values in its query string.
+// holds nothing the browser did not already have: the invite link carried
+// both values in its query string.
+//
+// It follows the session cookie: __Host- prefixed, Secure, Path=/ and no
+// Domain, so only this exact origin over HTTPS can set or read it, plus
+// HttpOnly and SameSite=Strict. Plain HTTP development
+// (SESSION_ALLOW_PLAIN_HTTP) drops Secure and with it the prefix, which a
+// browser refuses without Secure, the same way govue's session does.
 const (
-	inviteCookieName   = "solobill_invite"
-	inviteCookiePath   = "/api/v1/invites"
-	inviteCookieMaxAge = 60 * 60
+	inviteCookieSecureName = "__Host-solobill_invite"
+	inviteCookiePlainName  = "solobill_invite"
+	inviteCookieMaxAge     = 60 * 60
 )
+
+func (a *app) inviteCookieName() string {
+	if a.allowPlainHTTP {
+		return inviteCookiePlainName
+	}
+
+	return inviteCookieSecureName
+}
 
 func (a *app) inviteCookie(value string, maxAge int) *http.Cookie {
 	return &http.Cookie{
-		Name:     inviteCookieName,
+		Name:     a.inviteCookieName(),
 		Value:    value,
-		Path:     inviteCookiePath,
+		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   !a.allowPlainHTTP,
 		SameSite: http.SameSiteStrictMode,
 	}
+}
+
+// startInviteSession starts the session of a freshly accepted account,
+// after ending the session the request already carries, as a login does
+// (auth.Login.StartSession): a browser never holds two.
+func (a *app) startInviteSession(w http.ResponseWriter, r *http.Request, accepted storage.Account) error {
+	if c, err := r.Cookie(a.sessions.CookieName()); err == nil && c.Value != "" {
+		if err := a.sessions.End(r.Context(), w, r); err != nil {
+			return api.Internal(fmt.Errorf("httpapi: end the previous session: %w", err))
+		}
+	}
+
+	if _, err := a.sessions.Start(r.Context(), w, auth.IdentityFromAccount(accepted, "", nil).Session()); err != nil {
+		return api.Internal(fmt.Errorf("httpapi: start session: %w", err))
+	}
+
+	return nil
 }
 
 // handleInviteTOTPSecret generates a fresh TOTP secret for the invite the
@@ -294,7 +324,7 @@ func (a *app) handleInviteConfirm(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 
-	cookie, err := r.Cookie(inviteCookieName)
+	cookie, err := r.Cookie(a.inviteCookieName())
 	if err != nil || cookie.Value == "" {
 		return api.Invalid("invite token is invalid, expired or already used")
 	}
@@ -320,7 +350,7 @@ func (a *app) handleInviteConfirm(w http.ResponseWriter, r *http.Request) error 
 	account, err := a.invites.AcceptInvite(r.Context(), auth.AcceptInviteParams{
 		TenantID: tenant.ID,
 		RawToken: values.Get("token"),
-		Login:    body.Login,
+		Login:    &body.Login,
 		Password: body.Password,
 		TOTPCode: body.Code,
 	})
@@ -328,11 +358,11 @@ func (a *app) handleInviteConfirm(w http.ResponseWriter, r *http.Request) error 
 		return acceptInviteError(err)
 	}
 
+	// The invite is used: the cookie has nothing left to carry.
 	http.SetCookie(w, a.inviteCookie("", -1))
 
-	identity := auth.IdentityFromAccount(account, "", nil)
-	if _, err := a.sessions.Start(r.Context(), w, identity.Session()); err != nil {
-		return api.Internal(fmt.Errorf("httpapi: start session: %w", err))
+	if err := a.startInviteSession(w, r, account); err != nil {
+		return err
 	}
 
 	return api.Write(w, http.StatusOK, govueaccount.LoginResult{Login: account.Email})
@@ -438,9 +468,8 @@ func (a *app) handleAcceptInvite(w http.ResponseWriter, r *http.Request) error {
 		return acceptInviteError(err)
 	}
 
-	identity := auth.IdentityFromAccount(account, "", nil)
-	if _, err := a.sessions.Start(r.Context(), w, identity.Session()); err != nil {
-		return api.Internal(fmt.Errorf("httpapi: start session: %w", err))
+	if err := a.startInviteSession(w, r, account); err != nil {
+		return err
 	}
 
 	api.NoContent(w)
