@@ -143,6 +143,7 @@ func run() error {
 		RateLimitPer:     cfg.RateLimitPer,
 		DefaultInviteTTL: cfg.DefaultInviteTTL,
 		DistFS:           spaFS,
+		Repositories:     repositories(store),
 	})
 	if err != nil {
 		return fmt.Errorf("solobill: build http handler: %w", err)

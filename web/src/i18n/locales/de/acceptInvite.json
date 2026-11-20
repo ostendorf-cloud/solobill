@@ -1,0 +1,21 @@
+{
+  "title": "Einladung annehmen",
+  "lead": "Legen Sie Ihr Passwort fest und richten Sie Ihren TOTP-Code ein.",
+  "tenantSlug": "Mandant",
+  "token": "Einladungscode",
+  "password": "Passwort",
+  "totpCode": "TOTP-Code",
+  "totpSecret": "TOTP-Geheimnis",
+  "totpSecretLoading": "TOTP-Geheimnis wird angefordert",
+  "totpSecretError": "TOTP-Geheimnis konnte nicht angefordert werden.",
+  "provisioningUri": "Provisioning-URI",
+  "submit": "Einladung annehmen",
+  "submitting": "Wird übernommen",
+  "success": "Einladung angenommen. Sie sind jetzt angemeldet.",
+  "validation": {
+    "tenantSlug": "Bitte geben Sie den Mandanten an.",
+    "token": "Bitte geben Sie den Einladungscode an.",
+    "password": "Bitte geben Sie ein Passwort an.",
+    "totpCode": "Bitte geben Sie den TOTP-Code an."
+  }
+}

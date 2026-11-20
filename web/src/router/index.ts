@@ -1,28 +1,30 @@
-import { createRouter, createWebHistory, type Router } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw, type Router } from 'vue-router'
 
-// HomeView lives at "/": govue's oidc.HandlerConfig.Success defaults to "/"
-// when solobill's own OIDC wiring leaves it unset (see
-// internal/auth/oidc.go and cmd/solobill/main.go's buildOIDCHandlers), so an
-// OIDC login lands here without a backend change. HomeView's own mount
-// check (GET /api/v1/me) is the "simple check" that sends an unauthenticated
-// visitor back to LoginView; a dedicated navigation guard would only
-// duplicate that same call before the view ever got to make it.
-const routes = [
-  {
-    path: '/',
-    name: 'home',
-    component: () => import('../views/HomeView.vue'),
-  },
-  {
-    path: '/login',
-    name: 'login',
-    component: () => import('../views/LoginView.vue'),
-  },
-  {
-    path: '/accept-invite',
-    name: 'accept-invite',
-    component: () => import('../views/AcceptInviteView.vue'),
-  },
+import { assetRoutes } from './routes/assets'
+import { authRoutes } from './routes/auth'
+import { catalogueRoutes } from './routes/catalogue'
+import { customerRoutes } from './routes/customers'
+import { documentRoutes } from './routes/documents'
+import { expenseRoutes } from './routes/expenses'
+import { homeRoutes } from './routes/home'
+import { importRoutes } from './routes/imports'
+import { profileRoutes } from './routes/profile'
+import { reportRoutes } from './routes/reports'
+
+// One module per feature under ./routes, so each feature issue edits only
+// its own file. This index is not edited again by a feature issue: see
+// AGENTS.md's conflict zone rule. The catch-all stays last.
+export const routes: RouteRecordRaw[] = [
+  ...homeRoutes,
+  ...authRoutes,
+  ...profileRoutes,
+  ...customerRoutes,
+  ...catalogueRoutes,
+  ...documentRoutes,
+  ...expenseRoutes,
+  ...assetRoutes,
+  ...reportRoutes,
+  ...importRoutes,
   {
     path: '/:pathMatch(.*)*',
     redirect: { name: 'home' },

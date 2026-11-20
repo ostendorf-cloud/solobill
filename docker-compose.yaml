@@ -204,6 +204,45 @@ services:
       - -c
       - ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO solobill_app;
 
+  # S3 compatible object store for receipts, imported originals and the
+  # logo (docs/concepts/solobill.md, "Receipt storage and GoBD"). The
+  # same SeaweedFS release and image digest the cluster runs: one
+  # "weed server" process with master, volume, filer and the S3 gateway.
+  # SeaweedFS is Apache-2.0; the MinIO server (AGPL-3.0) is deliberately
+  # not used. No port is published: only services on this compose network
+  # reach it. No S3 identities are configured, so the gateway runs
+  # without authentication: acceptable on this private network for local
+  # development only, never in the cluster, where the bucket user and key
+  # come from the infrastructure repository and OpenBao. solobill itself
+  # is wired to it by issue #75, which adds the S3_* variables to the
+  # "solobill" service.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    restart: unless-stopped
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.port=8333
+      - -master.volumeSizeLimitMB=64
+    volumes:
+      - seaweedfs-data:/data
+
+  # One-shot: creates the "solobill" bucket through "weed shell" unless
+  # it exists, then exits. Retried by compose until the master answers.
+  # Not run end to end yet: whether "weed shell" exits non-zero on a
+  # failed command is not verified.
+  seaweedfs-bucket:
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
+    depends_on:
+      - seaweedfs
+    restart: on-failure
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 | grep -q solobill
+        || echo "s3.bucket.create -name solobill" | weed shell -master=seaweedfs:9333
+
   solobill:
     build:
       context: .
@@ -250,3 +289,4 @@ services:
 
 volumes:
   postgres-data:
+  seaweedfs-data:

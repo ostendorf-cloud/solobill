@@ -121,6 +121,17 @@ every row-level-security assertion through it rather than through `DATABASE_URL`
 Postgres superuser bypasses row level security regardless of `FORCE ROW LEVEL SECURITY`, so
 asserting isolation through a superuser connection would prove nothing.
 
+## Conflict zones
+
+- A branch that touches `internal/storage/postgres/sqlcgen/models.go` rebases onto `main` and
+  runs `task generate:sqlc` again. It never hand merges a conflict in generated code.
+- A migration uses a version inside its issue's reserved range. The ranges are the table
+  "Migration timestamp reservation" in `docs/concepts/solobill.md`.
+- A feature adds its routes in its own `internal/httpapi/routes_<resource>.go`, its Vue routes
+  in `web/src/router/routes/<feature>.ts` and its strings in
+  `web/src/i18n/locales/{de,en}/<feature>.json`. It does not edit the index files.
+- The full list is the section "Conflict zones" in `docs/concepts/solobill.md`.
+
 ## Deviations
 
 - This repository uses the Elastic License 2.0 instead of the organisation's baseline

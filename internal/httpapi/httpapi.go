@@ -162,6 +162,11 @@ type Deps struct {
 	// Now is the clock the access log timestamps with. Nil is time.Now;
 	// tests replace it.
 	Now func() time.Time
+
+	// Repositories is every repository of the year end milestone. Each
+	// field may be nil until the issue owning it merges; see
+	// Repositories.
+	Repositories Repositories
 }
 
 // Handlers is what NewHandler builds: Public, served on the listener the
@@ -285,6 +290,8 @@ func NewHandler(d Deps) (Handlers, error) {
 		defaultInviteTTL: inviteTTL,
 		loginCodec:       d.LoginCodec,
 		allowPlainHTTP:   d.AllowPlainHTTP,
+		oidcHandlers:     d.OIDCHandlers,
+		repos:            d.Repositories,
 	}
 
 	// route is the one per-handler chain, outermost first: CORS (when
@@ -304,17 +311,11 @@ func NewHandler(d Deps) (Handlers, error) {
 
 	mux := http.NewServeMux()
 
-	mux.Handle("POST /api/v1/auth/login", route(api.Handle(a.handleLogin)))
-	mux.Handle("POST /api/v1/auth/logout", route(api.Handle(a.handleLogout)))
-	mux.Handle("GET /api/v1/me", route(api.Handle(a.handleMe)))
-	mux.Handle("POST /api/v1/invites", route(api.Handle(a.handleCreateInvite)))
-	mux.Handle("POST /api/v1/invites/totp-secret", route(api.Handle(a.handleInviteTOTPSecret)))
-	mux.Handle("POST /api/v1/invites/accept", route(api.Handle(a.handleAcceptInvite)))
-
-	if d.OIDCHandlers != nil {
-		mux.Handle("GET "+oidcLoginPath, route(d.OIDCHandlers.Login()))
-		mux.Handle("GET "+oidcCallbackPath, route(d.OIDCHandlers.Callback()))
-		mux.Handle("POST /api/v1/invites/oidc/start", route(api.Handle(a.handleInviteOIDCStart)))
+	// One register function per resource file (routes_*.go), listed in
+	// routes.go's registrations. This function is not edited again by a
+	// feature issue: see AGENTS.md's conflict zone rule.
+	for _, register := range registrations {
+		register(mux, route, a)
 	}
 
 	// /metrics, /healthz and /readyz are deliberately registered here as
@@ -401,4 +402,11 @@ type app struct {
 	// handler is not mounted in that case either.
 	loginCodec     *session.Codec
 	allowPlainHTTP bool
+
+	// oidcHandlers is Deps.OIDCHandlers, nil when OIDC is disabled.
+	oidcHandlers *oidc.Handlers
+
+	// repos is Deps.Repositories: every repository the year end
+	// milestone's handlers call. See Repositories.
+	repos Repositories
 }

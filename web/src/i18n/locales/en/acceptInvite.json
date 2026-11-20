@@ -1,0 +1,21 @@
+{
+  "title": "Accept invite",
+  "lead": "Set your password and enroll your TOTP code.",
+  "tenantSlug": "Tenant",
+  "token": "Invite token",
+  "password": "Password",
+  "totpCode": "TOTP code",
+  "totpSecret": "TOTP secret",
+  "totpSecretLoading": "Requesting the TOTP secret",
+  "totpSecretError": "Could not request the TOTP secret.",
+  "provisioningUri": "Provisioning URI",
+  "submit": "Accept invite",
+  "submitting": "Submitting",
+  "success": "Invite accepted. You are now logged in.",
+  "validation": {
+    "tenantSlug": "Please enter the tenant.",
+    "token": "Please enter the invite token.",
+    "password": "Please enter a password.",
+    "totpCode": "Please enter the TOTP code."
+  }
+}
