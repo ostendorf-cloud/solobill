@@ -152,6 +152,7 @@ jobs:
           fi
 
   chart:
+    needs: image-merge
     runs-on: ubuntu-latest
     permissions:
       contents: read
