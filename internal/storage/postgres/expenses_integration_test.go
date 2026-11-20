@@ -22,6 +22,14 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/storage/postgres"
 )
 
+// SQLSTATEs the expense tests expect from Postgres. A row level security
+// WITH CHECK refusal reports insufficient_privilege.
+const (
+	sqlStateRLSRefused          = sqlStateInsufficientPrivilege
+	sqlStateCheckViolation      = "23514"
+	sqlStateForeignKeyViolation = "23503"
+)
+
 // expenseTestEnv is one restricted store with two tenants and a receipt
 // file in each.
 type expenseTestEnv struct {
@@ -114,6 +122,13 @@ func testExpense(tenantID uuid.UUID, paidOn string) storage.Expense {
 	}
 }
 
+// scopeErr runs fn in a WithTenant scope of its own and returns its
+// error. A test that expects a refusal uses it, so the transaction the
+// refusal aborts is never used again.
+func (env expenseTestEnv) scopeErr(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context) error) error {
+	return env.store.WithTenant(ctx, tenantID, fn)
+}
+
 // inTenant runs fn in a WithTenant scope and fails the test on an error.
 func (env expenseTestEnv) inTenant(ctx context.Context, t *testing.T, tenantID uuid.UUID, fn func(ctx context.Context) error) {
 	t.Helper()
@@ -154,9 +169,6 @@ func TestExpenseRepository(t *testing.T) {
 
 	t.Run("another tenant can neither read nor write", func(t *testing.T) {
 		env.inTenant(ctx, t, env.tenantB.ID, func(ctx context.Context) error {
-			if _, err := repo.FindByID(ctx, draft.ID); !errors.Is(err, storage.ErrNotFound) {
-				t.Errorf("FindByID() = %v, want ErrNotFound", err)
-			}
 			list, err := repo.List(ctx, storage.ExpenseFilter{})
 			if err != nil {
 				return err
@@ -164,23 +176,43 @@ func TestExpenseRepository(t *testing.T) {
 			if len(list) != 0 {
 				t.Errorf("List() under tenant B = %v, want none", list)
 			}
-			changed := draft
-			changed.Description = "tampered"
-			if _, err := repo.UpdateDraft(ctx, changed); !errors.Is(err, storage.ErrNotFound) {
-				t.Errorf("UpdateDraft() = %v, want ErrNotFound", err)
-			}
-			if err := repo.DeleteDraft(ctx, draft.ID); !errors.Is(err, storage.ErrNotFound) {
-				t.Errorf("DeleteDraft() = %v, want ErrNotFound", err)
-			}
-			if _, err := repo.Book(ctx, draft.ID, time.Now()); !errors.Is(err, storage.ErrNotFound) {
-				t.Errorf("Book() = %v, want ErrNotFound", err)
-			}
-			if _, err := repo.Storno(ctx, booked.ID, *expenseDate("2026-11-25"), time.Now()); !errors.Is(err, storage.ErrNotFound) {
-				t.Errorf("Storno() = %v, want ErrNotFound", err)
-			}
 
 			return nil
 		})
+
+		// Each refused call in its own scope: none of them should raise a
+		// database error, but a scope is never reused after a refusal.
+		changed := draft
+		changed.Description = "tampered"
+		for name, call := range map[string]func(ctx context.Context) error{
+			"FindByID": func(ctx context.Context) error {
+				_, err := repo.FindByID(ctx, draft.ID)
+
+				return err
+			},
+			"UpdateDraft": func(ctx context.Context) error {
+				_, err := repo.UpdateDraft(ctx, changed)
+
+				return err
+			},
+			"DeleteDraft": func(ctx context.Context) error {
+				return repo.DeleteDraft(ctx, draft.ID)
+			},
+			"Book": func(ctx context.Context) error {
+				_, err := repo.Book(ctx, draft.ID, time.Now())
+
+				return err
+			},
+			"Storno": func(ctx context.Context) error {
+				_, err := repo.Storno(ctx, booked.ID, *expenseDate("2026-11-25"), time.Now())
+
+				return err
+			},
+		} {
+			if err := env.scopeErr(ctx, env.tenantB.ID, call); !errors.Is(err, storage.ErrNotFound) {
+				t.Errorf("%s() under tenant B = %v, want ErrNotFound", name, err)
+			}
+		}
 
 		// Raw SQL under tenant B's scope, without a tenant filter: row
 		// level security leaves nothing to touch.
@@ -203,28 +235,23 @@ func TestExpenseRepository(t *testing.T) {
 	})
 
 	t.Run("a row of another tenant cannot be written from this scope", func(t *testing.T) {
-		err := env.store.WithTenant(ctx, env.tenantA.ID, func(ctx context.Context) error {
+		err := env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
 			_, err := repo.Create(ctx, testExpense(env.tenantB.ID, "2026-11-18"))
 
 			return err
 		})
-		if err == nil {
-			t.Error("Create() of a tenant B row under tenant A succeeded")
-		}
+		requireSQLState(t, err, sqlStateRLSRefused, "Create() of a tenant B row under tenant A")
 	})
 
 	t.Run("a receipt of another tenant is refused", func(t *testing.T) {
-		err := env.store.WithTenant(ctx, env.tenantA.ID, func(ctx context.Context) error {
+		err := env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
 			foreign := testExpense(env.tenantA.ID, "2026-11-18")
 			foreign.FileID = &env.fileB
 			_, err := repo.Create(ctx, foreign)
 
 			return err
 		})
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
-			t.Errorf("Create() with tenant B's file = %v, want a foreign key violation", err)
-		}
+		requireSQLState(t, err, sqlStateForeignKeyViolation, "Create() with tenant B's file")
 	})
 
 	t.Run("the table checks the amounts and the category shape", func(t *testing.T) {
@@ -235,35 +262,45 @@ func TestExpenseRepository(t *testing.T) {
 			"form number":         func(e *storage.Expense) { e.Category = "27" },
 			"rate above 100":      func(e *storage.Expense) { e.VATRatePermyriad = 10001 },
 		} {
-			err := env.store.WithTenant(ctx, env.tenantA.ID, func(ctx context.Context) error {
+			err := env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
 				e := testExpense(env.tenantA.ID, "2026-11-18")
 				mutate(&e)
 				_, err := repo.Create(ctx, e)
 
 				return err
 			})
-			if err == nil {
-				t.Errorf("%s: Create() succeeded", name)
-			}
+			requireSQLState(t, err, sqlStateCheckViolation, name)
 		}
 	})
 
 	t.Run("a booked row is immutable", func(t *testing.T) {
-		env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
-			changed := booked
-			changed.Description = "tampered"
-			if _, err := repo.UpdateDraft(ctx, changed); !errors.Is(err, storage.ErrConflict) {
-				t.Errorf("UpdateDraft() of a booked row = %v, want ErrConflict", err)
-			}
-			if err := repo.DeleteDraft(ctx, booked.ID); !errors.Is(err, storage.ErrConflict) {
-				t.Errorf("DeleteDraft() of a booked row = %v, want ErrConflict", err)
-			}
-			if _, err := repo.Book(ctx, booked.ID, time.Now()); !errors.Is(err, storage.ErrConflict) {
-				t.Errorf("Book() of a booked row = %v, want ErrConflict", err)
-			}
+		// Each refusal runs in its own scope that returns the error: a
+		// statement Postgres refuses aborts the whole transaction, so a
+		// later statement in the same scope would fail with 25P02.
+		changed := booked
+		changed.Description = "tampered"
+		err := env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
+			_, err := repo.UpdateDraft(ctx, changed)
 
-			return nil
+			return err
 		})
+		if !errors.Is(err, storage.ErrConflict) {
+			t.Errorf("UpdateDraft() of a booked row = %v, want ErrConflict", err)
+		}
+		err = env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
+			return repo.DeleteDraft(ctx, booked.ID)
+		})
+		if !errors.Is(err, storage.ErrConflict) {
+			t.Errorf("DeleteDraft() of a booked row = %v, want ErrConflict", err)
+		}
+		err = env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
+			_, err := repo.Book(ctx, booked.ID, time.Now())
+
+			return err
+		})
+		if !errors.Is(err, storage.ErrConflict) {
+			t.Errorf("Book() of a booked row = %v, want ErrConflict", err)
+		}
 
 		for _, stmt := range []string{
 			`UPDATE expenses SET description = 'tampered' WHERE id = $1`,
@@ -273,11 +310,21 @@ func TestExpenseRepository(t *testing.T) {
 			tx := beginScoped(ctx, t, env.restrictedPool, env.tenantA.ID)
 			_, err := tx.Exec(ctx, stmt, booked.ID)
 			_ = tx.Rollback(ctx)
-			var pgErr *pgconn.PgError
-			if !errors.As(err, &pgErr) || pgErr.Code != pgIntegrityConstraintViolationClass {
-				t.Errorf("%s = %v, want the trigger's integrity_constraint_violation", stmt, err)
-			}
+			requireSQLState(t, err, pgIntegrityConstraintViolationClass, stmt)
 		}
+
+		// The row is unchanged, read in a fresh scope.
+		env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
+			got, err := repo.FindByID(ctx, booked.ID)
+			if err != nil {
+				return err
+			}
+			if got.State != storage.BookingStateBooked || got.Description != booked.Description {
+				t.Errorf("booked row after the refusals = %+v", got)
+			}
+
+			return nil
+		})
 	})
 
 	t.Run("a draft can change and be deleted", func(t *testing.T) {
@@ -307,35 +354,72 @@ func TestExpenseRepository(t *testing.T) {
 	})
 
 	t.Run("storno", func(t *testing.T) {
+		// Every refusal runs in its own scope; see "a booked row is
+		// immutable". The second storno of the same original fails on
+		// expenses_reversed_once, a unique violation that aborts its
+		// transaction.
+		err := env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
+			_, err := repo.Storno(ctx, draft.ID, *expenseDate("2026-11-25"), time.Now())
+
+			return err
+		})
+		if !errors.Is(err, storage.ErrConflict) {
+			t.Errorf("Storno() of a draft = %v, want ErrConflict", err)
+		}
+
+		var storno storage.Expense
 		env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
-			if _, err := repo.Storno(ctx, draft.ID, *expenseDate("2026-11-25"), time.Now()); !errors.Is(err, storage.ErrConflict) {
-				t.Errorf("Storno() of a draft = %v, want ErrConflict", err)
-			}
-			storno, err := repo.Storno(ctx, booked.ID, *expenseDate("2027-01-02"), time.Now())
+			var err error
+			storno, err = repo.Storno(ctx, booked.ID, *expenseDate("2027-01-02"), time.Now())
+
+			return err
+		})
+		if storno.State != storage.BookingStateBooked || storno.StornoOfID == nil || *storno.StornoOfID != booked.ID ||
+			storno.GrossCents != -11900 || storno.NetCents != -10000 || storno.VATCents != -1900 ||
+			storno.PaidOn.Format(time.DateOnly) != "2027-01-02" {
+			t.Errorf("Storno() = %+v", storno)
+		}
+
+		err = env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
+			_, err := repo.Storno(ctx, booked.ID, *expenseDate("2027-01-03"), time.Now())
+
+			return err
+		})
+		if !errors.Is(err, storage.ErrConflict) {
+			t.Errorf("second Storno() = %v, want ErrConflict", err)
+		}
+		err = env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
+			_, err := repo.Storno(ctx, storno.ID, *expenseDate("2027-01-03"), time.Now())
+
+			return err
+		})
+		if !errors.Is(err, storage.ErrConflict) {
+			t.Errorf("Storno() of a storno = %v, want ErrConflict", err)
+		}
+
+		// The refused attempts left exactly one storno of the original.
+		env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
+			all, err := repo.List(ctx, storage.ExpenseFilter{})
 			if err != nil {
 				return err
 			}
-			if storno.State != storage.BookingStateBooked || storno.StornoOfID == nil || *storno.StornoOfID != booked.ID ||
-				storno.GrossCents != -11900 || storno.NetCents != -10000 || storno.VATCents != -1900 ||
-				storno.PaidOn.Format(time.DateOnly) != "2027-01-02" {
-				t.Errorf("Storno() = %+v", storno)
+			reversals := 0
+			for _, e := range all {
+				if e.StornoOfID != nil && *e.StornoOfID == booked.ID {
+					reversals++
+				}
 			}
-			if _, err := repo.Storno(ctx, booked.ID, *expenseDate("2027-01-03"), time.Now()); !errors.Is(err, storage.ErrConflict) {
-				t.Errorf("second Storno() = %v, want ErrConflict", err)
-			}
-			if _, err := repo.Storno(ctx, storno.ID, *expenseDate("2027-01-03"), time.Now()); !errors.Is(err, storage.ErrConflict) {
-				t.Errorf("Storno() of a storno = %v, want ErrConflict", err)
+			if reversals != 1 {
+				t.Errorf("%d storno rows of the original, want 1", reversals)
 			}
 
 			return nil
 		})
 
 		// A raw storno row that does not mirror its original is refused by
-		// expenses_check_storno.
-		tx := beginScoped(ctx, t, env.restrictedPool, env.tenantA.ID)
-		defer func() { _ = tx.Rollback(ctx) }()
+		// expenses_check_storno, in a transaction of its own.
 		var other storage.Expense
-		if err := env.store.WithTenant(ctx, env.tenantA.ID, func(ctx context.Context) error {
+		env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
 			var err error
 			if other, err = repo.Create(ctx, testExpense(env.tenantA.ID, "2026-11-18")); err != nil {
 				return err
@@ -343,16 +427,13 @@ func TestExpenseRepository(t *testing.T) {
 			other, err = repo.Book(ctx, other.ID, time.Now())
 
 			return err
-		}); err != nil {
-			t.Fatal(err)
-		}
-		_, err := tx.Exec(ctx, `INSERT INTO expenses (tenant_id, state, paid_on, gross_cents, net_cents, vat_rate_permyriad,
+		})
+		tx := beginScoped(ctx, t, env.restrictedPool, env.tenantA.ID)
+		_, err = tx.Exec(ctx, `INSERT INTO expenses (tenant_id, state, paid_on, gross_cents, net_cents, vat_rate_permyriad,
 			vat_cents, category, storno_of_id, booked_at)
 			VALUES ($1, 'booked', '2026-11-30', -100, -100, 0, 0, 'euer.z51', $2, now())`, env.tenantA.ID, other.ID)
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || pgErr.Code != pgIntegrityConstraintViolationClass {
-			t.Errorf("raw storno with other amounts = %v, want the trigger's integrity_constraint_violation", err)
-		}
+		_ = tx.Rollback(ctx)
+		requireSQLState(t, err, pgIntegrityConstraintViolationClass, "raw storno with other amounts")
 	})
 
 	t.Run("the year comes from paid_on", func(t *testing.T) {
@@ -418,6 +499,56 @@ func TestExpenseRepository(t *testing.T) {
 	})
 }
 
+// TestExpenseTablesRefuseTruncate: TRUNCATE skips row triggers, so the
+// BEFORE TRUNCATE triggers of expenses and other_income must refuse it,
+// even for the admin role. Each statement runs in its own transaction
+// that is rolled back, so a missing refusal empties nothing and an aborted
+// transaction is never reused.
+//
+// A plain TRUNCATE may also be refused by Postgres itself (0A000) once a
+// later table references one of them by foreign key (assets, issue #78).
+// The self reference of storno_of_id does not count: it stays inside the
+// truncated table. TRUNCATE ... CASCADE always reaches the named table's
+// trigger first, which refuses with integrity_constraint_violation.
+func TestExpenseTablesRefuseTruncate(t *testing.T) {
+	adminURL := os.Getenv("DATABASE_URL")
+	if adminURL == "" {
+		t.Skip("DATABASE_URL not set; skipping the Postgres-backed truncate test")
+	}
+
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatalf("open admin pool: %v", err)
+	}
+	t.Cleanup(adminPool.Close)
+
+	truncateErr := func(stmt string) error {
+		t.Helper()
+
+		tx, err := adminPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		_, err = tx.Exec(ctx, stmt)
+
+		return err
+	}
+
+	for _, table := range []string{"expenses", "other_income"} {
+		err := truncateErr(`TRUNCATE ` + table)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || (pgErr.Code != "0A000" && pgErr.Code != pgIntegrityConstraintViolationClass) {
+			t.Errorf("TRUNCATE %s as the admin role error = %v, want a refusal (0A000 or 23000)", table, err)
+		}
+
+		err = truncateErr(`TRUNCATE ` + table + ` CASCADE`)
+		requireSQLState(t, err, pgIntegrityConstraintViolationClass, "TRUNCATE "+table+" CASCADE as the admin role")
+	}
+}
+
 // TestOtherIncomeRepository covers other_income the same way, shorter:
 // isolation, immutability and the storno.
 func TestOtherIncomeRepository(t *testing.T) {
@@ -446,33 +577,61 @@ func TestOtherIncomeRepository(t *testing.T) {
 		return err
 	})
 
-	env.inTenant(ctx, t, env.tenantB.ID, func(ctx context.Context) error {
-		if _, err := repo.FindByID(ctx, booked.ID); !errors.Is(err, storage.ErrNotFound) {
-			t.Errorf("FindByID() under tenant B = %v, want ErrNotFound", err)
-		}
-		if _, err := repo.Storno(ctx, booked.ID, *expenseDate("2027-01-02"), time.Now()); !errors.Is(err, storage.ErrNotFound) {
-			t.Errorf("Storno() under tenant B = %v, want ErrNotFound", err)
-		}
+	// Every refusal runs in its own scope that returns the error; see
+	// TestExpenseRepository.
+	err := env.scopeErr(ctx, env.tenantB.ID, func(ctx context.Context) error {
+		_, err := repo.FindByID(ctx, booked.ID)
+
+		return err
+	})
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("FindByID() under tenant B = %v, want ErrNotFound", err)
+	}
+	err = env.scopeErr(ctx, env.tenantB.ID, func(ctx context.Context) error {
+		_, err := repo.Storno(ctx, booked.ID, *expenseDate("2027-01-02"), time.Now())
+
+		return err
+	})
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("Storno() under tenant B = %v, want ErrNotFound", err)
+	}
+	err = env.scopeErr(ctx, env.tenantB.ID, func(ctx context.Context) error {
 		foreign := refund(env.tenantB.ID, "2026-12-31")
 		foreign.FileID = &env.fileA
-		if _, err := repo.Create(ctx, foreign); err == nil {
-			t.Error("Create() with tenant A's file under tenant B succeeded")
-		}
+		_, err := repo.Create(ctx, foreign)
 
-		return nil
+		return err
 	})
+	requireSQLState(t, err, sqlStateForeignKeyViolation, "Create() with tenant A's file under tenant B")
+
+	err = env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
+		return repo.DeleteDraft(ctx, booked.ID)
+	})
+	if !errors.Is(err, storage.ErrConflict) {
+		t.Errorf("DeleteDraft() of a booked row = %v, want ErrConflict", err)
+	}
+
+	var storno storage.OtherIncome
+	env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
+		var err error
+		storno, err = repo.Storno(ctx, booked.ID, *expenseDate("2027-01-02"), time.Now())
+
+		return err
+	})
+	if storno.GrossCents != -12345 || storno.StornoOfID == nil || *storno.StornoOfID != booked.ID {
+		t.Errorf("Storno() = %+v", storno)
+	}
+
+	err = env.scopeErr(ctx, env.tenantA.ID, func(ctx context.Context) error {
+		_, err := repo.Storno(ctx, booked.ID, *expenseDate("2027-01-03"), time.Now())
+
+		return err
+	})
+	if !errors.Is(err, storage.ErrConflict) {
+		t.Errorf("second Storno() = %v, want ErrConflict", err)
+	}
 
 	env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
-		if err := repo.DeleteDraft(ctx, booked.ID); !errors.Is(err, storage.ErrConflict) {
-			t.Errorf("DeleteDraft() of a booked row = %v, want ErrConflict", err)
-		}
-		storno, err := repo.Storno(ctx, booked.ID, *expenseDate("2027-01-02"), time.Now())
-		if err != nil {
-			return err
-		}
-		if storno.GrossCents != -12345 || storno.StornoOfID == nil || *storno.StornoOfID != booked.ID {
-			t.Errorf("Storno() = %+v", storno)
-		}
 		year := 2027
 		list, err := repo.List(ctx, storage.OtherIncomeFilter{Year: &year})
 		if err != nil {
@@ -486,10 +645,7 @@ func TestOtherIncomeRepository(t *testing.T) {
 	})
 
 	tx := beginScoped(ctx, t, env.restrictedPool, env.tenantA.ID)
-	defer func() { _ = tx.Rollback(ctx) }()
-	_, err := tx.Exec(ctx, `UPDATE other_income SET gross_cents = 1, net_cents = 1 WHERE id = $1`, booked.ID)
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != pgIntegrityConstraintViolationClass {
-		t.Errorf("raw UPDATE of booked other income = %v, want the trigger's integrity_constraint_violation", err)
-	}
+	_, err = tx.Exec(ctx, `UPDATE other_income SET gross_cents = 1, net_cents = 1 WHERE id = $1`, booked.ID)
+	_ = tx.Rollback(ctx)
+	requireSQLState(t, err, pgIntegrityConstraintViolationClass, "raw UPDATE of booked other income")
 }
