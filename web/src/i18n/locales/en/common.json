@@ -1,5 +1,12 @@
 {
   "appName": "solobill",
   "skipToContent": "Skip to content",
-  "cancel": "Cancel"
+  "cancel": "Cancel",
+  "mainNavigation": "Main navigation",
+  "menu": "Menu",
+  "signedInAs": "Signed in as {name}",
+  "logout": "Sign out",
+  "loggingOut": "Signing out",
+  "logoutError": "Signing out failed.",
+  "gobdBanner": "The file storage is not protected against change and deletion. Receipts are not kept in an audit proof way."
 }

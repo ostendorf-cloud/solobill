@@ -1,5 +1,12 @@
 {
   "appName": "solobill",
   "skipToContent": "Zum Inhalt springen",
-  "cancel": "Abbrechen"
+  "cancel": "Abbrechen",
+  "mainNavigation": "Hauptnavigation",
+  "menu": "Menü",
+  "signedInAs": "Angemeldet als {name}",
+  "logout": "Abmelden",
+  "loggingOut": "Wird abgemeldet",
+  "logoutError": "Abmelden ist fehlgeschlagen.",
+  "gobdBanner": "Der Dateispeicher ist nicht gegen Änderung und Löschung geschützt. Belege werden so nicht revisionssicher aufbewahrt."
 }

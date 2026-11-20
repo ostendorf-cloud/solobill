@@ -1,1 +1,49 @@
-{}
+{
+  "nav": "Catalogue",
+  "title": "Catalogue",
+  "lead": "Services and items with a price that you can take into documents.",
+  "tableCaption": "List of catalogue items",
+  "loading": "Loading the catalogue.",
+  "loadError": "The catalogue could not be loaded.",
+  "loadErrorTitle": "Loading failed",
+  "emptyTitle": "No items yet",
+  "emptyDescription": "Add the first item to use it in documents later.",
+  "create": "Add item",
+  "createTitle": "New item",
+  "editTitle": "Edit item",
+  "editFor": "Edit {name}",
+  "deleteFor": "Delete {name}",
+  "edit": "Edit",
+  "delete": "Delete",
+  "save": "Save",
+  "saving": "Saving the item",
+  "cancel": "Cancel",
+  "saved": "The item is saved.",
+  "saveError": "The item could not be saved. Check the marked fields.",
+  "skuTaken": "This SKU is already in use.",
+  "priceInvalid": "Enter an amount such as 95 or 95.50.",
+  "deleteTitle": "Delete this item?",
+  "deleteMessage": "The item disappears from the catalogue. Issued documents stay unchanged.",
+  "deleted": "The item is deleted.",
+  "deleteError": "The item could not be deleted.",
+  "columns": {
+    "name": "Name",
+    "sku": "SKU",
+    "unit": "Unit",
+    "price": "Price",
+    "actions": "Actions"
+  },
+  "fields": {
+    "name": "Name",
+    "description": "Description",
+    "sku": "SKU",
+    "price": "Price per unit in EUR",
+    "priceHint": "For example 95 or 95.50.",
+    "unit": "Unit"
+  },
+  "units": {
+    "piece": "Piece",
+    "hour": "Hour",
+    "day": "Day"
+  }
+}

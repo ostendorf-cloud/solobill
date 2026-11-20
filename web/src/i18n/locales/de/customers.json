@@ -1,1 +1,52 @@
-{}
+{
+  "nav": "Kunden",
+  "title": "Kunden",
+  "lead": "Deine Kunden mit Anschrift und Sprache für Dokumente.",
+  "tableCaption": "Liste der Kunden",
+  "loading": "Die Kunden werden geladen.",
+  "loadError": "Die Kunden konnten nicht geladen werden.",
+  "loadErrorTitle": "Laden fehlgeschlagen",
+  "emptyTitle": "Noch keine Kunden",
+  "emptyDescription": "Lege den ersten Kunden an, um ihm Rechnungen und Angebote zuzuordnen.",
+  "create": "Kunde anlegen",
+  "createTitle": "Neuer Kunde",
+  "editTitle": "Kunde bearbeiten",
+  "editFor": "{name} bearbeiten",
+  "deleteFor": "{name} löschen",
+  "edit": "Bearbeiten",
+  "delete": "Löschen",
+  "save": "Speichern",
+  "saving": "Der Kunde wird gespeichert",
+  "cancel": "Abbrechen",
+  "saved": "Der Kunde ist gespeichert.",
+  "saveError": "Der Kunde konnte nicht gespeichert werden. Prüfe die markierten Felder.",
+  "numberTaken": "Diese Kundennummer ist schon vergeben.",
+  "deleteTitle": "Kunden löschen?",
+  "deleteMessage": "Der Kunde verschwindet aus der Liste. Ausgestellte Dokumente bleiben unverändert.",
+  "deleted": "Der Kunde ist gelöscht.",
+  "deleteError": "Der Kunde konnte nicht gelöscht werden.",
+  "columns": {
+    "number": "Nummer",
+    "name": "Name",
+    "city": "Ort",
+    "language": "Sprache",
+    "actions": "Aktionen"
+  },
+  "fields": {
+    "name": "Name",
+    "number": "Kundennummer",
+    "email": "E-Mail",
+    "vatId": "USt-IdNr",
+    "street": "Straße und Hausnummer",
+    "addressLine2": "Adresszeile 2",
+    "postalCode": "Postleitzahl",
+    "city": "Ort",
+    "countryCode": "Ländercode",
+    "countryCodeHint": "Zwei Buchstaben, zum Beispiel DE.",
+    "documentLanguage": "Sprache der Dokumente"
+  },
+  "language": {
+    "de": "Deutsch",
+    "en": "Englisch"
+  }
+}
