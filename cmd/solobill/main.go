@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
+	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/health"
 	"github.com/ostendorf-cloud/govue/httpserver"
 	"github.com/ostendorf-cloud/govue/logging"
@@ -113,8 +114,26 @@ func run() error {
 		return fmt.Errorf("solobill: build login codec: %w", err)
 	}
 
-	localAuth := auth.NewLocalAuthenticator(store, nil)
-	invites := auth.NewInviteManager(store, nil)
+	// One Argon2id hasher per process, shared by the login and the invite
+	// accept, so govue's cap on concurrent derivations holds for both.
+	hasher, err := account.NewHasher(account.HasherConfig{})
+	if err != nil {
+		return fmt.Errorf("solobill: build password hasher: %w", err)
+	}
+
+	login, err := auth.NewLogin(auth.LoginConfig{
+		Store:          store,
+		Sessions:       sessions,
+		Hasher:         hasher,
+		Logger:         logger,
+		TrustedOrigins: cfg.AllowedOrigins,
+		Passkey:        passkeyConfig(cfg),
+	})
+	if err != nil {
+		return fmt.Errorf("solobill: build login: %w", err)
+	}
+
+	invites := auth.NewInviteManager(store, hasher, nil)
 
 	healthRegistry := health.New()
 	healthRegistry.Add("database", 0, pool.Ping)
@@ -135,13 +154,21 @@ func run() error {
 	}
 
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
-		Logger:           logger,
-		Store:            store,
-		Sessions:         sessions,
-		LoginCodec:       oidcLoginCodec(cfg, loginCodec),
-		CSRFKey:          cfg.CSRFKey,
-		LocalAuth:        localAuth,
-		Invites:          invites,
+		Logger:     logger,
+		Store:      store,
+		Sessions:   sessions,
+		LoginCodec: oidcLoginCodec(cfg, loginCodec),
+		CSRFKey:    cfg.CSRFKey,
+		Login:      login,
+		Invites:    invites,
+		LoginLimits: httpapi.LoginLimits{
+			ClientBurst:  cfg.Auth.LoginClientBurst,
+			ClientPer:    cfg.Auth.LoginClientPer,
+			LoginBurst:   cfg.Auth.LoginBurst,
+			LoginPer:     cfg.Auth.LoginPer,
+			CeilingBurst: cfg.Auth.LoginCeilingBurst,
+			CeilingPer:   cfg.Auth.LoginCeilingPer,
+		},
 		OIDCHandlers:     oidcHandlers,
 		HealthRegistry:   healthRegistry,
 		AllowedOrigins:   cfg.AllowedOrigins,
@@ -221,6 +248,22 @@ func buildOIDCHandlers(
 	}
 
 	return handlers, nil
+}
+
+// passkeyConfig returns the passkey relying party from cfg, or nil when
+// PASSKEY_RP_ID is unset and passkeys stay off. The RP id and the origins
+// are configuration only, never read off a request.
+func passkeyConfig(cfg config.Config) *auth.PasskeyConfig {
+	if !cfg.Auth.PasskeysEnabled {
+		return nil
+	}
+
+	return &auth.PasskeyConfig{
+		RPID:           cfg.Auth.PasskeyRPID,
+		RPDisplayName:  cfg.Auth.PasskeyRPDisplayName,
+		Origins:        cfg.Auth.PasskeyOrigins,
+		AllowPlainHTTP: cfg.SessionAllowPlainHTTP,
+	}
 }
 
 // oidcLoginCodec returns loginCodec when OIDC is enabled, or nil when it is

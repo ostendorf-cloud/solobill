@@ -16,7 +16,7 @@ func TestInviteManagerCreateInviteStoresOnlyTheHash(t *testing.T) {
 	store := newFakeStore()
 	tenant := store.addTenant(storage.Tenant{Slug: "acme", Name: "Acme"})
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
-	manager := NewInviteManager(store, func() time.Time { return now })
+	manager := NewInviteManager(store, testHasher(t), func() time.Time { return now })
 
 	raw, invite, err := manager.CreateInvite(t.Context(), CreateInviteParams{
 		TenantID: tenant.ID,
@@ -101,10 +101,10 @@ func TestInviteManagerAcceptInviteCreatesAnActiveAccountAndConsumesTheInvite(t *
 	t.Parallel()
 
 	f := newInviteTestFixture(t)
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	secret := f.issueSecret(t, manager)
-	code, err := GenerateTOTPCode(secret, f.now)
+	code, err := testTOTPCode(secret, f.now)
 	if err != nil {
 		t.Fatalf("GenerateTOTPCode: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestInviteManagerAcceptInviteRejectsAnUnknownToken(t *testing.T) {
 	t.Parallel()
 
 	f := newInviteTestFixture(t)
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	_, err := manager.AcceptInvite(t.Context(), AcceptInviteParams{
 		TenantID: f.tenant.ID,
@@ -186,7 +186,7 @@ func TestInviteManagerAcceptInviteRejectsAnExpiredInvite(t *testing.T) {
 	f := newInviteTestFixture(t)
 	f.invite.ExpiresAt = f.now.Add(-time.Minute)
 	f.store.invites[f.invite.ID] = f.invite
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	_, err := manager.AcceptInvite(t.Context(), AcceptInviteParams{
 		TenantID: f.tenant.ID,
@@ -206,7 +206,7 @@ func TestInviteManagerAcceptInviteRejectsAnAlreadyUsedInvite(t *testing.T) {
 	used := f.now.Add(-time.Minute)
 	f.invite.UsedAt = &used
 	f.store.invites[f.invite.ID] = f.invite
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	_, err := manager.AcceptInvite(t.Context(), AcceptInviteParams{
 		TenantID: f.tenant.ID,
@@ -223,7 +223,7 @@ func TestInviteManagerAcceptInviteRejectsAnUnconfirmedTOTPCode(t *testing.T) {
 	t.Parallel()
 
 	f := newInviteTestFixture(t)
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	f.issueSecret(t, manager)
 
@@ -259,15 +259,15 @@ func TestInviteManagerAcceptInviteRejectsWhenNoSecretWasEverIssued(t *testing.T)
 	t.Parallel()
 
 	f := newInviteTestFixture(t)
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	// Deliberately no call to IssueTOTPSecret: the invite's own
 	// TOTPSecret is still nil.
-	clientSecret, err := GenerateTOTPSecret()
+	clientSecret, err := testTOTPSecret()
 	if err != nil {
 		t.Fatalf("GenerateTOTPSecret: %v", err)
 	}
-	code, err := GenerateTOTPCode(clientSecret, f.now)
+	code, err := testTOTPCode(clientSecret, f.now)
 	if err != nil {
 		t.Fatalf("GenerateTOTPCode: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestInviteManagerAcceptInviteIgnoresAnAttackerSuppliedCode(t *testing.T) {
 	t.Parallel()
 
 	f := newInviteTestFixture(t)
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	// The real invitee issues the real secret, exactly as the enrolment
 	// flow intends.
@@ -303,11 +303,11 @@ func TestInviteManagerAcceptInviteIgnoresAnAttackerSuppliedCode(t *testing.T) {
 	// The attacker generates their own, unrelated secret and computes a
 	// code from it: internally consistent, but not the one the server
 	// persisted on the invite.
-	attackerSecret, err := GenerateTOTPSecret()
+	attackerSecret, err := testTOTPSecret()
 	if err != nil {
 		t.Fatalf("GenerateTOTPSecret: %v", err)
 	}
-	attackerCode, err := GenerateTOTPCode(attackerSecret, f.now)
+	attackerCode, err := testTOTPCode(attackerSecret, f.now)
 	if err != nil {
 		t.Fatalf("GenerateTOTPCode: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestInviteManagerIssueTOTPSecretRejectsAnExpiredOrUsedInvite(t *testing.T) 
 		f := newInviteTestFixture(t)
 		f.invite.ExpiresAt = f.now.Add(-time.Minute)
 		f.store.invites[f.invite.ID] = f.invite
-		manager := NewInviteManager(f.store, func() time.Time { return f.now })
+		manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 		_, _, err := manager.IssueTOTPSecret(t.Context(), f.tenant.ID, f.raw)
 		if !errors.Is(err, ErrInviteInvalid) {
@@ -349,7 +349,7 @@ func TestInviteManagerIssueTOTPSecretRejectsAnExpiredOrUsedInvite(t *testing.T) 
 		used := f.now.Add(-time.Minute)
 		f.invite.UsedAt = &used
 		f.store.invites[f.invite.ID] = f.invite
-		manager := NewInviteManager(f.store, func() time.Time { return f.now })
+		manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 		_, _, err := manager.IssueTOTPSecret(t.Context(), f.tenant.ID, f.raw)
 		if !errors.Is(err, ErrInviteInvalid) {
@@ -361,7 +361,7 @@ func TestInviteManagerIssueTOTPSecretRejectsAnExpiredOrUsedInvite(t *testing.T) 
 		t.Parallel()
 
 		f := newInviteTestFixture(t)
-		manager := NewInviteManager(f.store, func() time.Time { return f.now })
+		manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 		_, _, err := manager.IssueTOTPSecret(t.Context(), f.tenant.ID, "not-the-right-token")
 		if !errors.Is(err, ErrInviteInvalid) {
@@ -385,10 +385,10 @@ func TestInviteManagerAcceptInviteFailsOnAccountConflictWithoutLeavingTheInviteU
 		Status:   storage.AccountStatusActive,
 	})
 
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	secret := f.issueSecret(t, manager)
-	code, err := GenerateTOTPCode(secret, f.now)
+	code, err := testTOTPCode(secret, f.now)
 	if err != nil {
 		t.Fatalf("GenerateTOTPCode: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestInviteManagerAcceptInviteOIDCCreatesAnActiveAccountAndConsumesTheInvite
 	t.Parallel()
 
 	f := newInviteTestFixture(t)
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	const subject = "f:realm:invitee-subject"
 
@@ -533,7 +533,7 @@ func TestInviteManagerAcceptInviteOIDCRejectsAnUnknownExpiredOrUsedToken(t *test
 
 			f := newInviteTestFixture(t)
 			tt.setup(&f)
-			manager := NewInviteManager(f.store, func() time.Time { return f.now })
+			manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 			_, err := manager.AcceptInviteOIDC(t.Context(), AcceptInviteOIDCParams{
 				TenantID: f.tenant.ID,
@@ -562,7 +562,7 @@ func TestInviteManagerAcceptInviteOIDCDoesNotLetADifferentSubjectTakeOverAnExist
 	t.Parallel()
 
 	f := newInviteTestFixture(t)
-	manager := NewInviteManager(f.store, func() time.Time { return f.now })
+	manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 	const (
 		ownerSubject    = "f:realm:the-real-owner"
@@ -679,7 +679,7 @@ func TestInviteManagerPeekInvite(t *testing.T) {
 
 			f := newInviteTestFixture(t)
 			tt.setup(&f)
-			manager := NewInviteManager(f.store, func() time.Time { return f.now })
+			manager := NewInviteManager(f.store, testHasher(t), func() time.Time { return f.now })
 
 			err := manager.PeekInvite(t.Context(), f.tenant.ID, tt.token(f))
 			if tt.wantErr != nil {

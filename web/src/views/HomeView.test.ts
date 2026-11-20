@@ -67,6 +67,14 @@ describe('HomeView', () => {
     expect(csrfToken.value).toBeUndefined()
   })
 
+  it('offers the passkey section once the profile is loaded', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue(profile)
+
+    renderHomeView()
+
+    expect(await screen.findByRole('heading', { name: 'Passkeys' })).toBeVisible()
+  })
+
   it('redirects to login when the session is not authenticated', async () => {
     vi.mocked(apiClient.get).mockRejectedValue(
       new ApiError({ code: ErrorCode.unauthenticated, message: 'log in first', status: 401 }),

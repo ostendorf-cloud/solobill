@@ -16,7 +16,6 @@ import (
 	"github.com/ostendorf-cloud/govue/health"
 	"github.com/ostendorf-cloud/govue/logging"
 
-	"github.com/ostendorf-cloud/solobill/internal/auth"
 	"github.com/ostendorf-cloud/solobill/internal/httpapi"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
@@ -60,13 +59,16 @@ func concrete(pattern string) (method, path string) {
 func TestReservedListMatchesTheRouter(t *testing.T) {
 	t.Parallel()
 
+	store := newFakeStore()
+	sessions := mustSessions(t)
+
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:         logging.New(io.Discard, slog.LevelError),
-		Store:          newFakeStore(),
-		Sessions:       mustSessions(t),
+		Store:          store,
+		Sessions:       sessions,
 		CSRFKey:        fixedKey(t, 3),
-		LocalAuth:      auth.NewLocalAuthenticator(newFakeStore(), nil),
-		Invites:        auth.NewInviteManager(newFakeStore(), nil),
+		Login:          newTestLogin(t, store, sessions),
+		Invites:        newTestInvites(t, store),
 		HealthRegistry: health.New(),
 		RateLimitBurst: 10,
 		RateLimitPer:   time.Minute,
@@ -105,14 +107,8 @@ func TestReservedEndpointsAnswer501WithASession(t *testing.T) {
 	// caller, whatever the role its implementation will require.
 	app := buildTestApp(t, 1000)
 	tenant, _ := seedActiveAccount(t, app.store)
-	hash, err := auth.HashPassword(memberPassword)
-	if err != nil {
-		t.Fatalf("HashPassword() error = %v", err)
-	}
-	secret, err := auth.GenerateTOTPSecret()
-	if err != nil {
-		t.Fatalf("GenerateTOTPSecret() error = %v", err)
-	}
+	hash := hashPassword(t, memberPassword)
+	secret := totpSecret(t)
 	app.store.addAccount(storage.Account{
 		TenantID:     tenant.ID,
 		Email:        memberEmail,

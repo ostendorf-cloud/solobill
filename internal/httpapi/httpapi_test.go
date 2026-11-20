@@ -19,7 +19,6 @@ import (
 	"github.com/ostendorf-cloud/govue/logging"
 	"github.com/ostendorf-cloud/govue/session"
 
-	"github.com/ostendorf-cloud/solobill/internal/auth"
 	"github.com/ostendorf-cloud/solobill/internal/httpapi"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
@@ -77,15 +76,23 @@ func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 	}
 
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
-		Logger:           logging.New(io.Discard, slog.LevelError),
-		Store:            store,
-		Sessions:         sessions,
-		CSRFKey:          csrfKey,
-		LocalAuth:        auth.NewLocalAuthenticator(store, nil),
-		Invites:          auth.NewInviteManager(store, nil),
-		HealthRegistry:   healthRegistry,
-		RateLimitBurst:   rateLimitBurst,
-		RateLimitPer:     time.Minute,
+		Logger:         logging.New(io.Discard, slog.LevelError),
+		Store:          store,
+		Sessions:       sessions,
+		CSRFKey:        csrfKey,
+		Login:          newTestLogin(t, store, sessions),
+		Invites:        newTestInvites(t, store),
+		HealthRegistry: healthRegistry,
+		RateLimitBurst: rateLimitBurst,
+		RateLimitPer:   time.Minute,
+		// The login limits follow the general one, so a test asking for a
+		// tiny bucket gets tiny login limits as well, and every other test
+		// gets limits that never trip.
+		LoginLimits: httpapi.LoginLimits{
+			ClientBurst:  rateLimitBurst,
+			LoginBurst:   rateLimitBurst,
+			CeilingBurst: rateLimitBurst,
+		},
 		DefaultInviteTTL: time.Hour,
 		DistFS:           distFS,
 		Repositories:     repos,
@@ -271,14 +278,15 @@ func TestReadinessFailsWhenACheckFails(t *testing.T) {
 	store := newFakeStore()
 	healthRegistry := health.New()
 	healthRegistry.Add("database", 0, func(context.Context) error { return errors.New("connection refused") })
+	sessions := mustSessions(t)
 
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
-		Logger:    logging.New(io.Discard, slog.LevelError),
-		Store:     store,
-		Sessions:  mustSessions(t),
-		CSRFKey:   fixedKey(t, 2),
-		LocalAuth: auth.NewLocalAuthenticator(store, nil),
-		Invites:   auth.NewInviteManager(store, nil),
+		Logger:   logging.New(io.Discard, slog.LevelError),
+		Store:    store,
+		Sessions: sessions,
+		CSRFKey:  fixedKey(t, 2),
+		Login:    newTestLogin(t, store, sessions),
+		Invites:  newTestInvites(t, store),
 
 		HealthRegistry:   healthRegistry,
 		RateLimitBurst:   100,
@@ -308,13 +316,16 @@ func TestAdminReadyzReflectsDrain(t *testing.T) {
 	healthRegistry := health.New()
 	healthRegistry.Add("fixture", 0, func(context.Context) error { return nil })
 
+	store := newFakeStore()
+	sessions := mustSessions(t)
+
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
 		Logger:           logging.New(io.Discard, slog.LevelError),
-		Store:            newFakeStore(),
-		Sessions:         mustSessions(t),
+		Store:            store,
+		Sessions:         sessions,
 		CSRFKey:          fixedKey(t, 4),
-		LocalAuth:        auth.NewLocalAuthenticator(newFakeStore(), nil),
-		Invites:          auth.NewInviteManager(newFakeStore(), nil),
+		Login:            newTestLogin(t, store, sessions),
+		Invites:          newTestInvites(t, store),
 		HealthRegistry:   healthRegistry,
 		RateLimitBurst:   100,
 		RateLimitPer:     time.Minute,
@@ -369,8 +380,8 @@ func TestSessionStoreFailureIsExposedAsAStaticMessage(t *testing.T) {
 		Store:            store,
 		Sessions:         sessions,
 		CSRFKey:          fixedKey(t, 3),
-		LocalAuth:        auth.NewLocalAuthenticator(store, nil),
-		Invites:          auth.NewInviteManager(store, nil),
+		Login:            newTestLogin(t, store, sessions),
+		Invites:          newTestInvites(t, store),
 		HealthRegistry:   health.New(),
 		RateLimitBurst:   100,
 		RateLimitPer:     time.Minute,
@@ -419,14 +430,8 @@ func seedActiveAccount(t *testing.T, store *fakeStore) (storage.Tenant, string) 
 
 	tenant := store.addTenant(storage.Tenant{Slug: "acme", Name: "acme"})
 
-	hash, err := auth.HashPassword(ownerPassword)
-	if err != nil {
-		t.Fatalf("HashPassword() error = %v", err)
-	}
-	secret, err := auth.GenerateTOTPSecret()
-	if err != nil {
-		t.Fatalf("GenerateTOTPSecret() error = %v", err)
-	}
+	hash := hashPassword(t, ownerPassword)
+	secret := totpSecret(t)
 
 	store.addAccount(storage.Account{
 		TenantID:     tenant.ID,
@@ -455,50 +460,53 @@ func TestLogin(t *testing.T) {
 	app := buildTestApp(t, 100)
 	tenant, totpSecret := seedActiveAccount(t, app.store)
 
-	code, err := auth.GenerateTOTPCode(totpSecret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateTOTPCode() error = %v", err)
-	}
+	code := totpCode(t, totpSecret)
 
 	tests := []struct {
 		name       string
+		tenantSlug string
 		body       map[string]string
 		wantStatus int
 	}{
 		{
-			name: "valid credentials",
-			body: map[string]string{
-				"tenant_slug": tenant.Slug, "email": "owner@acme.test", "password": "correct-password", "totp_code": code,
-			},
-			wantStatus: http.StatusNoContent,
+			name:       "valid credentials",
+			tenantSlug: tenant.Slug,
+			body:       loginBody("owner@acme.test", "correct-password", code),
+			wantStatus: http.StatusOK,
 		},
 		{
-			name: "wrong password",
-			body: map[string]string{
-				"tenant_slug": tenant.Slug, "email": "owner@acme.test", "password": "wrong", "totp_code": code,
-			},
+			name:       "wrong password",
+			tenantSlug: tenant.Slug,
+			body:       loginBody("owner@acme.test", "wrong", code),
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "unknown tenant",
-			body: map[string]string{
-				"tenant_slug": "no-such-tenant", "email": "owner@acme.test", "password": "correct-password", "totp_code": code,
-			},
+			name:       "unknown tenant",
+			tenantSlug: "no-such-tenant",
+			body:       loginBody("owner@acme.test", "correct-password", code),
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "unknown email",
-			body: map[string]string{
-				"tenant_slug": tenant.Slug, "email": "nobody@acme.test", "password": "correct-password", "totp_code": code,
-			},
+			name:       "unknown email",
+			tenantSlug: tenant.Slug,
+			body:       loginBody("nobody@acme.test", "correct-password", code),
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name: "wrong totp code",
-			body: map[string]string{
-				"tenant_slug": tenant.Slug, "email": "owner@acme.test", "password": "correct-password", "totp_code": "000000",
-			},
+			name:       "wrong totp code",
+			tenantSlug: tenant.Slug,
+			body:       loginBody("owner@acme.test", "correct-password", "000000"),
 			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			// govue's decoder refuses a field it does not name: the old
+			// body shape with tenant_slug no longer logs in.
+			name:       "unknown body field",
+			tenantSlug: tenant.Slug,
+			body: map[string]string{
+				"login": "owner@acme.test", "password": "correct-password", "code": code, "tenant_slug": tenant.Slug,
+			},
+			wantStatus: http.StatusBadRequest,
 		},
 	}
 
@@ -506,16 +514,65 @@ func TestLogin(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rec := doJSON(t, app.handler, http.MethodPost, "/api/v1/auth/login", tt.body, nil, "")
+			rec := doJSON(t, app.handler, http.MethodPost, loginPath(tt.tenantSlug), tt.body, nil, "")
 			if rec.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d, body = %s", rec.Code, tt.wantStatus, rec.Body.String())
 			}
-			if tt.wantStatus == http.StatusNoContent {
+			if tt.wantStatus == http.StatusOK {
 				if len(rec.Result().Cookies()) != 1 {
 					t.Error("a successful login must set exactly one cookie")
 				}
+			} else if len(rec.Result().Cookies()) != 0 {
+				t.Error("a refused login must set no cookie")
 			}
 		})
+	}
+}
+
+// TestLoginRefusalsAreOneAnswer: every refused login answers the same
+// status and the same body, whichever part of the guess was wrong, an
+// unknown tenant included. The old handler answered one fixed 401 for the
+// same reason.
+func TestLoginRefusalsAreOneAnswer(t *testing.T) {
+	t.Parallel()
+
+	app := buildTestApp(t, 100)
+	tenant, totpSecret := seedActiveAccount(t, app.store)
+	code := totpCode(t, totpSecret)
+
+	refusals := []struct {
+		slug string
+		body map[string]string
+	}{
+		{tenant.Slug, loginBody("owner@acme.test", "wrong-password", code)},
+		{"no-such-tenant", loginBody("owner@acme.test", "correct-password", code)},
+		{tenant.Slug, loginBody("nobody@acme.test", "correct-password", code)},
+		{tenant.Slug, loginBody("owner@acme.test", "correct-password", "000000")},
+	}
+
+	var want string
+	for i, r := range refusals {
+		rec := doJSON(t, app.handler, http.MethodPost, loginPath(r.slug), r.body, nil, "")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("refusal %d: status = %d, want %d", i, rec.Code, http.StatusUnauthorized)
+		}
+
+		var body struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+
+		got := body.Error.Code + "|" + body.Error.Message
+		if i == 0 {
+			want = got
+		} else if got != want {
+			t.Errorf("refusal %d answered %q, want the same answer as the first, %q", i, got, want)
+		}
 	}
 }
 
@@ -534,16 +591,12 @@ func TestMeAndLogout(t *testing.T) {
 		}
 	})
 
-	code, err := auth.GenerateTOTPCode(totpSecret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateTOTPCode() error = %v", err)
-	}
+	code := totpCode(t, totpSecret)
 
-	loginRec := doJSON(t, app.handler, http.MethodPost, "/api/v1/auth/login", map[string]string{
-		"tenant_slug": tenant.Slug, "email": "owner@acme.test", "password": "correct-password", "totp_code": code,
-	}, nil, "")
-	if loginRec.Code != http.StatusNoContent {
-		t.Fatalf("login status = %d, want %d", loginRec.Code, http.StatusNoContent)
+	loginRec := doJSON(t, app.handler, http.MethodPost, loginPath(tenant.Slug),
+		loginBody("owner@acme.test", "correct-password", code), nil, "")
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d", loginRec.Code, http.StatusOK)
 	}
 	cookie := sessionCookie(t, loginRec)
 	token := csrf.Token(app.csrfKey, cookie.Value)
@@ -717,10 +770,7 @@ func TestInviteTOTPSecretAndAccept(t *testing.T) {
 		t.Fatal("totp secret response carries an empty secret or provisioning uri")
 	}
 
-	code, err := auth.GenerateTOTPCode(secretBody.Secret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateTOTPCode() error = %v", err)
-	}
+	code := totpCode(t, secretBody.Secret)
 
 	t.Run("totp-secret for an unknown tenant", func(t *testing.T) {
 		rec := doJSON(t, app.handler, http.MethodPost, "/api/v1/invites/totp-secret", map[string]string{
@@ -828,17 +878,9 @@ func TestInviteTOTPSecretAndAccept(t *testing.T) {
 func attackerSecretAndCode(t *testing.T) (secret, code string) {
 	t.Helper()
 
-	secret, err := auth.GenerateTOTPSecret()
-	if err != nil {
-		t.Fatalf("GenerateTOTPSecret() error = %v", err)
-	}
+	secret = totpSecret(t)
 
-	code, err = auth.GenerateTOTPCode(secret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateTOTPCode() error = %v", err)
-	}
-
-	return secret, code
+	return secret, totpCode(t, secret)
 }
 
 func TestRateLimitedRoutes(t *testing.T) {
@@ -846,21 +888,16 @@ func TestRateLimitedRoutes(t *testing.T) {
 
 	app := buildTestApp(t, 1)
 	tenant, totpSecret := seedActiveAccount(t, app.store)
-	code, err := auth.GenerateTOTPCode(totpSecret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateTOTPCode() error = %v", err)
-	}
+	code := totpCode(t, totpSecret)
 
-	body := map[string]string{
-		"tenant_slug": tenant.Slug, "email": "owner@acme.test", "password": "wrong", "totp_code": code,
-	}
+	body := loginBody("owner@acme.test", "wrong", code)
 
-	first := doJSON(t, app.handler, http.MethodPost, "/api/v1/auth/login", body, nil, "")
+	first := doJSON(t, app.handler, http.MethodPost, loginPath(tenant.Slug), body, nil, "")
 	if first.Code != http.StatusUnauthorized {
 		t.Fatalf("first attempt status = %d, want %d", first.Code, http.StatusUnauthorized)
 	}
 
-	second := doJSON(t, app.handler, http.MethodPost, "/api/v1/auth/login", body, nil, "")
+	second := doJSON(t, app.handler, http.MethodPost, loginPath(tenant.Slug), body, nil, "")
 	if second.Code != http.StatusTooManyRequests {
 		t.Errorf("second attempt status = %d, want %d", second.Code, http.StatusTooManyRequests)
 	}
@@ -911,14 +948,8 @@ func TestNewHandlerRequiresItsDependencies(t *testing.T) {
 func seedMember(t *testing.T, store *fakeStore, tenant storage.Tenant, email, password string) (storage.Tenant, string, storage.Account) {
 	t.Helper()
 
-	hash, err := auth.HashPassword(password)
-	if err != nil {
-		t.Fatalf("HashPassword() error = %v", err)
-	}
-	secret, err := auth.GenerateTOTPSecret()
-	if err != nil {
-		t.Fatalf("GenerateTOTPSecret() error = %v", err)
-	}
+	hash := hashPassword(t, password)
+	secret := totpSecret(t)
 
 	account := store.addAccount(storage.Account{
 		TenantID:     tenant.ID,
@@ -937,16 +968,10 @@ func seedMember(t *testing.T, store *fakeStore, tenant storage.Tenant, email, pa
 func loginAndCSRF(t *testing.T, app testApp, tenantSlug, email, password, totpSecret string) (*http.Cookie, string) {
 	t.Helper()
 
-	code, err := auth.GenerateTOTPCode(totpSecret, time.Now())
-	if err != nil {
-		t.Fatalf("GenerateTOTPCode() error = %v", err)
-	}
-
-	rec := doJSON(t, app.handler, http.MethodPost, "/api/v1/auth/login", map[string]string{
-		"tenant_slug": tenantSlug, "email": email, "password": password, "totp_code": code,
-	}, nil, "")
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("login status = %d, want %d, body = %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	rec := doJSON(t, app.handler, http.MethodPost, loginPath(tenantSlug),
+		loginBody(email, password, totpCode(t, totpSecret)), nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
 	cookie := sessionCookie(t, rec)

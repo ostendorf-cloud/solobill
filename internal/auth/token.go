@@ -37,7 +37,7 @@ func GenerateInviteToken() (raw, hash string, err error) {
 // A fast, unsalted hash is the wrong choice for a password: a human
 // picks a password from a small, guessable space, and a fast hash lets an
 // attacker who steals the hash try that whole space in seconds, which is
-// exactly what argon2id (see HashPassword) is deliberately slow to
+// exactly what argon2id (govue's account.Hasher) is deliberately slow to
 // prevent. A token generated here carries no such guessable structure:
 // it is inviteTokenBytes of uniform randomness from crypto/rand, so an
 // attacker gains nothing from a hash being fast, because trying "the

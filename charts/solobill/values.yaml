@@ -399,9 +399,43 @@ config:
   # which is correct with no ingress or proxy in front of the pod.
   trustedProxies: []
 
-  # Token bucket applied to local login and invite accept.
+  # General per client token bucket, applied to every public route.
   rateLimitBurst: 10
   rateLimitPer: "1m"
+
+  # The stricter limits in front of the routes that verify a password, a
+  # TOTP code or a passkey (govue's account and passkey handlers, issue
+  # #86). Each costs an Argon2id derivation, and govue runs one at a time
+  # by default, so without them anyone keeps the hasher busy and every
+  # login answers 503. Empty strings and 0 keep cmd/solobill's defaults,
+  # the values of the wishlist adoption:
+  #   client:  5 per minute per client address
+  #   login:   10 per 15 minutes per tenant, login and client address
+  #   ceiling: 100 per hour per tenant and login, from any address
+  # They key on the client address, so they only work per client with
+  # trustedProxies set behind an ingress or a gateway.
+  loginRateLimits:
+    clientBurst: 0
+    clientPer: ""
+    loginBurst: 0
+    loginPer: ""
+    ceilingBurst: 0
+    ceilingPer: ""
+
+  # --------------------------------------------------------------------
+  # Passkeys
+  # --------------------------------------------------------------------
+  # Off while rpId is empty. The relying party is configuration, never
+  # read off a request's Host header. rpId is the host every passkey is
+  # bound to, for example "solobill.example.com". It cannot change later:
+  # a passkey registered for one RP id is refused for every other, so a
+  # change loses every passkey. origins are the exact origins the browser
+  # runs the ceremony from, https only, each rpId or a subdomain of it,
+  # for example ["https://solobill.example.com"]. Required with rpId.
+  passkey:
+    rpId: ""
+    rpDisplayName: "solobill"
+    origins: []
 
   # How long a freshly created invite stays redeemable when a
   # create-invite request does not specify one.

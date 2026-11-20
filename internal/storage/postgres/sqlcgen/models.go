@@ -111,6 +111,25 @@ type Invite struct {
 	TotpSecret pgtype.Text
 }
 
+type PasskeyCredential struct {
+	CredentialID []byte
+	TenantID     uuid.UUID
+	AccountID    uuid.UUID
+	Name         string
+	SignCount    int64
+	Data         []byte
+	CreatedAt    pgtype.Timestamptz
+	LastUsedAt   pgtype.Timestamptz
+	Seq          pgtype.Int8
+}
+
+type PasskeyUserHandle struct {
+	TenantID  uuid.UUID
+	AccountID uuid.UUID
+	Handle    []byte
+	CreatedAt pgtype.Timestamptz
+}
+
 type Tenant struct {
 	ID        uuid.UUID
 	Slug      string

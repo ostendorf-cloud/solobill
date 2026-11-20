@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
+	govueaccount "github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/api"
 	"github.com/ostendorf-cloud/govue/csrf"
 
@@ -25,56 +27,10 @@ const (
 	sessionRoleKey     = "role"
 )
 
-// loginRequest is handleLogin's body. TenantSlug is this request's own
-// tenant resolution, not read back out of anything else: see the package
-// doc's "Tenant resolution" section.
-type loginRequest struct {
-	TenantSlug string `json:"tenant_slug"`
-	Email      string `json:"email"`
-	Password   string `json:"password"`
-	TOTPCode   string `json:"totp_code"`
-}
-
-// handleLogin runs the local login path and starts a session on success.
-// Every failure, whatever the actual cause inside internal/auth, is
-// answered as the one 401 LocalAuthenticator.Login already collapses every
-// failure into; see its own doc comment for why.
-func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) error {
-	var body loginRequest
-	if err := api.Decode(r, &body); err != nil {
-		return err
-	}
-
-	identity, err := a.local.Login(r.Context(), body.TenantSlug, body.Email, body.Password, body.TOTPCode)
-	if err != nil {
-		if errors.Is(err, auth.ErrInvalidCredentials) {
-			return api.Unauthenticated("invalid tenant, email, password or totp code")
-		}
-
-		return api.Internal(err)
-	}
-
-	if _, err := a.sessions.Start(r.Context(), w, identity.Session()); err != nil {
-		return api.Internal(fmt.Errorf("httpapi: start session: %w", err))
-	}
-
-	api.NoContent(w)
-
-	return nil
-}
-
-// handleLogout ends whatever session the request carries. Ending a request
-// with no session is not an error, matching session.Manager.End's own
-// contract: a logout always leaves the client with nothing either way.
-func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) error {
-	if err := a.sessions.End(r.Context(), w, r); err != nil {
-		return api.Internal(fmt.Errorf("httpapi: end session: %w", err))
-	}
-
-	api.NoContent(w)
-
-	return nil
-}
+// The password login, the logout and the password change are govue's
+// account handlers (internal/auth.Login.Accounts), mounted in
+// routes_auth.go. Only what govue does not provide lives here: the "who am
+// I" answer with the CSRF token, and the invite routes.
 
 // meResponse is what GET /api/v1/me answers for an authenticated caller.
 // CSRFToken is this session's own CSRF token: the one thing a browser
@@ -236,9 +192,37 @@ type inviteTOTPSecretRequest struct {
 }
 
 // inviteTOTPSecretResponse is what POST /api/v1/invites/totp-secret answers.
+// Email is the invite's address, the login the account will have: the
+// SPA hands it to govue's TOTP enrolment component, which shows it to the
+// password manager and sends it back on confirm.
 type inviteTOTPSecretResponse struct {
 	Secret          string `json:"secret"`
 	ProvisioningURI string `json:"provisioning_uri"`
+	Email           string `json:"email"`
+}
+
+// inviteCookieName carries the tenant slug and the raw invite token from
+// the TOTP secret request to POST /api/v1/invites/confirm, whose body is
+// govue's account.CredentialsRequest and so has no field for either. It
+// is HttpOnly, SameSite=Strict and limited to the invite routes. It holds
+// nothing the browser did not already have: the invite link carried both
+// values in its query string.
+const (
+	inviteCookieName   = "solobill_invite"
+	inviteCookiePath   = "/api/v1/invites"
+	inviteCookieMaxAge = 60 * 60
+)
+
+func (a *app) inviteCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     inviteCookieName,
+		Value:    value,
+		Path:     inviteCookiePath,
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   !a.allowPlainHTTP,
+		SameSite: http.SameSiteStrictMode,
+	}
 }
 
 // handleInviteTOTPSecret generates a fresh TOTP secret for the invite the
@@ -275,7 +259,7 @@ func (a *app) handleInviteTOTPSecret(w http.ResponseWriter, r *http.Request) err
 		return api.Internal(err)
 	}
 
-	secret, provisioningURI, err := a.invites.IssueTOTPSecret(r.Context(), tenant.ID, body.Token)
+	enrolment, err := a.invites.IssueTOTPEnrolment(r.Context(), tenant.ID, body.Token)
 	if err != nil {
 		if errors.Is(err, auth.ErrInviteInvalid) {
 			return api.Invalid("invite token is invalid, expired or already used")
@@ -284,25 +268,124 @@ func (a *app) handleInviteTOTPSecret(w http.ResponseWriter, r *http.Request) err
 		return api.Internal(err)
 	}
 
+	http.SetCookie(w, a.inviteCookie(url.Values{"tenant": {tenant.Slug}, "token": {body.Token}}.Encode(), inviteCookieMaxAge))
+
 	return api.Write(w, http.StatusOK, inviteTOTPSecretResponse{
-		Secret:          secret,
-		ProvisioningURI: provisioningURI,
+		Secret:          enrolment.Secret,
+		ProvisioningURI: enrolment.ProvisioningURI,
+		Email:           enrolment.Email,
 	})
 }
 
+// handleInviteConfirm is handleAcceptInvite in the shape of govue's TOTP
+// confirm: the body is account.CredentialsRequest ({login, password,
+// code}), the tenant and the token come from the invite cookie the TOTP
+// secret request set, and the answer is account.LoginResult. govue's
+// GovueTotpEnrolment component posts exactly that. Password and code are
+// still checked in one step: the account is created only with a confirmed
+// second factor, there is no password only state in between.
+//
+// login has to be the invite's email: the component sends the login it
+// showed the password manager, and a different one is refused like an
+// invalid invite.
+func (a *app) handleInviteConfirm(w http.ResponseWriter, r *http.Request) error {
+	var body govueaccount.CredentialsRequest
+	if err := api.Decode(r, &body); err != nil {
+		return err
+	}
+
+	cookie, err := r.Cookie(inviteCookieName)
+	if err != nil || cookie.Value == "" {
+		return api.Invalid("invite token is invalid, expired or already used")
+	}
+
+	values, err := url.ParseQuery(cookie.Value)
+	if err != nil || values.Get("tenant") == "" || values.Get("token") == "" {
+		return api.Invalid("invite token is invalid, expired or already used")
+	}
+
+	if err := checkInvitePassword(body.Password); err != nil {
+		return err
+	}
+
+	tenant, err := a.store.Tenants().FindBySlug(r.Context(), values.Get("tenant"))
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return api.NotFound("unknown tenant")
+		}
+
+		return api.Internal(err)
+	}
+
+	account, err := a.invites.AcceptInvite(r.Context(), auth.AcceptInviteParams{
+		TenantID: tenant.ID,
+		RawToken: values.Get("token"),
+		Login:    body.Login,
+		Password: body.Password,
+		TOTPCode: body.Code,
+	})
+	if err != nil {
+		return acceptInviteError(err)
+	}
+
+	http.SetCookie(w, a.inviteCookie("", -1))
+
+	identity := auth.IdentityFromAccount(account, "", nil)
+	if _, err := a.sessions.Start(r.Context(), w, identity.Session()); err != nil {
+		return api.Internal(fmt.Errorf("httpapi: start session: %w", err))
+	}
+
+	return api.Write(w, http.StatusOK, govueaccount.LoginResult{Login: account.Email})
+}
+
+// checkInvitePassword applies the invite password bounds before any
+// hashing.
+func checkInvitePassword(password string) error {
+	if len(password) < minInvitePasswordLength {
+		return api.Invalid(fmt.Sprintf("password must be at least %d characters", minInvitePasswordLength))
+	}
+	if len(password) > maxInvitePasswordLength {
+		return api.Invalid(fmt.Sprintf("password must be at most %d characters", maxInvitePasswordLength))
+	}
+
+	return nil
+}
+
+// acceptInviteError maps what InviteManager.AcceptInvite answers.
+func acceptInviteError(err error) error {
+	switch {
+	case errors.Is(err, auth.ErrInviteInvalid):
+		return api.Invalid("invite token is invalid, expired or already used")
+	case errors.Is(err, auth.ErrTOTPEnrollmentNotConfirmed):
+		return api.Invalid("totp code does not match the secret just enrolled")
+	case errors.Is(err, govueaccount.ErrPasswordTooShort), errors.Is(err, govueaccount.ErrPasswordTooLong):
+		// govue's policy, checked again by the hasher. It counts
+		// characters where the bounds above count bytes, so a short
+		// password of multibyte characters lands here.
+		return api.Invalid(fmt.Sprintf("password must be at least %d characters", govueaccount.MinPasswordLength))
+	case errors.Is(err, govueaccount.ErrHashingBusy):
+		busy := api.Unavailable("the server is busy, please try again").Exposed()
+		busy.RetryAfter = govueaccount.HashingBusyRetryAfter
+
+		return busy
+	default:
+		return api.Internal(err)
+	}
+}
+
 // minInvitePasswordLength and maxInvitePasswordLength bound the password
-// an invite-accept request may set. The minimum, 12, is a sensible
-// default for an owner or member account created through an invite,
-// stronger than NIST SP 800-63B's bare minimum of 8. The maximum, 128, is
-// generous for a real passphrase and bounds the argon2id hashing cost
-// this otherwise unauthenticated route can be made to pay per request.
+// an invite-accept request may set. The minimum is govue's own policy
+// (account.MinPasswordLength, 12), the one every password of an account
+// is held to. The maximum, 128, is generous for a real passphrase and
+// bounds the argon2id hashing cost this otherwise unauthenticated route
+// can be made to pay per request, far below govue's own 1024 byte limit.
 const (
-	minInvitePasswordLength = 12
+	minInvitePasswordLength = govueaccount.MinPasswordLength
 	maxInvitePasswordLength = 128
 )
 
 // acceptInviteRequest is handleAcceptInvite's body. TenantSlug is this
-// request's own tenant resolution, the same call loginRequest makes: see
+// request's own tenant resolution: see
 // the package doc. There is no totp_secret field: the secret is
 // server-owned, issued by a prior call to handleInviteTOTPSecret and
 // stored on the invite itself; TOTPCode is only what the invitee's
@@ -332,11 +415,8 @@ func (a *app) handleAcceptInvite(w http.ResponseWriter, r *http.Request) error {
 		return api.Invalid("tenant_slug must not be empty")
 	}
 
-	if len(body.Password) < minInvitePasswordLength {
-		return api.Invalid(fmt.Sprintf("password must be at least %d characters", minInvitePasswordLength))
-	}
-	if len(body.Password) > maxInvitePasswordLength {
-		return api.Invalid(fmt.Sprintf("password must be at most %d characters", maxInvitePasswordLength))
+	if err := checkInvitePassword(body.Password); err != nil {
+		return err
 	}
 
 	tenant, err := a.store.Tenants().FindBySlug(r.Context(), body.TenantSlug)
@@ -355,14 +435,7 @@ func (a *app) handleAcceptInvite(w http.ResponseWriter, r *http.Request) error {
 		TOTPCode: body.TOTPCode,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, auth.ErrInviteInvalid):
-			return api.Invalid("invite token is invalid, expired or already used")
-		case errors.Is(err, auth.ErrTOTPEnrollmentNotConfirmed):
-			return api.Invalid("totp code does not match the secret just enrolled")
-		default:
-			return api.Internal(err)
-		}
+		return acceptInviteError(err)
 	}
 
 	identity := auth.IdentityFromAccount(account, "", nil)

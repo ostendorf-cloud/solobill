@@ -1,0 +1,110 @@
+suite: govue account, session and passkey configuration
+templates:
+  - templates/deployment.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  migrationJob:
+    databaseUser: solobill_migrator
+tests:
+  - it: leaves passkeys off and the login limits to cmd/solobill's defaults
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PASSKEY_RP_ID
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOGIN_RATE_LIMIT_CLIENT_BURST
+          any: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SESSION_ALLOW_PLAIN_HTTP
+            value: "false"
+
+  - it: wires the passkey relying party from configuration
+    set:
+      config:
+        passkey:
+          rpId: solobill.example.com
+          origins:
+            - https://solobill.example.com
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PASSKEY_RP_ID
+            value: "solobill.example.com"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PASSKEY_RP_DISPLAY_NAME
+            value: "solobill"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PASSKEY_ORIGINS
+            value: "https://solobill.example.com"
+
+  - it: refuses a passkey rp id without origins
+    set:
+      config:
+        passkey:
+          rpId: solobill.example.com
+    asserts:
+      - failedTemplate:
+          errorPattern: "config.passkey.rpId is set but config.passkey.origins is empty"
+
+  - it: wires the login rate limits that are set
+    set:
+      config:
+        loginRateLimits:
+          clientBurst: 3
+          loginPer: "30m"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOGIN_RATE_LIMIT_CLIENT_BURST
+            value: "3"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOGIN_RATE_LIMIT_LOGIN_PER
+            value: "30m"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOGIN_RATE_LIMIT_CEILING_BURST
+          any: true
+
+  - it: refuses an httpRoute without trusted proxies
+    set:
+      httpRoute:
+        enabled: true
+        hostnames:
+          - solobill.example.com
+        parentRefs:
+          name: gateway
+          namespace: gateway-system
+    asserts:
+      - failedTemplate:
+          errorPattern: "httpRoute.enabled is true but config.trustedProxies is empty"
+
+  - it: refuses plain HTTP session cookies behind an ingress
+    set:
+      config:
+        sessionAllowPlainHttp: true
+        trustedProxies:
+          - 10.0.0.0/8
+      ingress:
+        enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "config.sessionAllowPlainHttp is true with an ingress or a gateway in front"

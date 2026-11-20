@@ -8,11 +8,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/ostendorf-cloud/solobill/internal/auth/authtest"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
 // fakeStore is a hand written fake satisfying Store, for a unit test that
-// exercises LocalAuthenticator and InviteManager logic with no database.
+// exercises the login adapters and InviteManager logic with no database.
 //
 // WithTenant here only runs fn: it does not simulate row level security
 // or a real transaction, because nothing under unit test through this
@@ -32,24 +33,42 @@ type fakeStore struct {
 	tenantsBySlug map[string]uuid.UUID
 	accounts      map[uuid.UUID]storage.Account
 	invites       map[uuid.UUID]storage.Invite
+
+	// login and passkeys sit on top of accounts: see authtest.
+	login    *authtest.LoginAccounts
+	passkeys *authtest.Passkeys
+
+	// scopes records every tenant WithTenant ran for, in order.
+	scopes []uuid.UUID
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{
+	s := &fakeStore{
 		tenants:       map[uuid.UUID]storage.Tenant{},
 		tenantsBySlug: map[string]uuid.UUID{},
 		accounts:      map[uuid.UUID]storage.Account{},
 		invites:       map[uuid.UUID]storage.Invite{},
 	}
+	s.login = &authtest.LoginAccounts{Accounts: &fakeAccountRepository{s}}
+	s.passkeys = &authtest.Passkeys{Accounts: &fakeAccountRepository{s}}
+
+	return s
 }
 
-func (s *fakeStore) WithTenant(ctx context.Context, _ uuid.UUID, fn func(ctx context.Context) error) error {
+func (s *fakeStore) WithTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context) error) error {
+	s.mu.Lock()
+	s.scopes = append(s.scopes, tenantID)
+	s.mu.Unlock()
+
 	return fn(ctx)
 }
 
-func (s *fakeStore) Tenants() storage.TenantRepository   { return &fakeTenantRepository{s} }
-func (s *fakeStore) Accounts() storage.AccountRepository { return &fakeAccountRepository{s} }
-func (s *fakeStore) Invites() storage.InviteRepository   { return &fakeInviteRepository{s} }
+func (s *fakeStore) Tenants() storage.TenantRepository { return &fakeTenantRepository{s} }
+
+func (s *fakeStore) Accounts() storage.AccountRepository           { return &fakeAccountRepository{s} }
+func (s *fakeStore) LoginAccounts() storage.LoginAccountRepository { return s.login }
+func (s *fakeStore) Passkeys() storage.PasskeyRepository           { return s.passkeys }
+func (s *fakeStore) Invites() storage.InviteRepository             { return &fakeInviteRepository{s} }
 
 // addTenant and addAccount are test setup helpers, bypassing the
 // repository interfaces: a test fixture is not exercising Create.

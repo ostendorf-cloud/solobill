@@ -47,14 +47,26 @@
 //
 // # Tenant resolution for local login and invite accept
 //
-// Every local login and invite-accept request carries its own tenant slug
-// field in its JSON body, resolved against storage.TenantRepository before
-// anything else runs: see loginRequest and acceptInviteRequest. A tenant
-// slug is not a secret (internal/auth's own LocalAuthenticator.Login doc
-// comment makes the same call for the same reason), it is the value a
-// login page already has to know to render itself, so resolving it ahead
-// of the password and TOTP checks leaks nothing a browser did not already
-// know.
+// The password login and the passkey login are govue's handlers, which
+// refuse any body field they do not name. Their tenant slug is the
+// {tenant} segment of the path instead (POST
+// /api/v1/tenants/{tenant}/auth/login), resolved by
+// internal/auth.TenantFromPath before govue runs. An unknown slug answers
+// the same 401 a wrong password does. The routes of a logged in account
+// take the tenant from the session (internal/auth.TenantFromSession).
+//
+// Every invite-accept request still carries its tenant slug field in its
+// JSON body: see acceptInviteRequest. A tenant slug is not a secret, it is
+// the value a login page already has to know to render itself, so
+// resolving it ahead of the password and TOTP checks leaks nothing a
+// browser did not already know.
+//
+// # Login rate limits
+//
+// Every route runs the general per client limit of the route chain. The
+// routes that verify a password, a TOTP code or a passkey, and the invite
+// routes, add the stricter per client limit of LoginLimits, and the
+// password login adds the limits per login. See LoginLimits.
 //
 // OIDC resolves differently, to a single configured tenant; see
 // internal/config's package doc and internal/auth's package doc for why a
@@ -118,15 +130,21 @@ type Deps struct {
 	// (resolving a login or invite-accept request's tenant slug, and
 	// resolving the invite's tenant when a request reaches
 	// /api/v1/invites/accept with one). It is otherwise reached through
-	// LocalAuth and Invites.
+	// Login and Invites.
 	Store auth.Store
 
 	Sessions   *session.Manager
 	LoginCodec *session.Codec // nil when OIDCHandlers is nil.
 	CSRFKey    []byte
 
-	LocalAuth *auth.LocalAuthenticator
-	Invites   *auth.InviteManager
+	// Login is govue's account and passkey handlers, wired to solobill's
+	// accounts by internal/auth.NewLogin.
+	Login   *auth.Login
+	Invites *auth.InviteManager
+
+	// LoginLimits are the limits in front of the routes that verify a
+	// password, a TOTP code or a passkey. Zero fields take the defaults.
+	LoginLimits LoginLimits
 
 	// OIDCHandlers is nil when OIDC is disabled (config.Config.OIDCEnabled
 	// false): no OIDC route is registered in that case.
@@ -205,8 +223,8 @@ func NewHandler(d Deps) (Handlers, error) {
 	if d.Sessions == nil {
 		fail(errors.New("httpapi: sessions is required"))
 	}
-	if d.LocalAuth == nil {
-		fail(errors.New("httpapi: local authenticator is required"))
+	if d.Login == nil {
+		fail(errors.New("httpapi: login is required"))
 	}
 	if d.Invites == nil {
 		fail(errors.New("httpapi: invite manager is required"))
@@ -262,6 +280,9 @@ func NewHandler(d Deps) (Handlers, error) {
 	rateLimit, err := middleware.NewRateLimit(middleware.RateLimitConfig{Limiter: limiter, ClientIP: clientIPs})
 	fail(err)
 
+	loginLimits, err := newLoginLimiter(d.LoginLimits, clientIPs, d.Now)
+	fail(err)
+
 	security := middleware.DefaultSecurity()
 	if d.AllowPlainHTTP {
 		// A browser reached over plain HTTP must never be told to
@@ -295,7 +316,8 @@ func NewHandler(d Deps) (Handlers, error) {
 		store:            d.Store,
 		sessions:         d.Sessions,
 		csrfKey:          d.CSRFKey,
-		local:            d.LocalAuth,
+		login:            d.Login,
+		limits:           loginLimits,
 		invites:          d.Invites,
 		defaultInviteTTL: inviteTTL,
 		loginCodec:       d.LoginCodec,
@@ -402,7 +424,8 @@ type app struct {
 	sessions *session.Manager
 	csrfKey  []byte
 
-	local   *auth.LocalAuthenticator
+	login   *auth.Login
+	limits  *loginLimiter
 	invites *auth.InviteManager
 
 	defaultInviteTTL time.Duration

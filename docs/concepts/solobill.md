@@ -47,7 +47,8 @@ Accounting for a sole trader: offers, invoices, expenses, EÜR and the numbers f
 
 - Go API and Vue SPA on govue, Postgres, one Helm chart, images to ghcr. Public, behind login.
 - Auth through govue's OIDC package, with a local account path behind the same interface, so a
-  later SaaS self-signup does not need a second auth model.
+  later SaaS self-signup does not need a second auth model. Since #86 the local path is govue's
+  `account`, `session` and `passkey`; see "Login on govue" below.
 - Every table carries `tenant_id`, every query is scoped by it, and Postgres row-level security
   enforces it below the application so a missed `WHERE` cannot leak across tenants.
 - The core is an append-only document ledger. A document has a state, and a state transition is a
@@ -136,6 +137,47 @@ Carrying the example to the document total: net after discount is EUR 102.03 for
 EUR 59.54 for Line 2, summing to EUR 161.57 (190.08 minus 28.51). VAT rounds once on that total,
 not per line: 161.57 × 0.19 = 30.6983, rounding half away from zero to EUR 30.70. Document
 total: EUR 161.57 + EUR 30.70 = EUR 192.27.
+
+## Login on govue
+
+Issue #86 moved the login onto govue v0.5.0, before the year end milestone. The account design
+did not change: local accounts are the one account model, an OIDC login is linked to the same
+`accounts` row, members arrive by invite, and every row is tenant scoped under row level
+security.
+
+What moved to govue:
+
+- Password hashing (Argon2id) and TOTP: `account.Hasher` and the `account` TOTP functions.
+- The password and TOTP login, the logout and the password change: `account.Service` and its
+  handlers, with one answer for every refused login and the replay guard as a conditional write.
+- Passkeys: the `passkey` handlers and ceremonies, next to password and TOTP, never instead.
+- Sessions and CSRF: `session` and `csrf`, as before. The cookie is `__Host-session` unless
+  plain HTTP is allowed for local development.
+- The web views: `GovueLoginForm`, `GovuePasskeyButton` and `GovueTotpEnrolment`.
+
+What stays in solobill:
+
+- The tenancy layer. govue's packages know no tenant. `internal/auth.AccountStore` and
+  `PasskeyStore` adapt solobill's tables to govue's store contracts and read the tenant from the
+  request context, so every statement runs inside `WithTenant` under row level security. A
+  login takes its tenant from the path (`/api/v1/tenants/{tenant}/auth/...`); an unknown tenant
+  answers like a wrong password. A logged in request takes it from the session.
+- The session contents: the subject is the `accounts.id`, for every login path, and the session
+  carries the tenant and the role.
+- Invites, their tokens, and the rule that an invitee sets the password and confirms the TOTP
+  code in one step. govue's signup with a later confirm would leave a password only window, so
+  solobill mounts no signup route and the invite confirm keeps both factors together.
+- OIDC: the tenant resolution, the admission gate and the invite binding.
+- The rate limits in front of the login routes: per client address, per login and client, and
+  a ceiling per login, the values of the wishlist adoption.
+
+Existing accounts keep working without a password reset. The stored hashes are already Argon2id
+PHC strings with govue's parameters, and the TOTP secrets are base32 of 160 bits. A NULL
+`totp_last_counter` reads as 1, a confirmed secret, so an account that never logged in since its
+invite still can. `accounttest.Run` and `passkeytest.Run` prove the adapters against PostgreSQL.
+
+The session store and the passkey challenge store are in process memory, so the chart stays at
+one replica. Scaling out needs a shared session store first.
 
 ## Year end milestone 2026
 
@@ -588,6 +630,7 @@ What remains unverified:
 
 | Issue | Range | Planned migrations |
 | --- | --- | --- |
+| #86 govue account | `20261120090000` to `20261120090099` | `passkey_user_handles`, `passkey_credentials`; runs before the milestone |
 | #67 contract | none | ships no table |
 | #68 seller profile | `20261121100000` to `20261121100099` | `seller_profiles` with `number_formats`, `vat_regime_periods` with `supersedes_id` |
 | #69 customers, catalogue | `20261121110000` to `20261121110099` | `customers.document_language`, `customers.number`, `customers.address_line2` |

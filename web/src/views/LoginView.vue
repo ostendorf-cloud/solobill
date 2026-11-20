@@ -1,32 +1,34 @@
 <script setup lang="ts">
-// LoginView proves the local login half of the token contract: on success
-// the backend starts a session cookie (see
-// internal/httpapi/auth_handlers.go's handleLogin) and this view hands off
-// to HomeView, whose own mount check is what actually exercises the
-// session GET /api/v1/me needs.
+// LoginView is the local login through govue's own components: the tenant
+// comes first, because the login routes carry it in their path
+// (POST /api/v1/tenants/{tenant}/auth/login and the passkey login under
+// /api/v1/tenants/{tenant}/auth/passkeys), then govue's GovueLoginForm
+// (login, password, TOTP code in one request) and GovuePasskeyButton. On
+// success the backend has started a session cookie, and this view hands
+// off to HomeView, whose own mount check exercises GET /api/v1/me.
 import {
-  GovueButton,
   GovueCard,
   GovueField,
   GovueInput,
+  GovueLoginForm,
   GovuePage,
-  useForm,
+  GovuePasskeyButton,
 } from '@ostendorf-cloud/govue'
-import type { FieldErrors } from '@ostendorf-cloud/govue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { apiClient } from '../api'
 
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 
-interface LoginFields {
-  tenantSlug: string
-  email: string
-  password: string
-  totpCode: string
-}
+// An invite or a bookmark may carry the tenant as ?tenant=, so the field
+// starts filled.
+const tenantSlug = ref(typeof route.query.tenant === 'string' ? route.query.tenant : '')
+const tenantPath = computed(() => `/tenants/${encodeURIComponent(tenantSlug.value.trim())}/auth`)
+const noTenant = computed(() => tenantSlug.value.trim() === '')
 
 // The OIDC login route is mounted by internal/httpapi only when
 // config.Config.OIDCEnabled is true (see httpapi.go's route registration);
@@ -38,93 +40,38 @@ interface LoginFields {
 // dead JSON 404.
 const oidcLoginHref = '/auth/oidc/login'
 
-const form = useForm<LoginFields>({
-  initial: { tenantSlug: '', email: '', password: '', totpCode: '' },
-  validate: (values) => {
-    const errors: FieldErrors<LoginFields> = {}
-    if (values.tenantSlug.trim() === '') {
-      errors.tenantSlug = t('login.validation.tenantSlug')
-    }
-    if (values.email.trim() === '') {
-      errors.email = t('login.validation.email')
-    }
-    if (values.password === '') {
-      errors.password = t('login.validation.password')
-    }
-    if (values.totpCode.trim() === '') {
-      errors.totpCode = t('login.validation.totpCode')
-    }
-    return errors
-  },
-  submit: async (values) => {
-    await apiClient.post('/auth/login', {
-      tenant_slug: values.tenantSlug,
-      email: values.email,
-      password: values.password,
-      totp_code: values.totpCode,
-    })
-    await router.push({ name: 'home' })
-  },
-})
+async function loggedIn(): Promise<void> {
+  await router.push({ name: 'home' })
+}
 </script>
 
 <template>
   <GovuePage :title="t('login.title')" :lead="t('login.lead')">
     <GovueCard>
-      <!-- novalidate: the required attribute below stays for accessibility
-           and the field's own styling, but validation feedback is
-           useForm's own i18n'd messages, never the browser's native,
-           unlocalized constraint validation tooltip. -->
-      <form class="flex flex-col gap-4" novalidate @submit.prevent="form.handleSubmit">
-        <GovueField :label="t('login.tenantSlug')" :error="form.errorOf('tenantSlug')" required>
-          <GovueInput
-            v-model="form.values.tenantSlug"
-            autocomplete="organization"
-            @blur="form.blur('tenantSlug')"
-          />
-        </GovueField>
-
-        <GovueField :label="t('login.email')" :error="form.errorOf('email')" required>
-          <GovueInput
-            v-model="form.values.email"
-            type="email"
-            autocomplete="username"
-            @blur="form.blur('email')"
-          />
-        </GovueField>
-
-        <GovueField :label="t('login.password')" :error="form.errorOf('password')" required>
-          <GovueInput
-            v-model="form.values.password"
-            type="password"
-            autocomplete="current-password"
-            @blur="form.blur('password')"
-          />
-        </GovueField>
-
-        <GovueField :label="t('login.totpCode')" :error="form.errorOf('totpCode')" required>
-          <GovueInput
-            v-model="form.values.totpCode"
-            inputmode="numeric"
-            autocomplete="one-time-code"
-            @blur="form.blur('totpCode')"
-          />
-        </GovueField>
-
-        <p v-if="form.problem.value" role="alert" class="text-sm text-danger-text">
-          {{ form.problem.value }}
-        </p>
-
-        <GovueButton
-          type="submit"
-          variant="primary"
-          block
-          :loading="form.submitting.value"
-          :loading-label="t('login.submitting')"
+      <div class="flex flex-col gap-4">
+        <GovueField
+          :label="t('login.tenantSlug')"
+          :hint="noTenant ? t('login.validation.tenantSlug') : undefined"
+          required
         >
-          {{ t('login.submit') }}
-        </GovueButton>
-      </form>
+          <GovueInput v-model="tenantSlug" autocomplete="organization" />
+        </GovueField>
+
+        <GovueLoginForm
+          :client="apiClient"
+          :path="`${tenantPath}/login`"
+          :disabled="noTenant"
+          @success="loggedIn"
+        />
+
+        <GovuePasskeyButton
+          :client="apiClient"
+          mode="login"
+          :path="`${tenantPath}/passkeys`"
+          :disabled="noTenant"
+          @success="loggedIn"
+        />
+      </div>
     </GovueCard>
 
     <p class="text-sm">
