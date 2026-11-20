@@ -120,13 +120,13 @@ type Customer struct {
 	// for a later UI layer, not this package's.
 	CountryCode *string
 	// DocumentLanguage is the language this customer's documents are
-	// rendered in by default. The column lands with issue #69's
-	// migration; until then the postgres implementation leaves it empty,
-	// which a caller reads as DocumentLanguageGerman.
+	// rendered in by default. Create and Update treat an empty value as
+	// DocumentLanguageGerman; a row read back always carries one.
 	DocumentLanguage DocumentLanguage
 	// Number is the owner's own customer number, printed on documents,
-	// nil when none is used. AddressLine2 is an optional second address
-	// line. Both columns land with issue #69's migration.
+	// nil when none is used. It is unique per tenant among active
+	// customers, case-insensitively. AddressLine2 is an optional second
+	// address line.
 	Number       *string
 	AddressLine2 *string
 	// DeletedAt is nil for an active customer, set once soft deleted. A

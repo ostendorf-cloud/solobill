@@ -81,6 +81,11 @@ type customerRawRow struct {
 	DeletedAt   *time.Time `db:"deleted_at"`
 	CreatedAt   time.Time  `db:"created_at"`
 	UpdatedAt   time.Time  `db:"updated_at"`
+
+	// Added by issue #69's migration.
+	DocumentLanguage string  `db:"document_language"`
+	Number           *string `db:"number"`
+	AddressLine2     *string `db:"address_line2"`
 }
 
 // catalogueItemRawRow mirrors the catalogue_items table's own column
