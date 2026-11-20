@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -51,8 +52,20 @@ func (f *fakeSellerProfiles) Put(_ context.Context, p storage.SellerProfile) (st
 	return p, nil
 }
 
-// fakeSellerLogos is the SellerProfileLogoRepository the tests flip to
-// see has_logo change.
+// profileExtras are repositories this feature does not own. Only a test
+// that needs one hands it to newProfileFixture, and the hook below sets it
+// for that test's app alone: the hook installs nothing else outside this
+// feature's own repositories.
+type profileExtras struct {
+	logos *fakeSellerLogos
+	docs  *fakeIssuedDocuments
+}
+
+// profileExtrasByTest maps the *testing.T of a test to its extras.
+var profileExtrasByTest sync.Map
+
+// fakeSellerLogos is a SellerProfileLogoRepository (issue #75's
+// interface) a test flips to see has_logo change.
 type fakeSellerLogos struct {
 	mu     sync.Mutex
 	fileID *uuid.UUID
@@ -73,14 +86,15 @@ func (f *fakeSellerLogos) SetLogo(_ context.Context, id *uuid.UUID) error {
 	return nil
 }
 
-// fakeIssuedDocuments answers only List, which the profile handler reads
-// to learn whether a document type already has an issued document.
+// fakeIssuedDocuments is a DocumentRepository (issue #70's interface)
+// whose List answers a set list. Every other method answers an error, so
+// no unexpected call can panic or pass silently.
 type fakeIssuedDocuments struct {
-	storage.DocumentRepository
-
 	mu        sync.Mutex
 	documents []storage.Document
 }
+
+var errFakeDocumentsUnsupported = errors.New("fakeIssuedDocuments: method not supported")
 
 func (f *fakeIssuedDocuments) List(context.Context) ([]storage.Document, error) {
 	f.mu.Lock()
@@ -89,16 +103,40 @@ func (f *fakeIssuedDocuments) List(context.Context) ([]storage.Document, error) 
 	return append([]storage.Document(nil), f.documents...), nil
 }
 
+func (f *fakeIssuedDocuments) Create(context.Context, storage.Document, []storage.DocumentLine) (storage.Document, error) {
+	return storage.Document{}, errFakeDocumentsUnsupported
+}
+
+func (f *fakeIssuedDocuments) FindByID(context.Context, uuid.UUID) (storage.Document, error) {
+	return storage.Document{}, errFakeDocumentsUnsupported
+}
+
+func (f *fakeIssuedDocuments) Update(context.Context, storage.Document, []storage.DocumentLine) (storage.Document, error) {
+	return storage.Document{}, errFakeDocumentsUnsupported
+}
+
+func (f *fakeIssuedDocuments) DeleteDraft(context.Context, uuid.UUID) error {
+	return errFakeDocumentsUnsupported
+}
+
+func (f *fakeIssuedDocuments) Issue(context.Context, uuid.UUID, storage.DocumentType, int, time.Time, []byte, string) (storage.Document, error) {
+	return storage.Document{}, errFakeDocumentsUnsupported
+}
+
 func init() {
-	repositoryHooks = append(repositoryHooks, func(_ *testing.T, repos *httpapi.Repositories) {
+	repositoryHooks = append(repositoryHooks, func(t *testing.T, repos *httpapi.Repositories) {
 		if repos.SellerProfiles == nil {
 			repos.SellerProfiles = &fakeSellerProfiles{}
 		}
-		if repos.SellerProfileLogos == nil {
-			repos.SellerProfileLogos = &fakeSellerLogos{}
-		}
-		if repos.Documents == nil {
-			repos.Documents = &fakeIssuedDocuments{}
+
+		if v, ok := profileExtrasByTest.Load(t); ok {
+			extras, _ := v.(profileExtras)
+			if extras.logos != nil {
+				repos.SellerProfileLogos = extras.logos
+			}
+			if extras.docs != nil {
+				repos.Documents = extras.docs
+			}
 		}
 	})
 }

@@ -49,6 +49,17 @@ type profileFixture struct {
 func newProfileFixture(t *testing.T) profileFixture {
 	t.Helper()
 
+	return newProfileFixtureWith(t, profileExtras{})
+}
+
+// newProfileFixtureWith is newProfileFixture with the repositories of
+// other features this test needs: see profileExtras.
+func newProfileFixtureWith(t *testing.T, extras profileExtras) profileFixture {
+	t.Helper()
+
+	profileExtrasByTest.Store(t, extras)
+	t.Cleanup(func() { profileExtrasByTest.Delete(t) })
+
 	app := buildTestApp(t, 1000)
 	tenant := app.store.addTenant(storage.Tenant{Slug: "acme", Name: "acme"})
 
@@ -102,7 +113,7 @@ func validProfileBody() map[string]any {
 	}
 }
 
-func decodeMap(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+func profileDecodeMap(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
 	var out map[string]any
@@ -114,10 +125,10 @@ func decodeMap(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 }
 
 // errorDetails returns the details of an error response.
-func errorDetails(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+func profileErrorDetails(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
-	e, _ := decodeMap(t, rec)["error"].(map[string]any)
+	e, _ := profileDecodeMap(t, rec)["error"].(map[string]any)
 	details, _ := e["details"].(map[string]any)
 
 	return details
@@ -197,7 +208,7 @@ func TestProfilePutThenGet(t *testing.T) {
 		t.Errorf("PUT answered %s, GET answered %s", put.Body.String(), get.Body.String())
 	}
 
-	got := decodeMap(t, get)
+	got := profileDecodeMap(t, get)
 	if got["iban"] != "DE89370400440532013000" {
 		t.Errorf("iban = %v, want the normalised spelling", got["iban"])
 	}
@@ -231,13 +242,16 @@ func TestProfileIssueReadyPerRegime(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			body := validProfileBody()
 			delete(body, "kleinunternehmer_id")
-			body[tt.taxField] = "ID-1"
+			body[tt.taxField] = "12/345/67890"
+			if tt.taxField == "vat_id" {
+				body[tt.taxField] = "DE123456789"
+			}
 
 			rec := f.do(t, f.owner, http.MethodPut, "/api/v1/profile", body)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 			}
-			ready, _ := decodeMap(t, rec)["issue_ready"].(map[string]any)
+			ready, _ := profileDecodeMap(t, rec)["issue_ready"].(map[string]any)
 			if ready["standard"] != tt.standard || ready["kleinunternehmer"] != tt.kleinunt {
 				t.Errorf("issue_ready = %v, want standard %v kleinunternehmer %v", ready, tt.standard, tt.kleinunt)
 			}
@@ -249,11 +263,11 @@ func TestProfileAcceptsAnIncompleteProfile(t *testing.T) {
 	t.Parallel()
 
 	f := newProfileFixture(t)
-	rec := f.do(t, f.owner, http.MethodPut, "/api/v1/profile", map[string]any{"default_vat_regime": "standard"})
+	rec := f.do(t, f.owner, http.MethodPut, "/api/v1/profile", map[string]any{"default_vat_regime": "standard", "default_language": "de"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	ready, _ := decodeMap(t, rec)["issue_ready"].(map[string]any)
+	ready, _ := profileDecodeMap(t, rec)["issue_ready"].(map[string]any)
 	if ready["standard"] != false || ready["kleinunternehmer"] != false {
 		t.Errorf("issue_ready = %v, want both false", ready)
 	}
@@ -308,8 +322,8 @@ func TestProfilePutRejectsInvalidValues(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
 			}
-			if _, ok := errorDetails(t, rec)[tt.wantKey]; !ok {
-				t.Errorf("details = %v, want key %q", errorDetails(t, rec), tt.wantKey)
+			if _, ok := profileErrorDetails(t, rec)[tt.wantKey]; !ok {
+				t.Errorf("details = %v, want key %q", profileErrorDetails(t, rec), tt.wantKey)
 			}
 			if profiles := f.fakeProfiles(t); len(profiles.putTenants) != 0 {
 				t.Error("a refused profile was stored")
@@ -367,24 +381,21 @@ func TestProfileTenantComesFromTheSessionOnly(t *testing.T) {
 func TestProfileHasLogoFollowsTheLogoRepository(t *testing.T) {
 	t.Parallel()
 
-	f := newProfileFixture(t)
-	logos, ok := f.app.repos.SellerProfileLogos.(*fakeSellerLogos)
-	if !ok {
-		t.Skip("another feature's logo repository is wired in the test app")
-	}
+	logos := &fakeSellerLogos{}
+	f := newProfileFixtureWith(t, profileExtras{logos: logos})
 	f.do(t, f.owner, http.MethodPut, "/api/v1/profile", validProfileBody())
 
 	id := uuid.New()
 	logos.fileID = &id
 
 	rec := f.do(t, f.owner, http.MethodGet, "/api/v1/profile", nil)
-	if decodeMap(t, rec)["has_logo"] != true {
-		t.Errorf("has_logo = %v, want true", decodeMap(t, rec)["has_logo"])
+	if profileDecodeMap(t, rec)["has_logo"] != true {
+		t.Errorf("has_logo = %v, want true", profileDecodeMap(t, rec)["has_logo"])
 	}
 
 	// Saving the profile never reports or changes the logo state.
 	rec = f.do(t, f.owner, http.MethodPut, "/api/v1/profile", validProfileBody())
-	if decodeMap(t, rec)["has_logo"] != true || logos.fileID == nil {
+	if profileDecodeMap(t, rec)["has_logo"] != true || logos.fileID == nil {
 		t.Error("PUT lost the logo")
 	}
 }
@@ -392,11 +403,8 @@ func TestProfileHasLogoFollowsTheLogoRepository(t *testing.T) {
 func TestProfileTemplateChangeAfterTheFirstIssue(t *testing.T) {
 	t.Parallel()
 
-	f := newProfileFixture(t)
-	docs, ok := f.app.repos.Documents.(*fakeIssuedDocuments)
-	if !ok {
-		t.Skip("another feature's document repository is wired in the test app")
-	}
+	docs := &fakeIssuedDocuments{}
+	f := newProfileFixtureWith(t, profileExtras{docs: docs})
 
 	// Before any issued document every valid template may be saved.
 	body := validProfileBody()
@@ -431,8 +439,8 @@ func TestProfileTemplateChangeAfterTheFirstIssue(t *testing.T) {
 			// The next case compares against what is stored now.
 			continue
 		}
-		if _, ok := errorDetails(t, rec)["number_formats.invoice"]; !ok {
-			t.Errorf("%s: details = %v, want number_formats.invoice", tt.name, errorDetails(t, rec))
+		if _, ok := profileErrorDetails(t, rec)["number_formats.invoice"]; !ok {
+			t.Errorf("%s: details = %v, want number_formats.invoice", tt.name, profileErrorDetails(t, rec))
 		}
 	}
 

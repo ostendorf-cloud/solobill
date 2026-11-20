@@ -377,7 +377,7 @@ async function addPeriod(): Promise<void> {
             </GovueField>
             <GovueField
               :label="t('profile.fields.offerFormat')"
-              :error="errors['number_formats.offer']"
+              :error="errors['number_formats.offer'] ?? errors.number_formats"
             >
               <GovueInput v-model="form.offer_format" autocomplete="off" />
             </GovueField>
@@ -404,22 +404,37 @@ async function addPeriod(): Promise<void> {
 
           <p v-if="periods.length === 0">{{ t('profile.vat.empty') }}</p>
           <ul v-else class="flex flex-col gap-1">
-            <li v-for="p in periods" :key="p.id" :class="p.superseded ? 'line-through' : ''">
-              {{ p.valid_from }}: {{ t(`profile.regime.${p.regime}`) }}
-              <span v-if="p.note"> ({{ p.note }})</span>
-              <span v-if="p.superseded" class="no-underline">
-                {{ t('profile.vat.superseded') }}</span
-              >
+            <li v-for="p in periods" :key="p.id">
+              <!-- The strike covers the period itself. The "(corrected)"
+                   label sits beside it, outside the struck span: a child
+                   cannot cancel a parent's text-decoration. -->
+              <span :class="p.superseded ? 'line-through' : ''" :data-superseded="p.superseded">
+                {{ p.valid_from }}: {{ t(`profile.regime.${p.regime}`) }}
+                <template v-if="p.note"> ({{ p.note }})</template>
+              </span>
+              <span v-if="p.superseded"> {{ t('profile.vat.superseded') }}</span>
             </li>
           </ul>
 
           <form v-if="isOwner" class="flex flex-col gap-4" novalidate @submit.prevent="addPeriod">
+            <!-- GovueInput has no date type, so the native date input sits
+                 in the field's slot with the field's own id and description. -->
             <GovueField
+              v-slot="{ id, describedBy, invalid }"
               :label="t('profile.vat.validFrom')"
               :hint="t('profile.vat.validFromHint')"
               :error="periodErrors.valid_from"
             >
-              <GovueInput v-model="period.valid_from" autocomplete="off" />
+              <input
+                :id="id"
+                v-model="period.valid_from"
+                type="date"
+                min="2000-01-01"
+                :aria-describedby="describedBy"
+                :aria-invalid="invalid"
+                class="w-full min-h-11 rounded-md border bg-surface px-3 text-base text-text"
+                :class="invalid ? 'border-danger-strong' : 'border-border-strong'"
+              />
             </GovueField>
             <GovueField :label="t('profile.vat.regimeLabel')" :error="periodErrors.regime">
               <GovueSelect v-model="period.regime" :options="regimeOptions" />

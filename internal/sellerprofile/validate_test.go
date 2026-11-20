@@ -66,7 +66,7 @@ func TestValidate(t *testing.T) {
 			storage.VATRegimeStandard, "seller.legal_name",
 		},
 		{"missing city", func(p *storage.SellerProfile) { p.City = " "; p.TaxNumber = ptr("1") }, storage.VATRegimeStandard, "seller.city"},
-		{"unknown regime", func(p *storage.SellerProfile) { p.TaxNumber = ptr("1") }, storage.VATRegime("other"), "seller.vat_regime"},
+		{"unknown regime", func(p *storage.SellerProfile) { p.TaxNumber = ptr("1") }, storage.VATRegime("other"), "seller.default_vat_regime"},
 	}
 
 	for _, tt := range tests {

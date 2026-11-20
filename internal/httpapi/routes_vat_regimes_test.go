@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -16,7 +17,7 @@ func periodsOf(t *testing.T, f profileFixture, s profileSession) []any {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	periods, ok := decodeMap(t, rec)["periods"].([]any)
+	periods, ok := profileDecodeMap(t, rec)["periods"].([]any)
 	if !ok {
 		t.Fatalf("periods is not a list: %s", rec.Body.String())
 	}
@@ -71,7 +72,7 @@ func TestVATRegimesCreateAndSupersede(t *testing.T) {
 	if first.Code != http.StatusCreated {
 		t.Fatalf("first status = %d, body = %s", first.Code, first.Body.String())
 	}
-	created := decodeMap(t, first)
+	created := profileDecodeMap(t, first)
 	if created["valid_from"] != "2026-01-01" || created["regime"] != "kleinunternehmer" ||
 		created["note"] != "start" || created["superseded"] != false || created["supersedes_id"] != nil {
 		t.Errorf("created = %v", created)
@@ -96,8 +97,8 @@ func TestVATRegimesCreateAndSupersede(t *testing.T) {
 	if fix.Code != http.StatusCreated {
 		t.Fatalf("correction status = %d, body = %s", fix.Code, fix.Body.String())
 	}
-	if decodeMap(t, fix)["supersedes_id"] != firstID {
-		t.Errorf("correction = %v, want supersedes_id %s", decodeMap(t, fix), firstID)
+	if profileDecodeMap(t, fix)["supersedes_id"] != firstID {
+		t.Errorf("correction = %v, want supersedes_id %s", profileDecodeMap(t, fix), firstID)
 	}
 
 	// A row is superseded at most once.
@@ -140,6 +141,13 @@ func TestVATRegimesRejectInvalidBodies(t *testing.T) {
 		{"bad date", map[string]any{"valid_from": "14.10.2026", "regime": "standard"}, "valid_from"},
 		{"missing date", map[string]any{"regime": "standard"}, "valid_from"},
 		{"bad regime", map[string]any{"valid_from": "2026-01-01", "regime": "flat"}, "regime"},
+		{"before 2000", map[string]any{"valid_from": "1999-12-31", "regime": "standard"}, "valid_from"},
+		{"far future", map[string]any{"valid_from": "2999-01-01", "regime": "standard"}, "valid_from"},
+		{
+			"more than a year ahead",
+			map[string]any{"valid_from": time.Now().UTC().AddDate(1, 0, 3).Format("2006-01-02"), "regime": "standard"},
+			"valid_from",
+		},
 		{"bad supersedes id", map[string]any{"valid_from": "2026-01-01", "regime": "standard", "supersedes_id": "x"}, "supersedes_id"},
 	}
 	for _, tt := range tests {
@@ -151,8 +159,8 @@ func TestVATRegimesRejectInvalidBodies(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
 			}
-			if _, ok := errorDetails(t, rec)[tt.wantKey]; !ok {
-				t.Errorf("details = %v, want %q", errorDetails(t, rec), tt.wantKey)
+			if _, ok := profileErrorDetails(t, rec)[tt.wantKey]; !ok {
+				t.Errorf("details = %v, want %q", profileErrorDetails(t, rec), tt.wantKey)
 			}
 		})
 	}

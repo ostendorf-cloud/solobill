@@ -139,9 +139,9 @@ func newProfileResponse(p storage.SellerProfile, hasLogo bool) profileResponse {
 	}
 }
 
-// hasLogo reads the logo state through SellerProfileLogos, false while
-// issue #75 has not wired it.
-func (a *app) hasLogo(ctx context.Context) (bool, error) {
+// profileHasLogo reads the logo state through SellerProfileLogos, false
+// while issue #75 has not wired it.
+func (a *app) profileHasLogo(ctx context.Context) (bool, error) {
 	if a.repos.SellerProfileLogos == nil {
 		return false, nil
 	}
@@ -174,7 +174,7 @@ func (a *app) handleGetProfile(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 
-		logo, err := a.hasLogo(ctx)
+		logo, err := a.profileHasLogo(ctx)
 		if err != nil {
 			return err
 		}
@@ -200,10 +200,6 @@ func (a *app) handlePutProfile(w http.ResponseWriter, r *http.Request) error {
 	var body profileBody
 	if err := api.Decode(r, &body); err != nil {
 		return err
-	}
-
-	if body.DefaultLanguage == "" {
-		body.DefaultLanguage = string(storage.DocumentLanguageGerman)
 	}
 
 	formats := map[storage.DocumentType]string{}
@@ -251,7 +247,7 @@ func (a *app) handlePutProfile(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 
-		issued, err := a.issuedDocumentTypes(ctx)
+		issued, err := a.profileIssuedDocumentTypes(ctx)
 		if err != nil {
 			return err
 		}
@@ -266,7 +262,7 @@ func (a *app) handlePutProfile(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		logo, err := a.hasLogo(ctx)
+		logo, err := a.profileHasLogo(ctx)
 		if err != nil {
 			return err
 		}
@@ -281,11 +277,15 @@ func (a *app) handlePutProfile(w http.ResponseWriter, r *http.Request) error {
 	return api.Write(w, http.StatusOK, out)
 }
 
-// issuedDocumentTypes reports which numbered document types already have
-// an issued document, so a template change is limited to its prefix.
-// Without a document repository (a test app that wires none) nothing is
-// issued.
-func (a *app) issuedDocumentTypes(ctx context.Context) (map[storage.DocumentType]bool, error) {
+// profileIssuedDocumentTypes reports which numbered document types
+// already have an issued document, so a template change is limited to its
+// prefix. Without a document repository (a test app that wires none)
+// nothing is issued.
+//
+// The check and the save are not one atomic step: a document issued by
+// another request between them keeps its number, and the unique index on
+// documents.display_number stays the last guard (issue #70).
+func (a *app) profileIssuedDocumentTypes(ctx context.Context) (map[storage.DocumentType]bool, error) {
 	issued := map[storage.DocumentType]bool{}
 	if a.repos.Documents == nil {
 		return issued, nil

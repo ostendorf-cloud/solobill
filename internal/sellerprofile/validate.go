@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/ostendorf-cloud/solobill/internal/numbering"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
@@ -47,7 +48,7 @@ func Validate(p storage.SellerProfile, regime storage.VATRegime) map[string]stri
 			problems["seller.tax_number"] = "a Steuernummer, USt-IdNr or Kleinunternehmer-Identifikationsnummer is required"
 		}
 	default:
-		problems["seller.vat_regime"] = "unknown VAT regime"
+		problems["seller.default_vat_regime"] = "unknown VAT regime"
 	}
 
 	return problems
@@ -68,7 +69,9 @@ func Normalize(p storage.SellerProfile) storage.SellerProfile {
 
 	p.AddressLine2 = tidy(p.AddressLine2, nil)
 	p.TaxNumber = tidy(p.TaxNumber, nil)
-	p.VATID = tidy(p.VATID, strings.ToUpper)
+	p.VATID = tidy(p.VATID, func(s string) string {
+		return strings.ToUpper(strings.Join(strings.Fields(s), ""))
+	})
 	p.KleinunternehmerID = tidy(p.KleinunternehmerID, nil)
 	p.BankName = tidy(p.BankName, nil)
 	p.IBAN = tidy(p.IBAN, func(s string) string {
@@ -101,54 +104,93 @@ func tidy(s *string, fold func(string) string) *string {
 const (
 	maxShort = 200
 	maxLong  = 2000
+	// maxEmail is the longest address RFC 5321 allows.
+	maxEmail = 254
+	// maxWebsite is the usual practical URL limit.
+	maxWebsite = 2048
 )
 
 var (
-	countryPattern = regexp.MustCompile(`^[A-Z]{2}$`)
-	ibanPattern    = regexp.MustCompile(`^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$`)
-	bicPattern     = regexp.MustCompile(`^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$`)
+	ibanPattern  = regexp.MustCompile(`^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$`)
+	bicPattern   = regexp.MustCompile(`^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$`)
+	vatIDPattern = regexp.MustCompile(`^[A-Z]{2}[A-Z0-9]{8,12}$`)
 )
+
+// hasBadRune reports a control character (C0 including NUL, DEL, C1) or a
+// Unicode format character (Cf: bidi overrides and isolates, zero width
+// joiners, the soft hyphen and so on). A newline passes when newline is
+// true, which only the footer text allows.
+func hasBadRune(s string, newline bool) bool {
+	for _, r := range s {
+		if r == '\n' && newline {
+			continue
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return true
+		}
+	}
+
+	return false
+}
 
 // CheckFormat reports malformed values of a normalised profile. The keys
 // are the JSON names of the profile, without a prefix. An empty optional
-// value is fine: completeness is Validate's job at issue time.
+// value is fine: completeness is Validate's job at issue time. The values
+// are not Unicode normalised (NFC): golang.org/x/text is not a dependency.
 func CheckFormat(p storage.SellerProfile) map[string]string {
 	problems := map[string]string{}
 
-	long := func(key, value string, limit int) {
-		if len([]rune(value)) > limit {
+	text := func(key, value string, limit int, newline bool) {
+		switch {
+		case hasBadRune(value, newline):
+			problems[key] = "must not contain control or formatting characters"
+		case len([]rune(value)) > limit:
 			problems[key] = "too long"
 		}
 	}
-	longPtr := func(key string, value *string, limit int) {
+	textPtr := func(key string, value *string, limit int, newline bool) {
 		if value != nil {
-			long(key, *value, limit)
+			text(key, *value, limit, newline)
 		}
 	}
-	long("legal_name", p.LegalName, maxShort)
-	long("street", p.Street, maxShort)
-	long("postal_code", p.PostalCode, maxShort)
-	long("city", p.City, maxShort)
-	longPtr("address_line2", p.AddressLine2, maxShort)
-	longPtr("tax_number", p.TaxNumber, maxShort)
-	longPtr("vat_id", p.VATID, maxShort)
-	longPtr("kleinunternehmer_id", p.KleinunternehmerID, maxShort)
-	longPtr("bank_name", p.BankName, maxShort)
-	longPtr("phone", p.Phone, maxShort)
-	longPtr("footer_text", p.FooterText, maxLong)
+	text("legal_name", p.LegalName, maxShort, false)
+	text("street", p.Street, maxShort, false)
+	text("postal_code", p.PostalCode, maxShort, false)
+	text("city", p.City, maxShort, false)
+	textPtr("address_line2", p.AddressLine2, maxShort, false)
+	textPtr("tax_number", p.TaxNumber, maxShort, false)
+	textPtr("vat_id", p.VATID, maxShort, false)
+	textPtr("kleinunternehmer_id", p.KleinunternehmerID, maxShort, false)
+	textPtr("bank_name", p.BankName, maxShort, false)
+	textPtr("phone", p.Phone, maxShort, false)
+	textPtr("email", p.Email, maxEmail, false)
+	textPtr("website", p.Website, maxWebsite, false)
+	textPtr("footer_text", p.FooterText, maxLong, true)
 
-	if p.CountryCode != "" && !countryPattern.MatchString(p.CountryCode) {
+	// Steuernummer and Kleinunternehmer-Identifikationsnummer have no
+	// format check: the contract asks for none. The USt-IdNr gets a loose
+	// shape check only: a country prefix and 8 to 12 letters or digits,
+	// which covers every EU number, so "DE12" is refused.
+	if p.VATID != nil && problems["vat_id"] == "" && !vatIDPattern.MatchString(*p.VATID) {
+		problems["vat_id"] = "not a valid USt-IdNr: two letters and 8 to 12 letters or digits, such as DE123456789"
+	}
+
+	if p.CountryCode != "" && !validCountry(p.CountryCode) {
 		problems["country_code"] = "must be an ISO 3166-1 alpha-2 code such as DE"
 	}
 
 	switch p.DefaultVATRegime {
 	case storage.VATRegimeStandard, storage.VATRegimeKleinunternehmer:
+	case "":
+		problems["default_vat_regime"] = "required"
 	default:
 		problems["default_vat_regime"] = "must be standard or kleinunternehmer"
 	}
 
 	switch p.DefaultLanguage {
 	case storage.DocumentLanguageGerman, storage.DocumentLanguageEnglish:
+	case "":
+		problems["default_language"] = "required"
 	default:
 		problems["default_language"] = "must be de or en"
 	}
@@ -159,26 +201,72 @@ func CheckFormat(p storage.SellerProfile) map[string]string {
 	if p.BIC != nil && !bicPattern.MatchString(*p.BIC) {
 		problems["bic"] = "not a valid BIC"
 	}
-	if p.Email != nil {
-		addr, err := mail.ParseAddress(*p.Email)
-		if err != nil || addr.Address != *p.Email {
-			problems["email"] = "not a valid email address"
+	if p.Email != nil && problems["email"] == "" {
+		if reason := checkEmail(*p.Email); reason != "" {
+			problems["email"] = reason
 		}
 	}
-	if p.Website != nil {
-		u, err := url.Parse(*p.Website)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			problems["website"] = "must be an http or https URL"
+	if p.Website != nil && problems["website"] == "" {
+		if reason := checkWebsite(*p.Website); reason != "" {
+			problems["website"] = reason
 		}
 	}
 
 	return problems
 }
 
-// validIBAN checks the shape and the ISO 7064 mod 97 checksum of a
-// normalised IBAN (upper case, no spaces).
+// checkEmail returns a reason, or "" for an acceptable address: a bare
+// address (no display name) whose domain has a dot, at most 254 characters.
+func checkEmail(email string) string {
+	if len(email) > maxEmail {
+		return "too long"
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Address != email {
+		return "not a valid email address"
+	}
+	_, domain, _ := strings.Cut(email, "@")
+	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return "not a valid email address"
+	}
+
+	return ""
+}
+
+// checkWebsite returns a reason, or "" for an http or https URL with a
+// host, no user info and at most 2048 characters.
+func checkWebsite(website string) string {
+	if len(website) > maxWebsite {
+		return "too long"
+	}
+	u, err := url.Parse(website)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil {
+		return "must be an http or https URL with a host and no user info"
+	}
+
+	return ""
+}
+
+// ibanLengths is the IBAN length per country for the SEPA area and the
+// rest of Europe. A country missing here is accepted when the shape and
+// the mod 97 checksum hold and the length is 15 to 34: the registry has
+// many more countries, and a wrong table entry would refuse a real
+// account, while the checksum already catches typos.
+var ibanLengths = map[string]int{
+	"AD": 24, "AT": 20, "BE": 16, "BG": 22, "CH": 21, "CY": 28, "CZ": 24, "DE": 22,
+	"DK": 18, "EE": 20, "ES": 24, "FI": 18, "FR": 27, "GB": 22, "GR": 27, "HR": 21,
+	"HU": 28, "IE": 22, "IS": 26, "IT": 27, "LI": 21, "LT": 20, "LU": 20, "LV": 21,
+	"MC": 27, "MT": 31, "NL": 18, "NO": 15, "PL": 28, "PT": 25, "RO": 24, "SE": 24,
+	"SI": 19, "SK": 24, "SM": 27, "VA": 22,
+}
+
+// validIBAN checks the shape, the length of a known country and the
+// ISO 7064 mod 97 checksum of a normalised IBAN (upper case, no spaces).
 func validIBAN(iban string) bool {
 	if len(iban) > 34 || !ibanPattern.MatchString(iban) {
+		return false
+	}
+	if want, known := ibanLengths[iban[:2]]; known && len(iban) != want {
 		return false
 	}
 

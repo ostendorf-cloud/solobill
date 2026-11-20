@@ -10,11 +10,32 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 	"github.com/ostendorf-cloud/solobill/internal/storage/postgres"
 )
+
+const (
+	// sqlStateInsufficientPrivilege is what a row level security refusal
+	// and a missing table privilege both raise.
+	sqlStateInsufficientPrivilege = "42501"
+	// sqlStateUniqueViolation is a unique index or the one effective
+	// period per date trigger.
+	sqlStateUniqueViolation = "23505"
+)
+
+// requireSQLState fails unless err carries a Postgres error with code. A
+// plain error, or none at all, is not the refusal the test wants.
+func requireSQLState(t *testing.T, err error, code, what string) {
+	t.Helper()
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != code {
+		t.Errorf("%s: error = %v, want SQLSTATE %s", what, err, code)
+	}
+}
 
 // profileTestEnv is a store connected as the restricted, NOBYPASSRLS role,
 // two tenants and the restricted pool for raw statements.
@@ -110,9 +131,7 @@ func TestSellerProfileIsIsolatedPerTenant(t *testing.T) {
 
 		return err
 	})
-	if err == nil {
-		t.Error("tenant B wrote a profile row for tenant A")
-	}
+	requireSQLState(t, err, sqlStateInsufficientPrivilege, "tenant B wrote a profile row for tenant A")
 
 	// An upsert for the owner's own tenant replaces its row, and B's
 	// attempt left A's row untouched.
@@ -263,9 +282,7 @@ func TestVATRegimePeriodsAreIsolatedAndAppendOnly(t *testing.T) {
 
 			return err
 		})
-		if err == nil {
-			t.Error("tenant B wrote a period row for tenant A")
-		}
+		requireSQLState(t, err, sqlStateInsufficientPrivilege, "tenant B wrote a period row for tenant A")
 
 		// The refused row is not visible to tenant A either.
 		if err := env.store.WithTenant(ctx, env.a.ID, func(ctx context.Context) error {
@@ -287,11 +304,9 @@ func TestVATRegimePeriodsAreIsolatedAndAppendOnly(t *testing.T) {
 
 	t.Run("append only", func(t *testing.T) {
 		// The restricted role has no UPDATE and no DELETE privilege.
-		if _, err := env.pool.Exec(ctx, `UPDATE vat_regime_periods SET regime = 'standard'`); err == nil {
-			t.Error("the application role updated vat_regime_periods")
-		}
-		if _, err := env.pool.Exec(ctx, `DELETE FROM vat_regime_periods`); err == nil {
-			t.Error("the application role deleted from vat_regime_periods")
-		}
+		_, err := env.pool.Exec(ctx, `UPDATE vat_regime_periods SET regime = 'standard'`)
+		requireSQLState(t, err, sqlStateInsufficientPrivilege, "the application role updated vat_regime_periods")
+		_, err = env.pool.Exec(ctx, `DELETE FROM vat_regime_periods`)
+		requireSQLState(t, err, sqlStateInsufficientPrivilege, "the application role deleted from vat_regime_periods")
 	})
 }

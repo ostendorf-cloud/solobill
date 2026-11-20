@@ -39,10 +39,10 @@ const profile = {
   updated_at: '2026-11-20T10:00:00Z',
 }
 
-function mockApi(role: string, profileAnswer: unknown) {
+function mockApi(role: string, profileAnswer: unknown, periods: unknown[] = []) {
   vi.mocked(apiClient.get).mockImplementation((path: string) => {
     if (path === '/me') return Promise.resolve({ role, csrf_token: 'csrf-1' })
-    if (path === '/vat-regimes') return Promise.resolve({ periods: [] })
+    if (path === '/vat-regimes') return Promise.resolve({ periods })
     if (path === '/profile') {
       return profileAnswer instanceof Error
         ? Promise.reject(profileAnswer)
@@ -129,5 +129,91 @@ describe('SettingsView', () => {
       expect.objectContaining({ legal_name: 'Example Trading', iban: null }),
     )
     expect(await screen.findByText('not a valid IBAN')).toBeVisible()
+  })
+
+  it('shows the error under the number_formats key under both template fields', async () => {
+    mockApi('owner', profile)
+    vi.mocked(apiClient.put).mockRejectedValue(
+      new ApiError({
+        code: ErrorCode.invalidArgument,
+        message: 'invalid',
+        status: 400,
+        details: { number_formats: 'the prefixes of invoice and offer overlap' },
+      }),
+    )
+    const user = userEvent.setup()
+    renderView()
+
+    await screen.findByDisplayValue('Example Trading')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findAllByText('the prefixes of invoice and offer overlap')).toHaveLength(2)
+    expect(screen.getByLabelText('Invoice number format')).toHaveAccessibleDescription(
+      'the prefixes of invoice and offer overlap',
+    )
+    expect(screen.getByLabelText('Offer number format')).toHaveAccessibleDescription(
+      'the prefixes of invoice and offer overlap',
+    )
+  })
+
+  it('shows a field specific template error only under its own field', async () => {
+    mockApi('owner', profile)
+    vi.mocked(apiClient.put).mockRejectedValue(
+      new ApiError({
+        code: ErrorCode.invalidArgument,
+        message: 'invalid',
+        status: 400,
+        details: { 'number_formats.offer': 'unknown token' },
+      }),
+    )
+    const user = userEvent.setup()
+    renderView()
+
+    await screen.findByDisplayValue('Example Trading')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findAllByText('unknown token')).toHaveLength(1)
+  })
+
+  it('uses a date input for the start of a period', async () => {
+    mockApi('owner', profile)
+
+    renderView()
+
+    const input = await screen.findByLabelText(/Valid from/)
+    expect(input).toHaveAttribute('type', 'date')
+  })
+
+  it('strikes only the corrected period and not its label or the others', async () => {
+    mockApi('owner', profile, [
+      {
+        id: 'p1',
+        valid_from: '2026-01-01',
+        regime: 'kleinunternehmer',
+        note: null,
+        supersedes_id: null,
+        superseded: true,
+      },
+      {
+        id: 'p2',
+        valid_from: '2026-02-01',
+        regime: 'standard',
+        note: 'fix',
+        supersedes_id: 'p1',
+        superseded: false,
+      },
+    ])
+
+    renderView()
+
+    const struck = await screen.findByText(/2026-01-01/)
+    expect(struck).toHaveClass('line-through')
+    expect(struck.textContent).not.toContain('(corrected)')
+
+    const label = screen.getByText('(corrected)')
+    expect(label).not.toHaveClass('line-through')
+    expect(label.closest('.line-through')).toBeNull()
+
+    expect(screen.getByText(/2026-02-01/)).not.toHaveClass('line-through')
   })
 })

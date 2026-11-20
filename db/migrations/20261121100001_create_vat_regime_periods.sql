@@ -35,6 +35,43 @@ CREATE UNIQUE INDEX vat_regime_periods_superseded_once
     ON vat_regime_periods (tenant_id, supersedes_id)
     WHERE supersedes_id IS NOT NULL;
 
+-- At most one effective (not superseded) period per valid_from. A partial
+-- unique index cannot say this: whether a row is superseded depends on a
+-- later row, which an index predicate cannot see. A trigger does, under
+-- the same per tenant advisory lock the application takes (the key is the
+-- tenant id as text, which is what app.tenant_id holds), so two concurrent
+-- inserts for one date cannot both pass. The row this insert supersedes is
+-- the one row allowed to share the date: a correction may keep it.
+-- unique_violation (23505) is what the application maps to ErrConflict.
+CREATE FUNCTION vat_regime_periods_one_effective_per_date() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('vat_regime_periods:' || NEW.tenant_id::text, 0));
+
+    IF EXISTS (
+        SELECT 1
+        FROM vat_regime_periods p
+        WHERE p.tenant_id = NEW.tenant_id
+          AND p.valid_from = NEW.valid_from
+          AND p.id IS DISTINCT FROM NEW.supersedes_id
+          AND NOT EXISTS (
+              SELECT 1 FROM vat_regime_periods s
+              WHERE s.tenant_id = p.tenant_id AND s.supersedes_id = p.id
+          )
+    ) THEN
+        RAISE EXCEPTION 'an effective VAT regime period starting on % exists already', NEW.valid_from
+            USING ERRCODE = 'unique_violation';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER vat_regime_periods_one_effective_per_date
+    BEFORE INSERT ON vat_regime_periods
+    FOR EACH ROW EXECUTE FUNCTION vat_regime_periods_one_effective_per_date();
+
 CREATE INDEX vat_regime_periods_valid_from_idx ON vat_regime_periods (tenant_id, valid_from, created_at);
 
 ALTER TABLE vat_regime_periods ENABLE ROW LEVEL SECURITY;
@@ -47,3 +84,4 @@ CREATE POLICY vat_regime_periods_tenant_isolation ON vat_regime_periods
 -- migrate:down
 
 DROP TABLE vat_regime_periods;
+DROP FUNCTION vat_regime_periods_one_effective_per_date();

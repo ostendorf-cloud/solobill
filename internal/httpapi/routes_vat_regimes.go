@@ -22,6 +22,11 @@ func registerVATRegimes(mux *http.ServeMux, route routeFunc, a *app) {
 
 const vatDateLayout = "2006-01-02"
 
+// vatEarliestValidFrom is the earliest valid_from a period may carry. A
+// later one than one year from today is refused too: a typo in the year
+// would otherwise decide the regime of every later date.
+var vatEarliestValidFrom = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // maxVATPeriodNote bounds the owner's free text reason.
 const maxVATPeriodNote = 500
 
@@ -108,6 +113,8 @@ func (a *app) handleCreateVATRegime(w http.ResponseWriter, r *http.Request) erro
 	validFrom, err := time.Parse(vatDateLayout, body.ValidFrom)
 	if err != nil {
 		problems["valid_from"] = "must be a date such as 2026-10-14"
+	} else if validFrom.Before(vatEarliestValidFrom) || validFrom.After(time.Now().UTC().AddDate(1, 0, 0)) {
+		problems["valid_from"] = "must be between 2000-01-01 and one year from today"
 	}
 
 	regime := storage.VATRegime(body.Regime)
