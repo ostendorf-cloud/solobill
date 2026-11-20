@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -69,8 +70,8 @@ func TestFormatDate(t *testing.T) {
 		in, lang, want string
 	}{
 		{"2026-12-05", "de", "05.12.2026"},
-		{"2026-12-05", "en", "5 December 2026"},
-		{"2026-01-31", "en", "31 January 2026"},
+		{"2026-12-05", "en", strings.ReplaceAll("5 December 2026", " ", string(noBreakSpace))},
+		{"2026-01-31", "en", strings.ReplaceAll("31 January 2026", " ", string(noBreakSpace))},
 		{"not a date", "de", "not a date"},
 	}
 	for _, c := range cases {

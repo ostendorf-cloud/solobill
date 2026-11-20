@@ -314,6 +314,15 @@ func (pr *printer) country(path, s string) string {
 	return s
 }
 
+// composed fits a string as printed: several fields, or a label and a
+// value, joined. Its parts were checked on their own already; together
+// they can form a word none of them holds alone.
+func (pr *printer) composed(path, s string, c cell) string {
+	pr.fit(path, s, c)
+
+	return s
+}
+
 // printed checks a string as the renderer transformed it, in its cell.
 func (pr *printer) printed(path, s string, c cell) string {
 	pr.check(path, s, false)

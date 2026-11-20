@@ -13,30 +13,42 @@
     "z. Hd. Max Mustermann",
     "54321 Beispielstadt"
   ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.line2",
+    "customer.address.city"
+  ],
   "meta": [
     {
       "label": "Rechnungsnummer",
-      "value": "RE-20260042"
+      "value": "RE-20260042",
+      "path": "number"
     },
     {
       "label": "Datum",
-      "value": "05.12.2026"
+      "value": "05.12.2026",
+      "path": "issue_date"
     },
     {
       "label": "Leistungszeitraum",
-      "value": "01.11.2026 bis 30.11.2026"
+      "value": "01.11.2026 bis 30.11.2026",
+      "path": "service_period"
     },
     {
       "label": "Kundennummer",
-      "value": "K-1001"
+      "value": "K-1001",
+      "path": "customer.number"
     },
     {
       "label": "Ihre Referenz",
-      "value": "Bestellung 4711"
+      "value": "Bestellung 4711",
+      "path": "customer_reference"
     },
     {
       "label": "Zahlbar bis",
-      "value": "19.12.2026"
+      "value": "19.12.2026",
+      "path": "due_date"
     }
   ],
   "corrects_line": "",
@@ -444,22 +456,26 @@
     {
       "label": "Summe netto",
       "value": "14.471,86 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.net_total_cents"
     },
     {
       "label": "Umsatzsteuer 7 % auf 79,80 EUR",
       "value": "5,59 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.vat[0]"
     },
     {
       "label": "Umsatzsteuer 19 % auf 14.392,06 EUR",
       "value": "2.734,49 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.vat[1]"
     },
     {
       "label": "Gesamtbetrag",
       "value": "17.211,94 EUR",
-      "strong": true
+      "strong": true,
+      "path": "totals.grand_total_cents"
     }
   ],
   "sections": [
@@ -467,13 +483,15 @@
       "title": "Zahlungsbedingungen",
       "lines": [
         "Zahlbar innerhalb von 14 Tagen ohne Abzug."
-      ]
+      ],
+      "path": "payment_terms"
     },
     {
       "title": "Hinweise",
       "lines": [
         "Vielen Dank für Ihren Auftrag."
-      ]
+      ],
+      "path": "notes"
     }
   ],
   "footer": [
@@ -495,6 +513,27 @@
       "Bank Musterbank",
       "IBAN DE00 0000 0000 0000 0000 00",
       "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number",
+      "seller.vat_id"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
     ]
   ],
   "footer_text": [

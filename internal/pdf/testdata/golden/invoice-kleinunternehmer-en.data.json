@@ -12,26 +12,36 @@
     "Beispielweg 7",
     "54321 Beispielstadt"
   ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.city"
+  ],
   "meta": [
     {
       "label": "Invoice number",
-      "value": "RE-20260007"
+      "value": "RE-20260007",
+      "path": "number"
     },
     {
       "label": "Date",
-      "value": "20 November 2026"
+      "value": "20 November 2026",
+      "path": "issue_date"
     },
     {
       "label": "Date of supply",
-      "value": "18 November 2026"
+      "value": "18 November 2026",
+      "path": "service_period.from"
     },
     {
       "label": "Customer number",
-      "value": "K-1001"
+      "value": "K-1001",
+      "path": "customer.number"
     },
     {
       "label": "Due date",
-      "value": "4 December 2026"
+      "value": "4 December 2026",
+      "path": "due_date"
     }
   ],
   "corrects_line": "",
@@ -75,7 +85,8 @@
     {
       "label": "Total",
       "value": "1,285.50 EUR",
-      "strong": true
+      "strong": true,
+      "path": "totals.grand_total_cents"
     }
   ],
   "sections": [
@@ -83,13 +94,15 @@
       "title": "",
       "lines": [
         "No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung)."
-      ]
+      ],
+      "path": "tax_note"
     },
     {
       "title": "Payment terms",
       "lines": [
         "Payable within 14 days without deduction."
-      ]
+      ],
+      "path": "payment_terms"
     }
   ],
   "footer": [
@@ -110,6 +123,26 @@
       "Bank Musterbank",
       "IBAN DE00 0000 0000 0000 0000 00",
       "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
     ]
   ],
   "footer_text": [],

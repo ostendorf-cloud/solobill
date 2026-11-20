@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "type": "invoice",
+  "language": "en",
+  "vat_regime": "kleinunternehmer",
+  "template_version": "document-v1",
+  "currency": "EUR",
+  "number": "RE-20260007",
+  "number_value": 7,
+  "number_year": 2026,
+  "issue_date": "2026-11-20",
+  "service_period": {
+    "from": "2026-11-18",
+    "to": "2026-11-18"
+  },
+  "due_date": "2026-12-04",
+  "seller": {
+    "legal_name": "Max Mustermann IT-Beratung",
+    "address": {
+      "street": "Musterstraße 1",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "bank_name": "Musterbank",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "012345678901234567890123 iiiiiiiiiiiiiiWWWWWWWWWWWWW 9876543210987656543210987654   https://tlyzghjo.yt-scrac-1dywzkl",
+    "name": "Mustermann Consulting GmbH",
+    "address": {
+      "street": "Beispielweg 7",
+      "postal_code": "54321",
+      "city": " anspruchdampfleistungen  W",
+      "country_code": "DE"
+    }
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "\n\n !  3zdgov8Mb5553rhh94gmtakp9wce246tyc.de 7crnfcjdswtv@zwWcvl9ekz6.iiiiiiiiiiiiiiiiiiiiiiiii fahrtsWartungsgesellschaftkapitäns  ]  ,\n\n g4vno6hnege5jdno9i836hx2v5k875x6.de .   ! https://ulfvW8e2.exapdw.p8M_v8v2641c »@  01234567890123456789012}  \n\n  [ W„  MMMMMMMMMMMMMMM78901234567890  https://uck2c5dc.exaungsentwicklungsbahn 9,876,543,210,987,654,9,876,543,210,987,654 „ MMMMMMMMMMMMMMMMMlllllllllllllllllll https://aj9ing6g.exaMg4.W2t0123456789012",
+      "quantity_thousandths": 5056894,
+      "unit": "day",
+      "unit_price_cents": 31217780,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 4116438338,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 2,
+      "description": "Kubernetes basics workshop",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 3,
+      "description": "Kubernetes basics workshop",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    }
+  ],
+  "document_discount": {},
+  "totals": {
+    "net_total_cents": 128550,
+    "document_discount_cents": 0,
+    "net_after_document_discount_cents": 128550,
+    "vat": [
+      {
+        "rate_permyriad": 0,
+        "net_cents": 128550,
+        "vat_cents": 0
+      }
+    ],
+    "vat_total_cents": 0,
+    "grand_total_cents": 128550
+  },
+  "tax_note": "No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung).",
+  "payment_terms": "Payable within 14 days without deduction."
+}

@@ -1,33 +1,32 @@
-                                                                                                            Example GmbH
+                                                                                                          Example GmbH
 
 
 
 Example GmbH · Musterstraße 1 · 12345 Musterstadt
 
 
-Mustermann Consulting GmbH                                      Angebotsnummer                                     AN-20260012
-Beispielweg 7                                                   Datum                                                20.11.2026
-z. Hd. Max Mustermann                                           Kundennummer                                            K-1001
+Mustermann Consulting GmbH                                      Angebotsnummer                                   AN-20260012
+Beispielweg 7                                                   Datum                                              20.11.2026
+z. Hd. Max Mustermann                                           Kundennummer                                          K-1001
 54321 Beispielstadt
-                                                                Gültig bis                                           31.12.2026
+                                                                Gültig bis                                         31.12.2026
 
 
 
 
 Angebot
 
-  Pos.    Beschreibung                                   Menge        Einheit           Einzelpreis         USt.          Betrag
+  Pos.    Beschreibung                                     Menge      Einheit          Einzelpreis        USt.          Betrag
 
-      1   Einrichtung Monitoring                               1      pauschal        2.400,00 EUR          19 %    2.400,00 EUR
-          Prometheus, Alertmanager und
-          Grafana
+      1   Einrichtung Monitoring                                 1    pauschal       2.400,00 EUR         19 %    2.400,00 EUR
+          Prometheus, Alertmanager und Grafana
 
-      2   Betreuung pro Monat                                 12      Monat             350,00 EUR          19 %    4.200,00 EUR
+      2   Betreuung pro Monat                                   12    Monat            350,00 EUR         19 %    4.200,00 EUR
 
 
-                                                      Summe netto                                                   6.600,00 EUR
-                                                      Umsatzsteuer 19 % auf 6.600,00 EUR                            1.254,00 EUR
-                                                      Angebotssumme                                                7.854,00 EUR
+                                                      Summe netto                                                 6.600,00 EUR
+                                                      Umsatzsteuer 19 % auf 6.600,00 EUR                          1.254,00 EUR
+                                                      Angebotssumme                                              7.854,00 EUR
 
 Hinweise
 Wir freuen uns auf Ihre Rückmeldung.
@@ -35,14 +34,14 @@ Wir freuen uns auf Ihre Rückmeldung.
 
 
 
-                                                                                                                       Seite 1 von 1
+                                                                                                                     Seite 1 von 1
 
-Example GmbH                                                             Tel. +49 000 0000000
-Musterstraße 1                                                           E-Mail rechnung@example.com
-12345 Musterstadt                                                        Web www.example.com
-Steuernummer 12/345/67890                                                Bank Musterbank
-USt-IdNr. DE000000000                                                    IBAN DE00 0000 0000 0000 0000 00
-                                                                         BIC MUSTDEXXXXX
+Example GmbH                                                           Tel. +49 000 0000000
+Musterstraße 1                                                         E-Mail rechnung@example.com
+12345 Musterstadt                                                      Web www.example.com
+Steuernummer 12/345/67890                                              Bank Musterbank
+USt-IdNr. DE000000000                                                  IBAN DE00 0000 0000 0000 0000 00
+                                                                       BIC MUSTDEXXXXX
 
 Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000
 

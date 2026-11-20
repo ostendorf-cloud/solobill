@@ -365,8 +365,10 @@ func TestCheckPrintableControlCharacters(t *testing.T) {
 func TestPrintableCompiles(t *testing.T) {
 	bin := typstOrSkip(t)
 	p := loadFixture(t, "offer-de")
-	p.Customer.Name = "ÄÖÜäöüß àéîõç ÆØÅæøå ŁłŚśŹźŻż ČčŠšŽž €£¥ „“ ‚‘ «» – — … · • ° ± × ÷ § ¶ © ® ™"
-	p.Notes = "Tab\tdanach\r\nZeile"
+	p.Customer.Name = "ÄÖÜäöüß àéîõç ÆØÅæøå"
+	// The pre check joins punctuation with its neighbours, so each group
+	// stands on a line of its own.
+	p.Notes = "Tab\tdanach\r\nZeile\nŁłŚśŹźŻż ČčŠšŽž\n€£¥ „“ ‚‘ «»\n– — … · • ° ±\n× ÷ § ¶ © ® ™"
 	if err := CheckPrintable(p); err != nil {
 		t.Fatal(err)
 	}

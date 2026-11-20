@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/image/font"
@@ -12,20 +13,22 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-// The layout of document-v1 is exact by construction: every column has
-// a fixed width (the description takes the rest), and every word is
-// measured with the real advances of the bundled fonts before Typst
-// runs. A word wider than its cell is refused, so no text can run over
-// a neighbour cell, and the rows each description wraps to are counted
-// the same way, so the page count is known before Typst runs. Kerning
-// is ignored; widthMargin covers it. Every cell in the template also
-// clips, as a last resort.
+// Typst is the authority on the layout: the template marks every printed
+// character and fails the compile with "overflow: <field path>" when one
+// lies outside its cell (see templates/document-v1.typ). This file is
+// the fast pre check that runs before Typst and names the field. It
+// must be conservative: whatever it accepts, Typst must lay out without
+// overflow. Every column has a fixed width (the description takes the
+// rest), and every word is measured with the real advances of the
+// bundled fonts. Measured against Typst, the model's widths match
+// exactly: Typst applies no kerning with the Go fonts. widthMargin adds
+// 3 percent anyway. The rows each description wraps to are counted the
+// same way, so the page count is bounded before Typst runs.
 //
 // The constants below are part of document-v1. templates/document-v1.typ
 // holds the same values; TestLayoutConstantsMatchTemplate compares them.
 
-// widthMargin widens every measured word by 3 percent for kerning and
-// rounding.
+// widthMargin widens every measured word by 3 percent.
 const widthMargin = 1.03
 
 // ptPerMM converts millimetres to points.
@@ -62,15 +65,15 @@ const (
 // description takes what is left of textWidthMM.
 const (
 	colPositionMM  = 10.0
-	colQuantityMM  = 17.0
-	colUnitMM      = 18.0
-	colUnitPriceMM = 25.0
-	colVATMM       = 13.0
-	colAmountMM    = 30.0
+	colQuantityMM  = 15.0
+	colUnitMM      = 17.5
+	colUnitPriceMM = 24.0
+	colVATMM       = 12.5
+	colAmountMM    = 29.0
 	// tableSizePt is the item table's font size.
 	tableSizePt = 8.0
 	// discountSizePt is the size of a line's discount note.
-	discountSizePt = 7.0
+	discountSizePt = 8.0
 )
 
 // Other fixed widths of document-v1 in millimetres.
@@ -117,42 +120,43 @@ var (
 	cellTotalStrongLabel = cell{totalsWidthMM - totalsValueMM - totalsGutterMM, 10, bold}
 )
 
-// tableCell is an item table column, its inset already taken off.
-func tableCell(widthMM, sizePt float64, f face) cell {
-	return cell{widthMM - 2*cellInsetMM, sizePt, f}
+// tableCell is an item table column at the table's font size, its inset
+// already taken off.
+func tableCell(widthMM float64, f face) cell {
+	return cell{widthMM - 2*cellInsetMM, tableSizePt, f}
 }
 
 func cellDescription(showVAT bool) cell {
-	return tableCell(descriptionWidthMM(showVAT), tableSizePt, regular)
+	return tableCell(descriptionWidthMM(showVAT), regular)
 }
 
 func cellDiscount(showVAT bool) cell {
-	return tableCell(descriptionWidthMM(showVAT), discountSizePt, regular)
+	return cell{descriptionWidthMM(showVAT) - 2*cellInsetMM, discountSizePt, regular}
 }
 
 var (
-	cellPosition  = tableCell(colPositionMM, tableSizePt, regular)
-	cellQuantity  = tableCell(colQuantityMM, tableSizePt, regular)
-	cellUnit      = tableCell(colUnitMM, tableSizePt, regular)
-	cellUnitPrice = tableCell(colUnitPriceMM, tableSizePt, regular)
-	cellVAT       = tableCell(colVATMM, tableSizePt, regular)
-	cellAmount    = tableCell(colAmountMM, tableSizePt, regular)
+	cellPosition  = tableCell(colPositionMM, regular)
+	cellQuantity  = tableCell(colQuantityMM, regular)
+	cellUnit      = tableCell(colUnitMM, regular)
+	cellUnitPrice = tableCell(colUnitPriceMM, regular)
+	cellVAT       = tableCell(colVATMM, regular)
+	cellAmount    = tableCell(colAmountMM, regular)
 )
 
 // tableHeaderCells are the header cells in column order, bold.
 func tableHeaderCells(showVAT bool) []cell {
 	cs := []cell{
-		tableCell(colPositionMM, tableSizePt, bold),
-		tableCell(descriptionWidthMM(showVAT), tableSizePt, bold),
-		tableCell(colQuantityMM, tableSizePt, bold),
-		tableCell(colUnitMM, tableSizePt, bold),
-		tableCell(colUnitPriceMM, tableSizePt, bold),
+		tableCell(colPositionMM, bold),
+		tableCell(descriptionWidthMM(showVAT), bold),
+		tableCell(colQuantityMM, bold),
+		tableCell(colUnitMM, bold),
+		tableCell(colUnitPriceMM, bold),
 	}
 	if showVAT {
-		cs = append(cs, tableCell(colVATMM, tableSizePt, bold))
+		cs = append(cs, tableCell(colVATMM, bold))
 	}
 
-	return append(cs, tableCell(colAmountMM, tableSizePt, bold))
+	return append(cs, tableCell(colAmountMM, bold))
 }
 
 // metrics measures text with the bundled fonts' advances.
@@ -206,50 +210,42 @@ func (m *metrics) widthMM(s string, c cell) float64 {
 	return em * c.sizePt / ptPerMM * widthMargin
 }
 
-// words splits a line at the only characters Typst is sure to break at
-// here: an ordinary space. A no-break space, a hyphen, a slash, "@" and
-// "://" stay inside the word; Typst may break there or not, so the word
-// is measured whole, which is the conservative choice.
-//
-// A space is no break opportunity either where Unicode line breaking
-// (UAX #14) forbids one even after spaces: before closing punctuation,
-// "!", "?", ",", ".", ":", ";" and "/" (LB13), after opening
-// punctuation (LB14), and between two em dashes (LB17). Such a space
-// joins its neighbours into one word. Two spaces in a row join as well.
+// splitWords splits a line conservatively: only at a run of ordinary
+// spaces with a letter or a digit directly on both sides. Everything
+// else stays in one word: punctuation, quotes, brackets and every other
+// character next to a space, no-break spaces, hyphens, slashes, "@" and
+// "://". Typst breaks at least wherever this splits (a space between two
+// letters or digits is always a break opportunity in Unicode line
+// breaking), and the words measured are never smaller than Typst's, so
+// a word that fits here fits in Typst. Typst decides the rest.
 func splitWords(line string) []string {
 	var out []string
-	cur := ""
-	started := false
-	for _, tok := range strings.Split(line, " ") {
-		switch {
-		case !started:
-			cur, started = tok, true
-		case tok == "" || cur == "" || noBreakBefore(tok) || noBreakAfter(cur) ||
-			(strings.HasSuffix(cur, "—") && strings.HasPrefix(tok, "—")):
-			cur += " " + tok
-		default:
-			out = append(out, cur)
-			cur = tok
+	start := 0
+	for i := 0; i < len(line); {
+		if line[i] != ' ' {
+			_, n := utf8.DecodeRuneInString(line[i:])
+			i += n
+
+			continue
 		}
+		j := i
+		for j < len(line) && line[j] == ' ' {
+			j++
+		}
+		before, _ := utf8.DecodeLastRuneInString(line[:i])
+		after, _ := utf8.DecodeRuneInString(line[j:])
+		if i > start && j < len(line) && isLetterOrDigit(before) && isLetterOrDigit(after) {
+			out = append(out, line[start:i])
+			start = j
+		}
+		i = j
 	}
 
-	return append(out, cur)
+	return append(out, line[start:])
 }
 
-// noBreakBefore reports whether tok starts with a character UAX #14 never
-// breaks before, even after spaces (LB13: CL, CP, EX, IS, SY).
-func noBreakBefore(tok string) bool {
-	r, _ := utf8.DecodeRuneInString(tok)
-
-	return strings.ContainsRune(")]}!?,.:;/、。），．：；»›", r)
-}
-
-// noBreakAfter reports whether w ends with opening punctuation, after
-// which UAX #14 never breaks, even across spaces (LB14: OP).
-func noBreakAfter(w string) bool {
-	r, _ := utf8.DecodeLastRuneInString(w)
-
-	return strings.ContainsRune("([{„‚¡¿«‹", r)
+func isLetterOrDigit(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // tooWide returns the first word of s wider than c, or "".
@@ -400,7 +396,7 @@ func (m *metrics) estimatePages(in Input) (int, []string) {
 	for _, s := range in.Sections {
 		h := heightMM(rowsOf(append([]string{s.Title}, s.Lines...), cellFullText), 9) + slackMM
 		if h > bodyMM {
-			tooTall = append(tooTall, s.path)
+			tooTall = append(tooTall, s.Path)
 		}
 		place(h, false)
 	}

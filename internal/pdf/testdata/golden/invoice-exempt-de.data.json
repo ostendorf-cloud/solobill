@@ -13,26 +13,37 @@
     "z. Hd. Max Mustermann",
     "54321 Beispielstadt"
   ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.line2",
+    "customer.address.city"
+  ],
   "meta": [
     {
       "label": "Rechnungsnummer",
-      "value": "RE-20260044"
+      "value": "RE-20260044",
+      "path": "number"
     },
     {
       "label": "Datum",
-      "value": "08.12.2026"
+      "value": "08.12.2026",
+      "path": "issue_date"
     },
     {
       "label": "Leistungsdatum",
-      "value": "01.12.2026"
+      "value": "01.12.2026",
+      "path": "service_period.from"
     },
     {
       "label": "Kundennummer",
-      "value": "K-1001"
+      "value": "K-1001",
+      "path": "customer.number"
     },
     {
       "label": "Zahlbar bis",
-      "value": "22.12.2026"
+      "value": "22.12.2026",
+      "path": "due_date"
     }
   ],
   "corrects_line": "",
@@ -76,22 +87,26 @@
     {
       "label": "Summe netto",
       "value": "409,00 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.net_total_cents"
     },
     {
       "label": "Umsatzsteuer 0 % auf 360,00 EUR",
       "value": "0,00 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.vat[0]"
     },
     {
       "label": "Umsatzsteuer 19 % auf 49,00 EUR",
       "value": "9,31 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.vat[1]"
     },
     {
       "label": "Gesamtbetrag",
       "value": "418,31 EUR",
-      "strong": true
+      "strong": true,
+      "path": "totals.grand_total_cents"
     }
   ],
   "sections": [
@@ -99,13 +114,15 @@
       "title": "",
       "lines": [
         "Die Unterrichtsleistung ist nach § 4 Nr. 21 UStG steuerfrei."
-      ]
+      ],
+      "path": "tax_note"
     },
     {
       "title": "Zahlungsbedingungen",
       "lines": [
         "Zahlbar innerhalb von 14 Tagen ohne Abzug."
-      ]
+      ],
+      "path": "payment_terms"
     }
   ],
   "footer": [
@@ -127,6 +144,27 @@
       "Bank Musterbank",
       "IBAN DE00 0000 0000 0000 0000 00",
       "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number",
+      "seller.vat_id"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
     ]
   ],
   "footer_text": [

@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "type": "offer",
+  "language": "en",
+  "vat_regime": "standard",
+  "template_version": "document-v1",
+  "currency": "EUR",
+  "number": "AN-20260013",
+  "number_value": 13,
+  "number_year": 2026,
+  "issue_date": "2026-11-20",
+  "valid_until": "2027-01-15",
+  "seller": {
+    "legal_name": "Example GmbH",
+    "address": {
+      "street": "Musterstraße 1",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "vat_id": "DE000000000",
+    "bank_name": "WWWWWWWWWMMMMMMMMMMMMMMMMMM @  WWWWWiiiiiiii",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com",
+    "footer_text": "Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "K-1001",
+    "name": "Mustermann Consulting GmbH",
+    "address": {
+      "street": "Beispielweg 7",
+      "line2": "z. Hd. Max Mustermann",
+      "postal_code": "54321",
+      "city": "98.765.432.109.876.43.210.987.654.321  WWWWWWWWWWWWWWWiiiiiiiiiiiiiii MMMMMMMMMMMllliiiiiiiiiiiiiiiiiiiiiiiiiiii Mq4pa2nm",
+      "country_code": "DE"
+    }
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "0123456789012342vboktrhpahry.de 98765432109876509876543210987 \n\n987654321098765987654321098„\t llllllllllllllllllllllll  os57efiWd03wqg6o5hMlo03cM.de  iiiiiiiiiiiiiiiihtt5678901234567890123 987654321098765432109 0123456789012345 ]  0123456789012345a8gsisbs3rraj.de iiiiiiiiiiiiiiiiiWWWWWWWWWWW  :   lllllllllllll",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 2,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 3,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 4,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 5,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 6,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 4926120,
+      "unit": "flat",
+      "unit_price_cents": 43467351,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 4769118632,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 7,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 8,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1896066,
+      "unit": "flat",
+      "unit_price_cents": 93749057,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 6239579030,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 9,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 10,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 4090648,
+      "unit": "flat",
+      "unit_price_cents": 37872073,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 8295828120,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 11,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 12,
+      "description": "Kubernetes cluster setup",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    }
+  ],
+  "document_discount": {
+    "amount_cents": 20000
+  },
+  "totals": {
+    "net_total_cents": 620000,
+    "document_discount_cents": 20000,
+    "net_after_document_discount_cents": 600000,
+    "vat": [
+      {
+        "rate_permyriad": 1900,
+        "net_cents": 600000,
+        "vat_cents": 114000
+      }
+    ],
+    "vat_total_cents": 114000,
+    "grand_total_cents": 714000
+  },
+  "notes": "We look forward to hearing from you."
+}

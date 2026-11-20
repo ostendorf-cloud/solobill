@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "type": "offer",
+  "language": "en",
+  "vat_regime": "standard",
+  "template_version": "document-v1",
+  "currency": "EUR",
+  "number": "AN-20260013",
+  "number_value": 13,
+  "number_year": 2026,
+  "issue_date": "2026-11-20",
+  "valid_until": "2027-01-15",
+  "seller": {
+    "legal_name": "Example GmbH",
+    "address": {
+      "street": "Musterstraße 1",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "vat_id": "DE000000000",
+    "bank_name": "Musterbank",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com",
+    "footer_text": "Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "K-1001",
+    "name": "Mustermann Consulting GmbH",
+    "address": {
+      "street": "https://8ofMb81W.e765432109876543210 987654321098 WWWWWWWWWWWWWWWWW 0123456789012",
+      "line2": "SoftwareStraßenRechtsentwicklungs ]   iiiiiiiiiiiiiiiiiiiiiiiiiiii„  pi9qoul672lWhxbay1123456789012345 )  iiiiiiiiilllllllllllllllllllll",
+      "postal_code": "54321",
+      "city": "Beispielstadt",
+      "country_code": "DE"
+    }
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "https://9w8b5obv.example/5/oe/u7l 9876543210987lllllWWWWWllllllllll  \n https://9ig8ubf9.example/Mzxb_vlre",
+      "quantity_thousandths": 3860679,
+      "unit": "flat",
+      "unit_price_cents": 66779007,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 4109432270,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 2,
+      "description": "Mwcjrk82k8xwh41fnMn.demxo9p97x",
+      "quantity_thousandths": 6048538,
+      "unit": "flat",
+      "unit_price_cents": 60260788,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 9477648309,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 3,
+      "description": "MMMMMMMMMMMMMWWWWW(» 23fg460Wvo7cu2mvgwtivpfr2bv.de v1h5gzejzkbqkvv061Mh85vwM.de »  \r\n „ \t ­  987654321098765210987654320123 https://n1ded",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 4,
+      "description": "llllllllllllllllliiii„. 9gv6z90gpg@h6jubifhqa6x4",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 5,
+      "description": "987654321098765876543210987654 „“ KraftStraßenanwaltsSoftware 012345678901234567890123 iiiiiiiiiiiiiiiiiiii  9876543210987  98765432109876543210  gesellschaftStraßlschaftverordnun  https://j6ehMnpzb?q=rb0vdmog?q=  9876543210987  iiiiiiiiiiiiiiiii",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 380000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 380000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    },
+    {
+      "position": 6,
+      "description": "MMMMMllllllllMMMMMMMMMMMM iiiiiiilllllllllll  WWWWWWWWWWWWWWlllllllllllll 012345",
+      "quantity_thousandths": 1357701,
+      "unit": "flat",
+      "unit_price_cents": 39767572,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": -724518148,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 380000
+    }
+  ],
+  "document_discount": {
+    "amount_cents": 20000
+  },
+  "totals": {
+    "net_total_cents": 620000,
+    "document_discount_cents": 20000,
+    "net_after_document_discount_cents": 600000,
+    "vat": [
+      {
+        "rate_permyriad": 1900,
+        "net_cents": 600000,
+        "vat_cents": 114000
+      }
+    ],
+    "vat_total_cents": 114000,
+    "grand_total_cents": 714000
+  },
+  "notes": "We look forward to hearing from you."
+}

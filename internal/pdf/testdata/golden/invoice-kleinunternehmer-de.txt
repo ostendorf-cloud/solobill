@@ -1,30 +1,30 @@
-                                                                             Max Mustermann IT-Beratung
+                                                                              Max Mustermann IT-Beratung
 
 
 
 Max Mustermann IT-Beratung · Musterstraße 1 · 12345 Musterstadt
 
 
-Mustermann Consulting GmbH                                        Rechnungsnummer                            RE-20260007
-Beispielweg 7                                                     Datum                                        20.11.2026
-54321 Beispielstadt                                               Leistungsdatum                               18.11.2026
-                                                                  Kundennummer                                    K-1001
-                                                                  Zahlbar bis                                  04.12.2026
+Mustermann Consulting GmbH                                        Rechnungsnummer                             RE-20260007
+Beispielweg 7                                                     Datum                                         20.11.2026
+54321 Beispielstadt                                               Leistungsdatum                                18.11.2026
+                                                                  Kundennummer                                     K-1001
+                                                                  Zahlbar bis                                   04.12.2026
 
 
 
 
 Rechnung
 
-  Pos.    Beschreibung                                              Menge    Einheit           Einzelpreis          Betrag
+  Pos.    Beschreibung                                               Menge    Einheit           Einzelpreis          Betrag
 
-      1   Workshop Kubernetes Grundlagen                                 1   Tag             1.200,00 EUR     1.200,00 EUR
+      1   Workshop Kubernetes Grundlagen                                  1   Tag             1.200,00 EUR     1.200,00 EUR
 
-      2   Reisekosten pauschal                                           1   pauschal           85,50 EUR       85,50 EUR
+      2   Reisekosten pauschal                                            1   pauschal           85,50 EUR       85,50 EUR
 
 
 
-                                                          Gesamtbetrag                                       1.285,50 EUR
+                                                          Gesamtbetrag                                        1.285,50 EUR
 
 Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.
 
@@ -34,7 +34,7 @@ Zahlbar innerhalb von 14 Tagen ohne Abzug.
 
 
 
-                                                                                                                 Seite 1 von 1
+                                                                                                                  Seite 1 von 1
 
 Max Mustermann IT-Beratung                                            Tel. +49 000 0000000
 Musterstraße 1                                                        E-Mail rechnung@example.com

@@ -7,11 +7,15 @@
 // never pass a data value to a function that reads a file or evaluates
 // code.
 //
-// The layout is exact by construction: every column has a fixed width,
-// only the item description takes the rest, and internal/pdf measures
-// every word against its cell with the fonts' real advances before this
-// file runs (layout.go holds the same widths). Every cell clips as a
-// last resort, so text can never paint outside it.
+// Typst is the authority on the layout. Every column has a fixed width
+// (only the item description takes the rest) and every text sits in a
+// `fit` cell. A fit cell records where it is and marks every character
+// it prints; at the end of the document one check compares every mark
+// with its cell and fails the compile with "overflow: <field path>" when
+// a character lies outside. So an issued PDF never has text cut or
+// running into a neighbour cell. The cell also clips, as a last resort.
+// internal/pdf checks the same widths before Typst runs, conservatively,
+// to name the field early.
 //
 // A shipped template version never changes its output again. A layout
 // change is a new file with a new version name in render.go.
@@ -25,8 +29,8 @@
 #set document(title: d.document_title, author: d.seller_name, keywords: (d.template_version,))
 // A line's box spans the font's ascender to its descender, so a clipping
 // cell never cuts a glyph; the leading is smaller to match. No
-// punctuation hangs past the end of a line (overhang), so a word ends
-// where its measured width ends.
+// punctuation hangs past the end of a line (overhang), so a character
+// ends where its advance ends.
 #set text(
   font: "Go",
   size: 9pt,
@@ -37,10 +41,46 @@
 )
 #set par(leading: 0.15em, spacing: 0.9em)
 
-#let lines(arr) = arr.join(linebreak())
-// clipped sets body into the full width of its cell and cuts anything
-// that would paint outside it.
-#let clipped(body) = block(width: 100%, clip: true, body)
+// fit-debug adds each cell's height to its record, for the tests' clip
+// check. The renderer never sets it.
+#let fit-debug = false
+#let fit-counter = counter("fit")
+
+// marked prints s with a mark after every character, naming its cell and
+// field. A mark is a zero width metadata element. The closing empty box
+// keeps the last mark off the paragraph's end, where Typst places a
+// trailing element at the line start instead of after the last glyph.
+#let marked(id, path, s) = {
+  let mark = metadata((id: id, path: path))
+  [#s.clusters().map(c => if c == " " { c } else { [#c#mark<fit-char>] }).join()#box()]
+}
+
+// fit sets the content body(mark) builds into the full width of its cell.
+// mark(path, text) prints a data string. The visible text carries no
+// mark. A hidden, left aligned copy of it with a mark after every
+// character lies on top: its line breaks are the visible text's, and
+// overflow, whatever the alignment, shows as a mark right of the cell.
+// (Typst positions marks inside an overflowing right aligned line
+// wrongly, so the copy is left aligned.)
+#let fit(flush-right: false, body) = {
+  fit-counter.step()
+  context {
+    let id = fit-counter.get().first()
+    let visible = body((path, s) => s)
+    block(width: 100%, clip: true, {
+      place(top + left, layout(size => context {
+        let p = here().position()
+        let h = if fit-debug { measure(block(width: size.width, visible)).height } else { 0pt }
+        [#metadata((id: id, page: p.page, x: p.x, y: p.y, w: size.width, h: h))<fit-cell>]
+      }))
+      place(top + left, hide(block(width: 100%, body((path, s) => marked(id, path, s)))))
+      if flush-right { align(right, visible) } else { visible }
+    })
+  }
+}
+
+// lines-of marks each line with its own field path.
+#let lines-of(mark, paths, arr) = arr.enumerate().map(((i, s)) => mark(paths.at(i), s)).join(linebreak())
 
 // The footer: seller address, contact, tax identity and bank in two
 // columns, then the footer text. Its height is measured and the bottom
@@ -53,11 +93,11 @@
     columns: (1fr, 1fr),
     column-gutter: 6mm,
     row-gutter: 1.5mm,
-    ..d.footer.map(col => clipped(lines(col))),
+    ..d.footer.enumerate().map(((i, col)) => fit(mark => lines-of(mark, d.footer_paths.at(i), col))),
   )
   if d.footer_text.len() > 0 {
     v(0.5mm)
-    clipped(text(fill: muted, lines(d.footer_text)))
+    fit(mark => text(fill: muted, d.footer_text.map(s => mark("seller.footer_text", s)).join(linebreak())))
   }
 }
 #let page-number = text(size: 7pt, align(right, context [#d.page_label #counter(page).display() #d.page_of_label #counter(
@@ -83,24 +123,30 @@
 }
 
 // Letterhead.
-#clipped(align(right, text(size: 14pt, weight: "bold", d.seller_name)))
+#fit(flush-right:true, mark => text(size: 14pt, weight: "bold", mark("seller.legal_name", d.seller_name)))
 
 #v(18mm)
 
 // Sender line, then the address field on the left and the document data
 // on the right.
-#clipped(text(size: 6.5pt, fill: muted, underline(stroke: 0.3pt, d.sender_line)))
+#fit(mark => text(size: 6.5pt, fill: muted, underline(stroke: 0.3pt, mark("seller.address", d.sender_line))))
 #v(1mm)
 #grid(
   columns: (1fr, 88mm),
   column-gutter: 8mm,
-  clipped(text(size: 10pt, lines(d.recipient_lines))),
+  fit(mark => text(size: 10pt, lines-of(mark, d.recipient_paths, d.recipient_lines))),
   grid(
     columns: (32mm, 1fr),
     column-gutter: 3mm,
     row-gutter: 1.6mm,
     align: (left, right),
-    ..d.meta.map(m => (clipped(text(fill: muted, m.label)), clipped(align(right, m.value)))).flatten(),
+    ..d
+      .meta
+      .map(m => (
+        fit(mark => text(fill: muted, mark("template.meta", m.label))),
+        fit(flush-right:true, mark => mark(m.path, m.value)),
+      ))
+      .flatten(),
   ),
 )
 
@@ -109,7 +155,7 @@
 #text(size: 16pt, weight: "bold", d.title)
 
 #if d.corrects_line != "" {
-  clipped(par(d.corrects_line))
+  fit(mark => par(mark("corrects.number", d.corrects_line)))
 }
 
 #v(3mm)
@@ -123,24 +169,41 @@
     + (d.columns.amount,)
 )
 #let aligns = (right, left, right, left, right) + vat-col(right) + (right,)
+#let fields = ("position", "description", "quantity_thousandths", "unit", "unit_price_cents") + vat-col(
+  "vat_rate_permyriad",
+) + ("net_after_line_discount_cents",)
 
 #{
   set text(size: 8pt)
   table(
-    columns: (10mm, 1fr, 17mm, 18mm, 25mm) + vat-col(13mm) + (30mm,),
+    columns: (10mm, 1fr, 15mm, 17.5mm, 24mm) + vat-col(12.5mm) + (29mm,),
     align: (x, y) => aligns.at(x) + top,
     stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { (bottom: 0.3pt + rule) },
     inset: (x: 1.5mm, y: 1.6mm),
-    table.header(..head.enumerate().map(((i, h)) => clipped(align(aligns.at(i), text(weight: "bold", h))))),
+    table.header(
+      ..head
+        .enumerate()
+        .map(((i, h)) => fit(flush-right:aligns.at(i) == right, mark => text(weight: "bold", mark("template.columns", h)))),
+    ),
     ..d
       .lines
-      .map(l => {
-        let desc = lines(l.description)
-        if l.discount != "" {
-          desc = [#desc \ #text(size: 7pt, fill: muted, l.discount)]
-        }
-        let cells = (l.position, desc, l.quantity, l.unit, l.unit_price) + vat-col(l.vat_rate) + (l.amount,)
-        cells.enumerate().map(((i, c)) => clipped(align(aligns.at(i), c)))
+      .enumerate()
+      .map(((n, l)) => {
+        let path(f) = "lines[" + str(n) + "]." + f
+        let values = (l.position, none, l.quantity, l.unit, l.unit_price) + vat-col(l.vat_rate) + (l.amount,)
+        values
+          .enumerate()
+          .map(((i, v)) => fit(flush-right:aligns.at(i) == right, mark => {
+            if i == 1 {
+              l.description.map(s => mark(path("description"), s)).join(linebreak())
+              if l.discount != "" {
+                linebreak()
+                text(size: 8pt, fill: muted, mark(path("line_discount"), l.discount))
+              }
+            } else {
+              mark(path(fields.at(i)), v)
+            }
+          }))
       })
       .flatten(),
   )
@@ -159,15 +222,19 @@
       if t.strong {
         (
           grid.hline(stroke: 0.6pt),
-          grid.cell(inset: (top: 1.8mm, bottom: 0.9mm), clipped(text(size: 10pt, weight: "bold", t.label))),
-          grid.cell(inset: (top: 1.8mm, bottom: 0.9mm), clipped(align(right, text(
+          grid.cell(inset: (top: 1.8mm, bottom: 0.9mm), fit(mark => text(
             size: 10pt,
             weight: "bold",
-            t.value,
-          )))),
+            mark(t.path, t.label),
+          ))),
+          grid.cell(inset: (top: 1.8mm, bottom: 0.9mm), fit(flush-right:true, mark => text(
+            size: 10pt,
+            weight: "bold",
+            mark(t.path, t.value),
+          ))),
         )
       } else {
-        (clipped(t.label), clipped(align(right, t.value)))
+        (fit(mark => mark(t.path, t.label)), fit(flush-right:true, mark => mark(t.path, t.value)))
       }
     })
     .flatten(),
@@ -176,11 +243,25 @@
 // Tax note, payment terms and notes, each kept together on one page.
 #for s in d.sections {
   v(3mm)
-  block(breakable: false, clipped({
+  block(breakable: false, fit(mark => {
     if s.title != "" {
-      text(weight: "bold", s.title)
+      text(weight: "bold", mark("template.sections", s.title))
       linebreak()
     }
-    lines(s.lines)
+    s.lines.map(line => mark(s.path, line)).join(linebreak())
   }))
+}
+
+// The check: every marked character lies inside its cell, else the
+// compile fails and names the field.
+#context {
+  let cells = (:)
+  for c in query(<fit-cell>) {
+    cells.insert(str(c.value.id), c.value)
+  }
+  for m in query(<fit-char>) {
+    let c = cells.at(str(m.value.id))
+    let x = m.location().position().x
+    assert(x <= c.x + c.w + 0.05pt and x >= c.x - 0.05pt, message: "overflow: " + m.value.path)
+  }
 }

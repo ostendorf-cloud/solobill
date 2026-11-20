@@ -76,7 +76,15 @@ var (
 	// version's Limits.Pages. CheckPrintable refuses such a payload
 	// before Typst runs; this is the check after it.
 	ErrTooManyPages = errors.New("pdf: too many pages")
+	// ErrLayoutOverflow is a text the template's overflow check found
+	// outside its cell. Render returns it inside an *InvalidPayloadError
+	// naming the field. The issuing code refuses the issue on it.
+	ErrLayoutOverflow = errors.New("pdf: text does not fit its cell")
 )
+
+// overflowMessage is the template's overflow assertion in Typst's
+// diagnostics; its group is the field path.
+var overflowMessage = regexp.MustCompile(`assertion failed: overflow: ([^\s"]+)`)
 
 // Options configure a Renderer. A zero field takes its default.
 type Options struct {
@@ -222,6 +230,13 @@ func (r *Renderer) compile(ctx context.Context, src Source) ([]byte, error) {
 	case err != nil && ctx.Err() != nil:
 		return nil, fmt.Errorf("%w: %w", ErrCompile, ctx.Err())
 	case err != nil:
+		if m := overflowMessage.FindSubmatch(stderr.Bytes()); m != nil {
+			return nil, &InvalidPayloadError{
+				Details: map[string]string{string(m[1]): "does not fit its cell in the typeset document"},
+				Err:     ErrLayoutOverflow,
+			}
+		}
+
 		return nil, fmt.Errorf("%w: %w: %s", ErrCompile, err, bytes.TrimSpace(stderr.Bytes()))
 	case !bytes.HasPrefix(out.buf.Bytes(), []byte("%PDF-")):
 		return nil, fmt.Errorf("%w: output is no PDF", ErrCompile)

@@ -1,33 +1,33 @@
-                                                                                                                Example GmbH
+                                                                                                           Example GmbH
 
 
 
 Example GmbH · Musterstraße 1 · 12345 Musterstadt
 
 
-Mustermann Consulting GmbH                                      Offer number                                              AN-20260013
-Beispielweg 7                                                   Date                                                  20 November 2026
-z. Hd. Max Mustermann                                           Customer number                                                 K-1001
+Mustermann Consulting GmbH                                      Offer number                                         AN-20260013
+Beispielweg 7                                                   Date                                             20 November 2026
+z. Hd. Max Mustermann                                           Customer number                                            K-1001
 54321 Beispielstadt
-                                                                Valid until                                             15 January 2027
+                                                                Valid until                                        15 January 2027
 
 
 
 
 Offer
 
-   No.    Description                                       Qty       Unit                    Unit price        VAT            Amount
+   No.    Description                                          Qty    Unit                Unit price       VAT            Amount
 
-      1   Kubernetes cluster setup                             1      flat                3,800.00 EUR          19%       3,800.00 EUR
+      1   Kubernetes cluster setup                                1   flat            3,800.00 EUR         19%       3,800.00 EUR
 
-      2   Training, two days                                   2      days                1,200.00 EUR          19%       2,400.00 EUR
+      2   Training, two days                                      2   days            1,200.00 EUR         19%       2,400.00 EUR
 
 
-                                                      Net total                                                           6,200.00 EUR
-                                                      Discount                                                            -200.00 EUR
-                                                      Net total after discount                                            6,000.00 EUR
-                                                      VAT 19% on 6,000.00 EUR                                             1,140.00 EUR
-                                                      Offer total                                                        7,140.00 EUR
+                                                      Net total                                                      6,200.00 EUR
+                                                      Discount                                                       -200.00 EUR
+                                                      Net total after discount                                       6,000.00 EUR
+                                                      VAT 19% on 6,000.00 EUR                                        1,140.00 EUR
+                                                      Offer total                                                   7,140.00 EUR
 
 Notes
 We look forward to hearing from you.
@@ -35,14 +35,14 @@ We look forward to hearing from you.
 
 
 
-                                                                                                                               Page 1 of 1
+                                                                                                                          Page 1 of 1
 
-Example GmbH                                                                 Phone +49 000 0000000
-Musterstraße 1                                                               Email rechnung@example.com
-12345 Musterstadt                                                            Web www.example.com
-Tax number 12/345/67890                                                      Bank Musterbank
-VAT ID DE000000000                                                           IBAN DE00 0000 0000 0000 0000 00
-                                                                             BIC MUSTDEXXXXX
+Example GmbH                                                            Phone +49 000 0000000
+Musterstraße 1                                                          Email rechnung@example.com
+12345 Musterstadt                                                       Web www.example.com
+Tax number 12/345/67890                                                 Bank Musterbank
+VAT ID DE000000000                                                      IBAN DE00 0000 0000 0000 0000 00
+                                                                        BIC MUSTDEXXXXX
 
 Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000
 

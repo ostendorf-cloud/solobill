@@ -13,34 +13,47 @@
     "1010 Wien",
     "AUSTRIA"
   ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.city",
+    "customer.address.country_code"
+  ],
   "meta": [
     {
       "label": "Invoice number",
-      "value": "RE-20260043"
+      "value": "RE-20260043",
+      "path": "number"
     },
     {
       "label": "Date",
-      "value": "7 December 2026"
+      "value": "7 December 2026",
+      "path": "issue_date"
     },
     {
       "label": "Service period",
-      "value": "1 November 2026 to 30 November 2026"
+      "value": "1 November 2026 to 30 November 2026",
+      "path": "service_period"
     },
     {
       "label": "Customer number",
-      "value": "K-2002"
+      "value": "K-2002",
+      "path": "customer.number"
     },
     {
       "label": "Your reference",
-      "value": "PO 2026-118"
+      "value": "PO 2026-118",
+      "path": "customer_reference"
     },
     {
       "label": "Your VAT ID",
-      "value": "ATU00000000"
+      "value": "ATU00000000",
+      "path": "customer.vat_id"
     },
     {
       "label": "Due date",
-      "value": "21 December 2026"
+      "value": "21 December 2026",
+      "path": "due_date"
     }
   ],
   "corrects_line": "",
@@ -96,27 +109,32 @@
     {
       "label": "Net total",
       "value": "6,287.50 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.net_total_cents"
     },
     {
       "label": "Discount 3%",
       "value": "-188.63 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.document_discount_cents"
     },
     {
       "label": "Net total after discount",
       "value": "6,098.87 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.net_after_document_discount_cents"
     },
     {
       "label": "VAT 0% on 6,098.87 EUR",
       "value": "0.00 EUR",
-      "strong": false
+      "strong": false,
+      "path": "totals.vat[0]"
     },
     {
       "label": "Total",
       "value": "6,098.87 EUR",
-      "strong": true
+      "strong": true,
+      "path": "totals.grand_total_cents"
     }
   ],
   "sections": [
@@ -124,13 +142,15 @@
       "title": "",
       "lines": [
         "Reverse charge: the recipient is liable for VAT (Article 196 Council Directive 2006/112/EC)."
-      ]
+      ],
+      "path": "tax_note"
     },
     {
       "title": "Payment terms",
       "lines": [
         "Payable within 14 days without deduction."
-      ]
+      ],
+      "path": "payment_terms"
     }
   ],
   "footer": [
@@ -152,6 +172,27 @@
       "Bank Musterbank",
       "IBAN DE00 0000 0000 0000 0000 00",
       "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number",
+      "seller.vat_id"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
     ]
   ],
   "footer_text": [

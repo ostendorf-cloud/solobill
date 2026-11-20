@@ -12,26 +12,36 @@
     "Beispielweg 7",
     "54321 Beispielstadt"
   ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.city"
+  ],
   "meta": [
     {
       "label": "Rechnungsnummer",
-      "value": "RE-20260007"
+      "value": "RE-20260007",
+      "path": "number"
     },
     {
       "label": "Datum",
-      "value": "20.11.2026"
+      "value": "20.11.2026",
+      "path": "issue_date"
     },
     {
       "label": "Leistungsdatum",
-      "value": "18.11.2026"
+      "value": "18.11.2026",
+      "path": "service_period.from"
     },
     {
       "label": "Kundennummer",
-      "value": "K-1001"
+      "value": "K-1001",
+      "path": "customer.number"
     },
     {
       "label": "Zahlbar bis",
-      "value": "04.12.2026"
+      "value": "04.12.2026",
+      "path": "due_date"
     }
   ],
   "corrects_line": "",
@@ -75,7 +85,8 @@
     {
       "label": "Gesamtbetrag",
       "value": "1.285,50 EUR",
-      "strong": true
+      "strong": true,
+      "path": "totals.grand_total_cents"
     }
   ],
   "sections": [
@@ -83,13 +94,15 @@
       "title": "",
       "lines": [
         "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet."
-      ]
+      ],
+      "path": "tax_note"
     },
     {
       "title": "Zahlungsbedingungen",
       "lines": [
         "Zahlbar innerhalb von 14 Tagen ohne Abzug."
-      ]
+      ],
+      "path": "payment_terms"
     }
   ],
   "footer": [
@@ -110,6 +123,26 @@
       "Bank Musterbank",
       "IBAN DE00 0000 0000 0000 0000 00",
       "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
     ]
   ],
   "footer_text": [],

@@ -27,6 +27,9 @@ type Input struct {
 	SenderLine     string   `json:"sender_line"`
 	SellerName     string   `json:"seller_name"`
 	RecipientLines []string `json:"recipient_lines"`
+	// RecipientPaths name the payload field of each recipient line, for
+	// the template's overflow check.
+	RecipientPaths []string `json:"recipient_paths"`
 	Meta           []Pair   `json:"meta"`
 	CorrectsLine   string   `json:"corrects_line"`
 
@@ -37,16 +40,20 @@ type Input struct {
 
 	Sections []Section `json:"sections"`
 
-	Footer      [][]string `json:"footer"`
+	Footer [][]string `json:"footer"`
+	// FooterPaths name the payload field of each footer line.
+	FooterPaths [][]string `json:"footer_paths"`
 	FooterText  []string   `json:"footer_text"`
 	PageLabel   string     `json:"page_label"`
 	PageOfLabel string     `json:"page_of_label"`
 }
 
-// Pair is one label and value in the meta block.
+// Pair is one label and value in the meta block. Path names the payload
+// field the value prints.
 type Pair struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
+	Path  string `json:"path"`
 }
 
 // ColumnHeaders are the item table's column labels.
@@ -77,8 +84,8 @@ type TotalRow struct {
 	Label  string `json:"label"`
 	Value  string `json:"value"`
 	Strong bool   `json:"strong"`
-	// path names the payload field the row prints, for error details.
-	path string
+	// Path names the payload field the row prints.
+	Path string `json:"path"`
 }
 
 // Section is a titled block of text below the totals. An empty title
@@ -86,8 +93,8 @@ type TotalRow struct {
 type Section struct {
 	Title string   `json:"title"`
 	Lines []string `json:"lines"`
-	// path names the payload field the section prints.
-	path string
+	// Path names the payload field the section prints.
+	Path string `json:"path"`
 }
 
 // Errors of BuildInput and Render.
@@ -112,11 +119,16 @@ var (
 // docpayload.Validate. The API answers it as 400 with these details.
 type InvalidPayloadError struct {
 	Details map[string]string
+	// Err is the cause when Typst found the problem: ErrLayoutOverflow.
+	Err error
 }
 
 func (e *InvalidPayloadError) Error() string {
 	return "pdf: payload cannot be printed: " + strings.Join(docpayload.SortedPaths(e.Details), ", ")
 }
+
+// Unwrap returns the cause, if any.
+func (e *InvalidPayloadError) Unwrap() error { return e.Err }
 
 // draftExempt are the Validate paths a draft may fail: it has no number
 // yet and is printed with the current template.
@@ -291,9 +303,8 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		Draft:           draft,
 		Watermark:       l.Watermark,
 		Title:           title,
-		SenderLine:      senderLine(seller),
+		SenderLine:      pr.composed("seller.address", senderLine(seller), cellSender),
 		SellerName:      seller.LegalName,
-		RecipientLines:  recipientLines(customer, seller.Address.CountryCode, l, pr),
 		ShowVAT:         showVAT,
 		Columns: ColumnHeaders{
 			Position:    l.Position,
@@ -309,9 +320,10 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		Sections:    []Section{},
 		PageLabel:   l.Page,
 		PageOfLabel: l.PageOf,
-		Footer:      footerColumns(seller, l),
 		FooterText:  pr.footerText("seller.footer_text", p.Seller.FooterText),
 	}
+	in.RecipientLines, in.RecipientPaths = recipientLines(customer, seller.Address.CountryCode, l, pr)
+	in.Footer, in.FooterPaths = footerColumns(seller, l, pr)
 	if draft {
 		in.DocumentTitle = title + " (" + l.Watermark + ")"
 	} else {
@@ -320,38 +332,42 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 
 	// Meta block: section 14 Abs. 4 Nr. 3, 4 and 6, plus the references.
 	if !draft {
-		in.Meta = append(in.Meta, Pair{l.Number[p.Type], number})
+		in.Meta = append(in.Meta, Pair{l.Number[p.Type], number, "number"})
 	}
 	if p.IssueDate != "" {
-		in.Meta = append(in.Meta, Pair{l.Date, date("issue_date", p.IssueDate, cellMetaValue)})
+		in.Meta = append(in.Meta, Pair{l.Date, date("issue_date", p.IssueDate, cellMetaValue), "issue_date"})
 	}
 	if sp := p.ServicePeriod; sp != nil {
 		from := date("service_period.from", sp.From, cellMetaValue)
 		to := date("service_period.to", sp.To, cellMetaValue)
 		if sp.From == sp.To {
-			in.Meta = append(in.Meta, Pair{l.ServiceDate, from})
+			in.Meta = append(in.Meta, Pair{l.ServiceDate, from, "service_period.from"})
 		} else {
-			in.Meta = append(in.Meta, Pair{l.ServicePeriod, from + " " + l.PeriodTo + " " + to})
+			period := pr.composed("service_period", from+" "+l.PeriodTo+" "+to, cellMetaValue)
+			in.Meta = append(in.Meta, Pair{l.ServicePeriod, period, "service_period"})
 		}
 	}
 	if customer.Number != "" {
-		in.Meta = append(in.Meta, Pair{l.CustomerNumber, customer.Number})
+		in.Meta = append(in.Meta, Pair{l.CustomerNumber, customer.Number, "customer.number"})
 	}
 	if p.CustomerReference != "" {
-		in.Meta = append(in.Meta, Pair{l.CustomerReference, pr.line("customer_reference", p.CustomerReference, cellMetaValue)})
+		in.Meta = append(in.Meta, Pair{
+			l.CustomerReference, pr.line("customer_reference", p.CustomerReference, cellMetaValue), "customer_reference",
+		})
 	}
 	if customer.VATID != "" {
-		in.Meta = append(in.Meta, Pair{l.CustomerVATID, customer.VATID})
+		in.Meta = append(in.Meta, Pair{l.CustomerVATID, customer.VATID, "customer.vat_id"})
 	}
 	if isOffer && p.ValidUntil != "" {
-		in.Meta = append(in.Meta, Pair{l.ValidUntil, date("valid_until", p.ValidUntil, cellMetaValue)})
+		in.Meta = append(in.Meta, Pair{l.ValidUntil, date("valid_until", p.ValidUntil, cellMetaValue), "valid_until"})
 	}
 	if !isOffer && p.DueDate != "" {
-		in.Meta = append(in.Meta, Pair{l.DueDate, date("due_date", p.DueDate, cellMetaValue)})
+		in.Meta = append(in.Meta, Pair{l.DueDate, date("due_date", p.DueDate, cellMetaValue), "due_date"})
 	}
 	if c := p.Corrects; c != nil {
-		in.CorrectsLine = l.Corrects + " " + pr.line("corrects.number", c.Number, cellFullText) + " " + l.CorrectsOf + " " +
-			date("corrects.issue_date", c.IssueDate, cellFullText) + "."
+		in.CorrectsLine = pr.composed("corrects.number",
+			l.Corrects+" "+pr.line("corrects.number", c.Number, cellFullText)+" "+l.CorrectsOf+" "+
+				date("corrects.issue_date", c.IssueDate, cellFullText)+".", cellFullText)
 	}
 
 	// Nr. 5 and Nr. 7: quantity, kind and the reductions per line. The
@@ -382,22 +398,22 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		if t.Strong {
 			label, value = cellTotalStrongLabel, cellTotalStrong
 		}
-		pr.fit(t.path, t.Label, label)
-		pr.fitWhole(t.path, t.Value, value)
+		pr.fit(t.Path, t.Label, label)
+		pr.fitWhole(t.Path, t.Value, value)
 	}
 
 	// Nr. 8 note (exemption, reverse charge) or the section 19 note, as
 	// frozen, then payment terms (never on an offer) and free notes.
 	if lines := pr.note("tax_note", p.TaxNote); len(lines) > 0 {
-		in.Sections = append(in.Sections, Section{Lines: lines, path: "tax_note"})
+		in.Sections = append(in.Sections, Section{Lines: lines, Path: "tax_note"})
 	}
 	if !isOffer {
 		if lines := pr.note("payment_terms", p.PaymentTerms); len(lines) > 0 {
-			in.Sections = append(in.Sections, Section{Title: l.PaymentTerms, Lines: lines, path: "payment_terms"})
+			in.Sections = append(in.Sections, Section{Title: l.PaymentTerms, Lines: lines, Path: "payment_terms"})
 		}
 	}
 	if lines := pr.note("notes", p.Notes); len(lines) > 0 {
-		in.Sections = append(in.Sections, Section{Title: l.Notes, Lines: lines, path: "notes"})
+		in.Sections = append(in.Sections, Section{Title: l.Notes, Lines: lines, Path: "notes"})
 	}
 
 	return in
@@ -487,7 +503,7 @@ func totalRows(p docpayload.FrozenPayloadV1, l labels, isOffer, showVAT bool) []
 	var rows []TotalRow
 	hasDiscount := t.DocumentDiscountCents != 0
 	if showVAT || hasDiscount {
-		rows = append(rows, TotalRow{Label: l.NetTotal, Value: money(t.NetTotalCents), path: "totals.net_total_cents"})
+		rows = append(rows, TotalRow{Label: l.NetTotal, Value: money(t.NetTotalCents), Path: "totals.net_total_cents"})
 	}
 	if hasDiscount {
 		label := l.DocumentDiscount
@@ -495,10 +511,10 @@ func totalRows(p docpayload.FrozenPayloadV1, l labels, isOffer, showVAT bool) []
 			label += " " + formatPercent(int64(*d), lang)
 		}
 		rows = append(rows,
-			TotalRow{Label: label, Value: money(-t.DocumentDiscountCents), path: "totals.document_discount_cents"},
+			TotalRow{Label: label, Value: money(-t.DocumentDiscountCents), Path: "totals.document_discount_cents"},
 			TotalRow{
 				Label: l.NetAfterDiscount, Value: money(t.NetAfterDocumentDiscountCents),
-				path: "totals.net_after_document_discount_cents",
+				Path: "totals.net_after_document_discount_cents",
 			},
 		)
 	}
@@ -507,7 +523,7 @@ func totalRows(p docpayload.FrozenPayloadV1, l labels, isOffer, showVAT bool) []
 			rows = append(rows, TotalRow{
 				Label: l.VAT + " " + formatPercent(int64(b.RatePermyriad), lang) + " " + l.VATOn + " " + money(b.NetCents),
 				Value: money(b.VATCents),
-				path:  fmt.Sprintf("totals.vat[%d]", i),
+				Path:  fmt.Sprintf("totals.vat[%d]", i),
 			})
 		}
 	}
@@ -515,7 +531,7 @@ func totalRows(p docpayload.FrozenPayloadV1, l labels, isOffer, showVAT bool) []
 	if isOffer {
 		total = l.OfferTotal
 	}
-	rows = append(rows, TotalRow{Label: total, Value: money(t.GrandTotalCents), Strong: true, path: "totals.grand_total_cents"})
+	rows = append(rows, TotalRow{Label: total, Value: money(t.GrandTotalCents), Strong: true, Path: "totals.grand_total_cents"})
 
 	return rows
 }
@@ -530,58 +546,92 @@ func senderLine(s docpayload.SellerSnapshot) string {
 	return strings.Join(nonEmpty(parts), " · ")
 }
 
-// recipientLines is the address field. The country line is printed only
-// when it differs from the seller's, in the document language, upper
-// case, and checked as printed.
-func recipientLines(c docpayload.CustomerSnapshot, sellerCountry string, l labels, pr *printer) []string {
-	lines := nonEmpty([]string{c.Name, c.Address.Street, c.Address.Line2, cityLine(c.Address)})
+// printedLine is one line of a composed block and the payload field it
+// prints.
+type printedLine struct {
+	path, text string
+}
+
+// keep drops the lines without text, fits each as printed in c and
+// returns the texts and paths.
+func keep(pr *printer, c cell, lines []printedLine) ([]string, []string) {
+	texts, paths := make([]string, 0, len(lines)), make([]string, 0, len(lines))
+	for _, l := range lines {
+		if strings.TrimSpace(l.text) == "" {
+			continue
+		}
+		texts = append(texts, pr.composed(l.path, l.text, c))
+		paths = append(paths, l.path)
+	}
+
+	return texts, paths
+}
+
+// recipientLines is the address field with each line's field path. The
+// country line is printed only when it differs from the seller's, in
+// the document language, upper case. Every line is checked as printed.
+func recipientLines(c docpayload.CustomerSnapshot, sellerCountry string, l labels, pr *printer) ([]string, []string) {
+	lines := []printedLine{
+		{"customer.name", c.Name},
+		{"customer.address.street", c.Address.Street},
+		{"customer.address.line2", c.Address.Line2},
+		{"customer.address.city", cityLine(c.Address)},
+	}
 	if cc := c.Address.CountryCode; cc != "" && cc != sellerCountry {
 		name, ok := l.Countries[cc]
 		if !ok {
 			name = cc
 		}
-		lines = append(lines, pr.printed("customer.address.country_code", strings.ToUpper(name), cellAddress))
+		lines = append(lines, printedLine{"customer.address.country_code", pr.printed("customer.address.country_code", strings.ToUpper(name), cellAddress)})
 	}
 
-	return lines
+	return keep(pr, cellAddress, lines)
 }
 
 // footerColumns are the seller's data printed on every page: address,
-// contact, tax identity (section 14 Abs. 4 Nr. 2) and bank.
-func footerColumns(s docpayload.SellerSnapshot, l labels) [][]string {
-	labelled := func(label, value string) string {
+// contact, tax identity (section 14 Abs. 4 Nr. 2) and bank, each line
+// with its field path and checked as printed, label and value together.
+func footerColumns(s docpayload.SellerSnapshot, l labels, pr *printer) ([][]string, [][]string) {
+	labelled := func(path, label, value string) printedLine {
 		if value == "" {
-			return ""
+			return printedLine{path, ""}
 		}
 
-		return label + " " + value
+		return printedLine{path, label + " " + value}
 	}
-	cols := [][]string{
-		nonEmpty([]string{s.LegalName, s.Address.Street, s.Address.Line2, cityLine(s.Address)}),
-		nonEmpty([]string{
-			labelled(l.Phone, s.Phone),
-			labelled(l.Email, s.Email),
-			labelled(l.Web, s.Website),
-		}),
-		nonEmpty([]string{
-			labelled(l.TaxNumber, s.TaxNumber),
-			labelled(l.VATID, s.VATID),
-			labelled(l.KleinunternehmerID, s.KleinunternehmerID),
-		}),
-		nonEmpty([]string{
-			labelled(l.Bank, s.BankName),
-			labelled(l.IBAN, s.IBAN),
-			labelled(l.BIC, s.BIC),
-		}),
+	cols := [][]printedLine{
+		{
+			{"seller.legal_name", s.LegalName},
+			{"seller.address.street", s.Address.Street},
+			{"seller.address.line2", s.Address.Line2},
+			{"seller.address.city", cityLine(s.Address)},
+		},
+		{
+			labelled("seller.phone", l.Phone, s.Phone),
+			labelled("seller.email", l.Email, s.Email),
+			labelled("seller.website", l.Web, s.Website),
+		},
+		{
+			labelled("seller.tax_number", l.TaxNumber, s.TaxNumber),
+			labelled("seller.vat_id", l.VATID, s.VATID),
+			labelled("seller.kleinunternehmer_id", l.KleinunternehmerID, s.KleinunternehmerID),
+		},
+		{
+			labelled("seller.bank_name", l.Bank, s.BankName),
+			labelled("seller.iban", l.IBAN, s.IBAN),
+			labelled("seller.bic", l.BIC, s.BIC),
+		},
 	}
-	out := make([][]string, 0, len(cols))
+	texts, paths := make([][]string, 0, len(cols)), make([][]string, 0, len(cols))
 	for _, c := range cols {
-		if len(c) > 0 {
-			out = append(out, c)
+		t, p := keep(pr, cellFooter, c)
+		if len(t) > 0 {
+			texts = append(texts, t)
+			paths = append(paths, p)
 		}
 	}
 
-	return out
+	return texts, paths
 }
 
 func nonEmpty(in []string) []string {

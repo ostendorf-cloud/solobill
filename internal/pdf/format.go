@@ -114,8 +114,9 @@ var monthsEnglish = [...]string{
 }
 
 // formatDate prints a docpayload.DateLayout date: "05.12.2026" in German,
-// "5 December 2026" in English. An unparsable date is printed unchanged,
-// so a renderer never hides what the payload holds.
+// "5 December 2026" in English, with no-break spaces so a date never
+// wraps inside. An unparsable date is printed unchanged, so a renderer
+// never hides what the payload holds.
 func formatDate(s, lang string) string {
 	t, err := time.Parse(docpayload.DateLayout, s)
 	if err != nil {
@@ -125,7 +126,7 @@ func formatDate(s, lang string) string {
 		return t.Format("02.01.2006")
 	}
 
-	return fmt.Sprintf("%d %s %d", t.Day(), monthsEnglish[t.Month()-1], t.Year())
+	return fmt.Sprintf("%d%c%s%c%d", t.Day(), noBreakSpace, monthsEnglish[t.Month()-1], noBreakSpace, t.Year())
 }
 
 // groupIBAN prints an IBAN in groups of four characters (DIN 5008), so

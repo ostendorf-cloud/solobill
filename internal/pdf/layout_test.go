@@ -32,13 +32,14 @@ func TestRealisticValuesFit(t *testing.T) {
 		c    cell
 	}{
 		{"position", "1000", cellPosition},
-		{"quantity", "1.234,567", cellQuantity},
+		{"quantity", "1.234,5", cellQuantity},
+		{"quantity", "999,125", cellQuantity},
 		{"unit", "Pauschale", cellUnit},
 		{"unit", "Kilogramm", cellUnit},
-		{"unit price", "999.999,99 EUR", cellUnitPrice},
-		{"vat", "10,5 %", cellVAT},
-		{"amount", "99.999.999,99 EUR", cellAmount},
-		{"amount negative", "-9.999.999,99 EUR", cellAmount},
+		{"unit price", "99.999,99 EUR", cellUnitPrice},
+		{"vat", "10,5" + string(noBreakSpace) + "%", cellVAT},
+		{"amount", "12.345.670,00 EUR", cellAmount},
+		{"amount negative", "-1.234.567,00 EUR", cellAmount},
 		{"description word", "Donaudampfschifffahrtsgesellschaft", cellDescription(true)},
 		{"meta word", "RE-2026-000001-1", cellMetaValue},
 		{"total value", "99.999.999,99 EUR", cellTotalStrong},
@@ -115,9 +116,9 @@ func TestLayoutConstantsMatchTemplate(t *testing.T) {
 			mm(colPositionMM), mm(colQuantityMM), mm(colUnitMM), mm(colUnitPriceMM), mm(colVATMM), mm(colAmountMM)),
 		fmt.Sprintf("inset: (x: %s, y: %s)", mm(cellInsetMM), mm(cellInsetYMM)),
 		fmt.Sprintf("set text(size: %spt)", strconv.FormatFloat(tableSizePt, 'f', -1, 64)),
-		fmt.Sprintf("text(size: %spt, fill: muted, l.discount)", strconv.FormatFloat(discountSizePt, 'f', -1, 64)),
+		fmt.Sprintf("text(size: %spt, fill: muted, mark(path(\"line_discount\")", strconv.FormatFloat(discountSizePt, 'f', -1, 64)),
 		fmt.Sprintf("columns: (1fr, %s)", mm(metaWidthMM)),
-		fmt.Sprintf("column-gutter: %s,\n  clipped(text(size: 10pt", mm(addressGutterMM)),
+		fmt.Sprintf("column-gutter: %s,\n  fit(mark => text(size: 10pt", mm(addressGutterMM)),
 		fmt.Sprintf("columns: (%s, 1fr),\n    column-gutter: %s", mm(metaLabelMM), mm(metaGutterMM)),
 		fmt.Sprintf("width: %s, grid(\n  columns: (1fr, %s),\n  column-gutter: %s", mm(totalsWidthMM), mm(totalsValueMM), mm(totalsGutterMM)),
 		fmt.Sprintf("column-gutter: %s,\n    row-gutter: 1.5mm", mm(footerGutterMM)),
@@ -126,8 +127,9 @@ func TestLayoutConstantsMatchTemplate(t *testing.T) {
 		"top-edge: \"ascender\",\n  bottom-edge: \"descender\",\n  overhang: false,",
 		fmt.Sprintf("top: %s, bottom: footer-height + %s", mm(topMarginMM), mm(bottomExtraMM)),
 		"margin: (left: 25mm, right: 20mm",
-		// Every cell clips as the last resort.
-		"#let clipped(body) = block(width: 100%, clip: true, body)",
+		// Every cell clips as the last resort, and the overflow check runs.
+		"block(width: 100%, clip: true, {",
+		`assert(x <= c.x + c.w + 0.05pt and x >= c.x - 0.05pt, message: "overflow: " + m.value.path)`,
 		"paper: \"a4\"",
 	} {
 		if !strings.Contains(src, want) {
@@ -334,6 +336,11 @@ func renderChecked(t *testing.T, r *Renderer, pdftotext, name string, p docpaylo
 		t.Errorf("%s: %d pages, over %d", name, pages, MaxPages)
 	}
 	assertNoOverlap(t, pdftotext, pdf)
+	src, err := BuildSource(p, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNotClipped(t, r.opts.Binary, pdftotext, src, pdf)
 }
 
 // TestOverprintCases are the reviews' overprint payloads. Each must be
@@ -413,9 +420,8 @@ func TestOverprintCases(t *testing.T) {
 // long, of wide, narrow and special characters, joined by spaces, no
 // break spaces and, for free text, line feeds.
 func fuzzText(rng *rand.Rand, n int, multiline bool) string {
-	alphabet := []string{
-		"W", "M", "i", "l", "a", "e", "n", "ä", "ß", "0", "9", "-", "/", "@", "://", ".", ",", "€", "§",
-	}
+	letters := []string{"W", "M", "i", "l", "a", "e", "n", "ä", "ß", "0", "9"}
+	specials := []string{"-", "/", "@", "://", ".", ",", "€", "§", "(", ")", "„", "“"}
 	var b strings.Builder
 	length := rng.IntN(n + 1)
 	for b.Len() < length {
@@ -424,7 +430,11 @@ func fuzzText(rng *rand.Rand, n int, multiline bool) string {
 			word = 10 + rng.IntN(30)
 		}
 		for range word {
-			b.WriteString(alphabet[rng.IntN(len(alphabet))])
+			if rng.IntN(7) == 0 {
+				b.WriteString(specials[rng.IntN(len(specials))])
+			} else {
+				b.WriteString(letters[rng.IntN(len(letters))])
+			}
 		}
 		switch r := rng.IntN(20); {
 		case r == 0:

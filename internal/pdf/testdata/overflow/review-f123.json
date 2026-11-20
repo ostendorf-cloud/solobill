@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "type": "invoice",
+  "language": "de",
+  "vat_regime": "standard",
+  "template_version": "document-v1",
+  "currency": "EUR",
+  "number": "RE-20260044",
+  "number_value": 44,
+  "number_year": 2026,
+  "issue_date": "2026-12-08",
+  "service_period": {
+    "from": "2026-12-01",
+    "to": "2026-12-01"
+  },
+  "due_date": "2026-12-22",
+  "seller": {
+    "legal_name": "Example GmbH",
+    "address": {
+      "street": "MMMMMMMMMMMMMMMMMMMMMMWWWWWWW",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "zuständigkeitenGrundstücksmützen https://fivfcwi4.exam",
+    "vat_id": "DE000000000",
+    "bank_name": "Musterbank",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com",
+    "footer_text": "Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "K-1001",
+    "name": "Mustermann Consulting GmbH",
+    "address": {
+      "street": "Beispielweg 7",
+      "line2": "z. Hd. Max Mustermann",
+      "postal_code": "54321",
+      "city": "Beispielstadt",
+      "country_code": "DE"
+    }
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": " ) WWWWWWWWWWWWWWiiiiiiiiii[ !  llllllllllllllllllllllllllllllllllllllllllllllllllll",
+      "quantity_thousandths": 6358710,
+      "unit": "Std.",
+      "unit_price_cents": 70019122,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 6783578783,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 36000
+    },
+    {
+      "position": 2,
+      "description": "012   987 654 321 098 765 432 109  ?   zj4mja0cj6vx60a9hjh5hlifi29apt5.de verordnungmützen\t 9876543210987 98,765,432,109,876,543,2",
+      "quantity_thousandths": 6000,
+      "unit": "Std.",
+      "unit_price_cents": 6000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 36000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 36000
+    }
+  ],
+  "document_discount": {},
+  "totals": {
+    "net_total_cents": 40900,
+    "document_discount_cents": 0,
+    "net_after_document_discount_cents": 40900,
+    "vat": [
+      {
+        "rate_permyriad": 0,
+        "net_cents": 36000,
+        "vat_cents": 0
+      },
+      {
+        "rate_permyriad": 1900,
+        "net_cents": 4900,
+        "vat_cents": 931
+      }
+    ],
+    "vat_total_cents": 931,
+    "grand_total_cents": 41831
+  },
+  "tax_note": "Die Unterrichtsleistung ist nach § 4 Nr. 21 UStG steuerfrei.",
+  "payment_terms": "Zahlbar innerhalb von 14 Tagen ohne Abzug.",
+  "notes": "i75fndbkv1W5kM4ihW1M2fspp33rgawnjd6i8y@293banhm3vwp979hxt6qk47yxtd5bkwpur76.de https://uckss6lm.example/ht?q=y4gt.3  llllllliiiiiiii lllllllllllllllllllll Straßenversicherungsverordnung 01dbf1mlMmmzxgygWxyde502fktWi7bsim7@tvd3vx7v5c8r7daeahry87j42miyzapr.de \t  iiiiiiiiiiiiiiiiiiiiiiii WWWWWWWWWWWWWWiiiiiiiiiiiiiiiiiiiiiiiiiiiilllllllllllllllllllll[ \t napsaicp1z3uxz4knp3g26my9w49k@7t26l3z46q86en87s3awba3eM1s.de   WWWWWWWWWWWWWWWWWWWWWWiiiiiiiiiiii }  leistungenleistungenschiff  https://ncs029p1.example/oh6quww_3ub-x4 MMMMMMMMMMMMMMMMl 012345678901234567890 https://p6a6nMko.example/dq75kdm2l_10g.9u?q=gnam7p/5u/rt_5 pauschaleverkehrs lllllllllllllWWWWWWWWWWWWMMM iiiiiiiiiiiiiiiiiiMMMMMMMMMMMMMMMMMMMMMMMMMMMM MMlllllllllllllllllll 012345678901234567  WWWWWiiiiiiiiiiiiiiiii "
+}

@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "type": "offer",
+  "language": "de",
+  "vat_regime": "standard",
+  "template_version": "document-v1",
+  "currency": "EUR",
+  "number": "AN-20260012",
+  "number_value": 12,
+  "number_year": 2026,
+  "issue_date": "2026-11-20",
+  "valid_until": "2026-12-31",
+  "seller": {
+    "legal_name": "Example GmbH",
+    "address": {
+      "street": "Musterstraße 1",
+      "line2": "“  MM",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "vat_id": "DE000000000",
+    "bank_name": "9876543210987654321098765432109876543210",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com",
+    "footer_text": "Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "K-1001",
+    "name": "Mustermann Consulting GmbH",
+    "address": {
+      "street": "jWock1mx7okuyttludwuz395ywit41ufoy.de 0123456",
+      "line2": "z. Hd. Max Mustermann",
+      "postal_code": "54321",
+      "city": "Beispielstadt",
+      "country_code": "DE"
+    }
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "012345678 ]  \n",
+      "quantity_thousandths": 2874704,
+      "unit": "pauschal",
+      "unit_price_cents": 48152750,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 4223931320,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 240000
+    },
+    {
+      "position": 2,
+      "description": "\r\n e6ph2qpgycrl@6mkr17hmbv.de lllllllllllllllllllllllllllliiiiiiiiiiihttps://if15bcjj.",
+      "quantity_thousandths": 1000,
+      "unit": "pauschal",
+      "unit_price_cents": 240000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 240000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 240000
+    },
+    {
+      "position": 3,
+      "description": "\tWWWWWWWWWiiiiiiiiiii  iiiiiiiiiiiiiii  \r\n  ( \t «https://w7Mn2gf5.example/njcs_2z \n\n1iakxqfjprnw1gr6jzv6zMqde6uviuqjqv",
+      "quantity_thousandths": 7110206,
+      "unit": "pauschal",
+      "unit_price_cents": 28243134,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 4494571789,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 240000
+    },
+    {
+      "position": 4,
+      "description": "3W74auys9zacWh170ceifcu",
+      "quantity_thousandths": 4415595,
+      "unit": "pauschal",
+      "unit_price_cents": 48230734,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 3133916731,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 240000
+    },
+    {
+      "position": 5,
+      "description": "987654321098765654321098765432 https://m332bwjr1mc3y6w418?q=c  MMMMMMMMMMiMMMMMMMMM , „  \t    01234567890WWWWWWWWWWW",
+      "quantity_thousandths": 1000,
+      "unit": "pauschal",
+      "unit_price_cents": 240000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 240000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 240000
+    }
+  ],
+  "document_discount": {},
+  "totals": {
+    "net_total_cents": 660000,
+    "document_discount_cents": 0,
+    "net_after_document_discount_cents": 660000,
+    "vat": [
+      {
+        "rate_permyriad": 1900,
+        "net_cents": 660000,
+        "vat_cents": 125400
+      }
+    ],
+    "vat_total_cents": 125400,
+    "grand_total_cents": 785400
+  },
+  "payment_terms": "Zahlbar innerhalb von 14 Tagen.",
+  "notes": "Wir freuen uns auf Ihre Rückmeldung."
+}
