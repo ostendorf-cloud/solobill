@@ -1,9 +1,9 @@
 import { ApiError, ErrorCode, createGovueI18n, useToasts } from '@ostendorf-cloud/govue'
 import { fireEvent, render, screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
-import { defineComponent } from 'vue'
+import { defineComponent, h, type Component } from 'vue'
 import { RouterView, createMemoryHistory, createRouter } from 'vue-router'
 
 import { apiClient } from '../api'
@@ -157,7 +157,11 @@ function mockApi(options: Mock = {}) {
   })
 }
 
-async function renderView(path = '/documents/edit', locale: 'en' | 'de' = 'en') {
+async function renderView(
+  path = '/documents/edit',
+  locale: 'en' | 'de' = 'en',
+  stubs: Record<string, Component> = {},
+) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -173,7 +177,7 @@ async function renderView(path = '/documents/edit', locale: 'en' | 'de' = 'en') 
   const govueI18n = createGovueI18n({ i18n })
   // Through a RouterView, like the app: the leave guard needs the route record.
   const Root = defineComponent({ components: { RouterView }, template: '<RouterView />' })
-  const view = render(Root, { global: { plugins: [router, i18n, govueI18n] } })
+  const view = render(Root, { global: { plugins: [router, i18n, govueI18n], stubs } })
   return { ...view, router }
 }
 
@@ -1244,10 +1248,25 @@ describe('DocumentEditorView', () => {
     const description = () => screen.getByLabelText(/^Description \(1\)/)
 
     // jsdom has no pointer capture; the select's pointer down handler asks.
+    // The stubs are put back after each test.
+    const capture = ['hasPointerCapture', 'setPointerCapture', 'releasePointerCapture'] as const
+    const originals: Partial<Record<(typeof capture)[number], unknown>> = {}
     beforeEach(() => {
-      Element.prototype.hasPointerCapture = () => false
-      Element.prototype.setPointerCapture = () => {}
-      Element.prototype.releasePointerCapture = () => {}
+      const proto = Element.prototype as unknown as Record<string, unknown>
+      for (const name of capture) {
+        originals[name] = proto[name]
+        proto[name] = name === 'hasPointerCapture' ? () => false : () => {}
+      }
+    })
+    afterEach(() => {
+      const proto = Element.prototype as unknown as Record<string, unknown>
+      for (const name of capture) {
+        if (originals[name] === undefined) {
+          delete proto[name]
+        } else {
+          proto[name] = originals[name]
+        }
+      }
     })
 
     function deferredPut() {
@@ -1285,6 +1304,9 @@ describe('DocumentEditorView', () => {
       await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
 
       for (const name of [
+        /^Customer/,
+        'VAT regime',
+        'Language of the document',
         'Unit (1)',
         'Catalogue item (1)',
         'Line discount (1)',
@@ -1315,7 +1337,8 @@ describe('DocumentEditorView', () => {
       const issue = screen.getByRole('button', { name: 'Issue' })
       expect(issue).toBeDisabled()
       expect(screen.getByText('Issuing waits until the draft is saved.')).toBeVisible()
-      // Whatever still gets a click through must not start a second save.
+      // A click that reaches the button anyway is stopped by the panel's own
+      // hint check in ask(); the early return of saveForIssue is tested below.
       issue.removeAttribute('disabled')
       await fireEvent.click(issue)
       await wait(40)
@@ -1324,6 +1347,42 @@ describe('DocumentEditorView', () => {
       put.answer(draftDoc())
       await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Issue' })).toBeEnabled())
       expect(rec.puts).toHaveLength(1)
+    })
+
+    it('starts no second save when the before-issue path is called during a save', async () => {
+      const put = deferredPut()
+      // The panel stub calls the editor's before-issue handler directly, past
+      // the panel's own checks, as the backstop of saveForIssue has to hold.
+      const calls: Promise<Doc | null>[] = []
+      const PanelStub = defineComponent({
+        props: { beforeIssue: { type: Function, default: undefined } },
+        setup(props) {
+          return () =>
+            h(
+              'button',
+              {
+                'data-testid': 'force-before-issue',
+                onClick: () => {
+                  calls.push((props.beforeIssue as () => Promise<Doc | null>)())
+                },
+              },
+              'force',
+            )
+        },
+      })
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1', 'en', { DocumentIssue: PanelStub })
+      await ready()
+      await user.type(description(), ' one')
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+
+      await fireEvent.click(screen.getByTestId('force-before-issue'))
+      await wait(40)
+
+      expect(rec.puts).toHaveLength(1)
+      expect(await calls[0]).toBeNull()
+      put.answer(draftDoc())
     })
 
     it('stops the confirmation by the dirty check alone when the preview has settled again', async () => {
