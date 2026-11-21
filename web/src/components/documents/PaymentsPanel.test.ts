@@ -1,5 +1,5 @@
 import { ApiError, ErrorCode, createGovueI18n, useToasts } from '@ostendorf-cloud/govue'
-import { render, screen, within } from '@testing-library/vue'
+import { fireEvent, render, screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
@@ -385,10 +385,18 @@ describe('PaymentsPanel', () => {
       await user.type(within(dialog).getByLabelText(/^Amount/), '10')
       me.value = null
       sessionFailed.value = true
-      await user.click(within(dialog).getByRole('button', { name: 'Record payment' }))
+      // The submit button is disabled now; a submit by the keyboard or a
+      // script still reaches the handler, which must refuse on its own.
+      await vi.waitFor(() =>
+        expect(within(dialog).getByRole('button', { name: 'Record payment' })).toBeDisabled(),
+      )
+      await fireEvent.submit(document.getElementById('payment-form') as HTMLFormElement)
       await new Promise((resolve) => setTimeout(resolve, 20))
 
       expect(posts).toHaveLength(0)
+      expect(within(dialog).getAllByText(/The session could not be loaded/).length).toBeGreaterThan(
+        0,
+      )
     })
   })
 
