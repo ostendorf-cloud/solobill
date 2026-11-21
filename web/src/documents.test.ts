@@ -1,5 +1,5 @@
 import { ApiError, ErrorCode } from '@ostendorf-cloud/govue'
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as ApiModule from './api'
 import type * as DocumentsModule from './documents'
@@ -203,47 +203,6 @@ describe('payment helpers', () => {
     expect(docs.paymentKind(paid)).toBe('payment')
     expect(docs.paymentKind(refund)).toBe('refund')
     expect(docs.paymentKind(reversal)).toBe('reversal')
-  })
-})
-
-describe('anySignal', () => {
-  it('aborts when any of the signals aborts, with the native any', () => {
-    const a = new AbortController()
-    const b = new AbortController()
-    const combined = docs.anySignal([a.signal, b.signal])
-
-    expect(combined.aborted).toBe(false)
-    b.abort()
-    expect(combined.aborted).toBe(true)
-  })
-
-  describe('without AbortSignal.any', () => {
-    const native = AbortSignal.any
-
-    beforeEach(() => {
-      Object.defineProperty(AbortSignal, 'any', { value: undefined, configurable: true })
-    })
-    afterEach(() => {
-      Object.defineProperty(AbortSignal, 'any', { value: native, configurable: true })
-    })
-
-    it('links the signals by hand', () => {
-      const a = new AbortController()
-      const b = new AbortController()
-      const combined = docs.anySignal([a.signal, b.signal])
-
-      expect(combined.aborted).toBe(false)
-      a.abort()
-      expect(combined.aborted).toBe(true)
-      expect(b.signal.aborted).toBe(false)
-    })
-
-    it('is aborted at once when one of the signals already is', () => {
-      const a = new AbortController()
-      a.abort()
-
-      expect(docs.anySignal([new AbortController().signal, a.signal]).aborted).toBe(true)
-    })
   })
 })
 

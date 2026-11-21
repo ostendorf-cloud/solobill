@@ -334,6 +334,10 @@ const EXACT_REASONS: Record<string, string> = {
   'at least one line is required': 'noLines',
   'the type of a draft never changes': 'typeFixed',
   'must be invoice or offer': 'invoiceOrOffer',
+  'must be invoice, correction or offer': 'typeInvalid',
+  'a Steuernummer, USt-IdNr or Kleinunternehmer-Identifikationsnummer is required':
+    'sellerIdRequired',
+  'unknown VAT regime': 'unknownRegime',
   'required when a line is tax exempt': 'taxNoteRequired',
   'from must not be after to': 'periodOrder',
   'must be empty for an offer': 'offerNoPeriod',

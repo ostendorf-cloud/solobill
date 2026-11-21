@@ -35,6 +35,7 @@
     "customer_address_postal_code": "Customer postal code",
     "customer_address_city": "Customer city",
     "customer_address_country_code": "Customer country",
+    "seller_default_vat_regime": "Seller default VAT regime",
     "seller_name": "Seller name",
     "seller_address_street": "Seller street",
     "seller_address_line2": "Seller address line 2",
@@ -63,7 +64,7 @@
     "titleEdit": "Edit {kind}",
     "leave": {
       "title": "Leave without saving?",
-      "message": "You have unsaved changes. If you leave now, they are lost.",
+      "message": "You have unsaved changes. If you leave now, they will be lost.",
       "confirm": "Leave without saving",
       "cancel": "Keep editing"
     },
@@ -271,6 +272,7 @@
     "confirm": "Issue permanently",
     "done": "Issued as {number}.",
     "toProfile": "Open the seller profile",
+    "changedDuringSave": "The draft changed while it was being saved. Save it again, then issue.",
     "blocked": {
       "calculating": "Issuing waits until the totals are calculated.",
       "incomplete": "Complete the lines first. Issuing needs calculated totals.",
@@ -334,6 +336,9 @@
     "regimeUnknown": "No VAT regime applies today. Choose one.",
     "cannotCalculate": "The lines cannot be calculated.",
     "typeFixed": "The type of a draft never changes.",
+    "typeInvalid": "Choose invoice, correction or offer.",
+    "sellerIdRequired": "The seller profile needs a tax number, a VAT ID or a Kleinunternehmer ID. Add one in the settings.",
+    "unknownRegime": "The default VAT regime of the seller profile is not known. Choose one in the settings.",
     "invoiceOrOffer": "Choose invoice or offer.",
     "taxNoteRequired": "A tax note is required when a line is tax exempt.",
     "invalidUtf8": "The text contains an invalid character.",

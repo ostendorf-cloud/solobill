@@ -1149,6 +1149,161 @@ describe('DocumentEditorView', () => {
     })
   })
 
+  describe('edits during a save', () => {
+    const description = () => screen.getByLabelText(/^Description \(1\)/)
+
+    /** deferredPut answers the PUT when the test says so. */
+    function deferredPut() {
+      const control: { answer: (doc: Doc) => void } = { answer: () => {} }
+      mockApi({
+        put: () =>
+          new Promise((resolve) => {
+            control.answer = resolve
+          }),
+      })
+      return control
+    }
+
+    it('blocks typing while the save is in flight', async () => {
+      const put = deferredPut()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(description(), ' one')
+
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+
+      expect(description()).toBeDisabled()
+      expect(document.querySelector('#document-form button[type="submit"]')).toBeDisabled()
+      put.answer(draftDoc())
+      await vi.waitFor(() => expect(description()).toBeEnabled())
+    })
+
+    it('does not mark an edit made during the save as saved: the leave guard still asks', async () => {
+      const put = deferredPut()
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(description(), ' one')
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+
+      // A script or an assistive tool still gets an input event through.
+      await fireEvent.update(description(), 'Consulting one MORE')
+      put.answer(draftDoc())
+      await vi.waitFor(() => expect(description()).toBeEnabled())
+      void router.push('/documents')
+
+      expect(await screen.findByText('Leave without saving?')).toBeVisible()
+      expect(router.currentRoute.value.name).toBe('document-edit')
+      expect(rec.puts[0]?.body.lines[0]?.description).toBe('Consulting one')
+    })
+
+    it('asks the browser to confirm a reload after such an edit', async () => {
+      const put = deferredPut()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(description(), ' one')
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+      await fireEvent.update(description(), 'Consulting one MORE')
+      put.answer(draftDoc())
+      await vi.waitFor(() => expect(description()).toBeEnabled())
+
+      await wait(30)
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+
+      expect(event.defaultPrevented).toBe(true)
+    })
+
+    it('blocks typing while the save before an issue is in flight and does not offer an issue with an edit made meanwhile', async () => {
+      const put = deferredPut()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(description(), ' one')
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Issue' })).toBeEnabled())
+
+      await user.click(screen.getByRole('button', { name: 'Issue' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+      expect(description()).toBeDisabled()
+      await fireEvent.update(description(), 'Consulting one MORE')
+      put.answer(draftDoc())
+
+      expect(await screen.findByText(/changed while it was being saved/)).toBeVisible()
+      await wait(30)
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(rec.posts.filter((p) => p.path.endsWith('/issue'))).toHaveLength(0)
+    })
+  })
+
+  describe('leaving without a question', () => {
+    it('does not ask when the session is gone', async () => {
+      mockApi({ put: () => Promise.reject(apiError(401, ErrorCode.unauthenticated)) })
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' one')
+
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+      await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+      expect(screen.queryByText('Leave without saving?')).toBeNull()
+    })
+
+    it('does not ask after the stale draft was discarded', async () => {
+      mockApi({
+        stored: draftDoc({ type: 'correction', corrects_document_id: 'd-0' }),
+        post: () =>
+          Promise.reject(apiError(409, 'correction_base_changed', { correction_base_seq: '2' })),
+      })
+      vi.mocked(apiClient.del).mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await clickIssue(user)
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', {
+          name: 'Issue permanently',
+        }),
+      )
+      const discard = await screen.findByRole('button', { name: 'Discard the old draft' })
+      // An unsaved edit makes the form dirty before the discard.
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' more')
+      await user.click(discard)
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard draft' }),
+      )
+
+      await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('documents'))
+      expect(screen.queryByText('Leave without saving?')).toBeNull()
+    })
+
+    it('asks again after a confirmed move that another guard cancelled', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' one')
+      router.beforeEach((to) => to.name !== 'settings')
+
+      void router.push('/settings')
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', {
+          name: 'Leave without saving',
+        }),
+      )
+      await wait(40)
+      expect(router.currentRoute.value.name).toBe('document-edit')
+
+      void router.push('/documents')
+      expect(await screen.findByText('Leave without saving?')).toBeVisible()
+    })
+  })
+
   describe('unsaved changes', () => {
     it('does not ask when nothing changed', async () => {
       mockApi()

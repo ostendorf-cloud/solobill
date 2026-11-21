@@ -68,7 +68,13 @@ const yearOptions = computed(() => [
 // The view going away ends every read it has started, and an answer or a 401
 // that still arrives changes nothing and sends nobody anywhere.
 const unmounted = new AbortController()
-onBeforeUnmount(() => unmounted.abort())
+// The single customer reads of the newest list; a newer list cancels them.
+let lookups = new AbortController()
+const failedNames = new Set<string>()
+onBeforeUnmount(() => {
+  unmounted.abort()
+  lookups.abort()
+})
 
 async function toLogin(): Promise<void> {
   clearSession()
@@ -81,6 +87,9 @@ let latestRequest = 0
 
 async function load(showSkeleton = true): Promise<void> {
   const request = ++latestRequest
+  lookups.abort()
+  lookups = new AbortController()
+  const lookupSignal = lookups.signal
   if (showSkeleton) {
     loading.value = true
   }
@@ -121,7 +130,11 @@ async function load(showSkeleton = true): Promise<void> {
     if (names.status === 'fulfilled') {
       customers.value = new Map(names.value.customers.map((c) => [c.id, c.name] as const))
     }
-    void loadDeletedNames(stale)
+    // When the list of active customers itself failed, every customer would
+    // look missing: the rows keep their dashes and nothing is read per id.
+    if (names.status === 'fulfilled') {
+      void loadDeletedNames(stale, lookupSignal)
+    }
   } finally {
     if (!stale()) {
       loading.value = false
@@ -137,9 +150,9 @@ const MAX_NAME_LOOKUPS = 20
  *  GET /customers does not answer for, which are the deleted ones:
  *  GET /customers/{id} still does. Each id is read once, a failure leaves a
  *  dash, and a newer list or an unmount drops the answers. */
-async function loadDeletedNames(stale: () => boolean): Promise<void> {
+async function loadDeletedNames(stale: () => boolean, signal: AbortSignal): Promise<void> {
   const ids = [...new Set(documents.value.map((d) => d.customer_id))]
-    .filter((id) => !customers.value.has(id) && !deletedNames.value.has(id))
+    .filter((id) => !customers.value.has(id) && !deletedNames.value.has(id) && !failedNames.has(id))
     .slice(0, MAX_NAME_LOOKUPS)
   if (ids.length === 0) {
     return
@@ -147,7 +160,7 @@ async function loadDeletedNames(stale: () => boolean): Promise<void> {
   const answers = await Promise.allSettled(
     ids.map((id) =>
       apiClient.get<CustomerName>(`/customers/${encodeURIComponent(id)}`, {
-        signal: unmounted.signal,
+        signal,
       }),
     ),
   )
@@ -161,6 +174,8 @@ async function loadDeletedNames(stale: () => boolean): Promise<void> {
         await toLogin()
         return
       }
+      // A failed id is not read again for as long as the view lives.
+      failedNames.add(ids[i] ?? '')
     } else if (typeof answer.value.name === 'string') {
       found.set(ids[i] ?? '', answer.value.name)
     }

@@ -38,7 +38,6 @@ import {
 } from '../documentForm'
 import {
   LINE_UNITS,
-  anySignal,
   berlinToday,
   createDocument,
   formatPermyriad,
@@ -116,9 +115,22 @@ onBeforeUnmount(() => {
   clearTimeout(previewTimer)
 })
 
+// The leave guard asks before the editor is left with unsaved changes. A move
+// the owner confirmed, a lost session or a discarded draft needs no question.
+let leaveConfirmed = false
+
+async function goWithoutPrompt(to: Parameters<typeof router.push>[0]): Promise<void> {
+  leaveConfirmed = true
+  try {
+    await router.push(to)
+  } finally {
+    leaveConfirmed = false
+  }
+}
+
 async function toLogin(): Promise<void> {
   clearSession()
-  await router.push({ name: 'login' })
+  await goWithoutPrompt({ name: 'login' })
 }
 
 function takeSnapshot(): void {
@@ -323,7 +335,8 @@ async function runPreview(): Promise<void> {
   const stale = (): boolean => request !== previewRequest || unmounted.signal.aborted
   try {
     const answer = await previewDocument(body, {
-      signal: anySignal([unmounted.signal, controller.signal]),
+      // govue's client needs AbortSignal.any itself (and AbortSignal.timeout).
+      signal: AbortSignal.any([unmounted.signal, controller.signal]),
     })
     if (stale()) {
       return
@@ -472,6 +485,9 @@ async function save(): Promise<boolean> {
     void focusFirstInvalid()
     return false
   }
+  // What is marked saved is what the body was built from, not whatever the
+  // form says when the answer arrives.
+  const sent = JSON.stringify(form)
   saving.value = true
   try {
     const saved = doc.value ? await updateDocument(doc.value.id, body) : await createDocument(body)
@@ -480,7 +496,7 @@ async function save(): Promise<boolean> {
     }
     const created = doc.value === null
     doc.value = saved
-    takeSnapshot()
+    snapshot.value = sent
     notify({ kind: 'success', title: t('documents.editor.saved') })
     if (created) {
       await router.replace({ name: 'document-edit', params: { id: saved.id } })
@@ -515,8 +531,22 @@ async function saveForIssue(): Promise<Doc | null> {
   }
   // The answer of the save carries the totals the server stored: the
   // confirmation shows those, not the ones of the preview.
-  return (await save()) ? doc.value : null
+  if (!(await save())) {
+    return null
+  }
+  if (dirty.value) {
+    // Something was typed while the save was in flight: the stored draft is
+    // not the one on screen, so it is not offered for issuing.
+    saveError.value = t('documents.issue.changedDuringSave')
+    return null
+  }
+  return doc.value
 }
+
+// Typing is blocked while a save or the save before an issue is in flight, so
+// nothing is edited that the request did not carry.
+const issuePreparing = ref(false)
+const locked = computed(() => saving.value || issuePreparing.value)
 
 /** issueBlockedHint says why Issue is off: it waits for settled totals. */
 const issueBlockedHint = computed(() => {
@@ -557,7 +587,6 @@ const liveSummary = computed(() => {
 
 const leaveOpen = ref(false)
 let leaveTarget: string | null = null
-let leaveConfirmed = false
 
 onBeforeRouteLeave((to) => {
   if (leaveConfirmed || !dirty.value || step.value !== 'form') {
@@ -569,10 +598,9 @@ onBeforeRouteLeave((to) => {
 })
 
 function confirmLeave(): void {
-  leaveConfirmed = true
   leaveOpen.value = false
   if (leaveTarget) {
-    void router.push(leaveTarget)
+    void goWithoutPrompt(leaveTarget)
   }
 }
 
@@ -667,335 +695,337 @@ const regimeModel = computed({
         {{ t('documents.editor.correctionNote') }}
       </p>
 
-      <form id="document-form" class="flex flex-col gap-6" novalidate @submit.prevent="save">
-        <fieldset class="flex flex-col gap-4">
-          <legend class="mb-2 text-xl font-semibold text-text">
-            {{ t('documents.editor.header') }}
-          </legend>
-
-          <GovueField
-            :label="t('documents.fields.customer')"
-            :error="shown.customer"
-            required
-            :disabled="headerLocked"
-          >
-            <GovueSelect
-              v-model="form.customerId"
-              :options="customerOptions"
-              :placeholder="t('documents.editor.customerPlaceholder')"
-            />
-          </GovueField>
-
-          <div class="grid gap-4 sm:grid-cols-2">
-            <GovueField
-              :label="t('documents.fields.regime')"
-              :error="shown.regime"
-              :disabled="headerLocked"
-            >
-              <GovueSelect
-                v-model="regimeModel"
-                :options="regimeOptions"
-                :placeholder="t('documents.editor.regimePlaceholder')"
-              />
-            </GovueField>
-            <GovueField
-              :label="t('documents.fields.language')"
-              :error="shown.language"
-              :disabled="headerLocked"
-            >
-              <GovueSelect v-model="form.language" :options="languageOptions" />
-            </GovueField>
-          </div>
-
-          <div v-if="!isOffer" class="grid gap-4 sm:grid-cols-2">
-            <GovueField
-              :label="t('documents.editor.serviceDate')"
-              :hint="t('documents.editor.dateHint')"
-              :error="shown.serviceDate"
-            >
-              <GovueInput v-model="form.serviceDate" autocomplete="off" />
-            </GovueField>
-            <GovueField
-              :label="t('documents.editor.serviceDateTo')"
-              :hint="t('documents.editor.serviceDateToHint')"
-              :error="shown.serviceDateTo"
-            >
-              <GovueInput v-model="form.serviceDateTo" autocomplete="off" />
-            </GovueField>
-          </div>
-
-          <div class="grid gap-4 sm:grid-cols-2">
-            <GovueField
-              v-if="!isOffer"
-              :label="t('documents.fields.dueDate')"
-              :hint="t('documents.editor.dateHint')"
-              :error="shown.dueDate"
-            >
-              <GovueInput v-model="form.dueDate" autocomplete="off" />
-            </GovueField>
-            <GovueField
-              v-else
-              :label="t('documents.fields.validUntil')"
-              :hint="t('documents.editor.dateHint')"
-              :error="shown.validUntil"
-            >
-              <GovueInput v-model="form.validUntil" autocomplete="off" />
-            </GovueField>
-            <GovueField
-              :label="t('documents.fields.customerReference')"
-              :error="shown.customerReference"
-            >
-              <GovueInput v-model="form.customerReference" autocomplete="off" />
-            </GovueField>
-          </div>
-        </fieldset>
-
-        <section class="flex flex-col gap-4" aria-labelledby="lines-heading">
-          <h2 id="lines-heading" class="text-xl font-semibold text-text">
-            {{ t('documents.editor.lines') }}
-          </h2>
-          <p v-if="shown.lines" role="alert" class="text-danger-text">{{ shown.lines }}</p>
-
-          <fieldset
-            v-for="(line, i) in form.lines"
-            :key="line.key"
-            class="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4"
-          >
-            <legend class="px-1 font-medium text-text">
-              {{ t('documents.editor.lineLegend', { n: i + 1 }) }}
+      <form id="document-form" novalidate :aria-busy="locked" @submit.prevent="save">
+        <fieldset :disabled="locked" class="flex min-w-0 flex-col gap-6 border-0 p-0">
+          <fieldset class="flex flex-col gap-4">
+            <legend class="mb-2 text-xl font-semibold text-text">
+              {{ t('documents.editor.header') }}
             </legend>
 
             <GovueField
-              :label="`${t('documents.editor.catalogue')} (${i + 1})`"
-              :error="shown[`line.${i}.catalogue`]"
+              :label="t('documents.fields.customer')"
+              :error="shown.customer"
+              required
+              :disabled="headerLocked"
             >
               <GovueSelect
-                :model-value="line.catalogueItemId ?? ADHOC"
-                :options="catalogueOptions(line)"
-                @update:model-value="pickCatalogue(line, $event)"
+                v-model="form.customerId"
+                :options="customerOptions"
+                :placeholder="t('documents.editor.customerPlaceholder')"
               />
             </GovueField>
-            <GovueField
-              :label="`${t('documents.lines.description')} (${i + 1})`"
-              :error="shown[`line.${i}.description`]"
-              required
-            >
-              <GovueTextarea v-model="line.description" :rows="2" />
-            </GovueField>
 
-            <div class="grid gap-4 sm:grid-cols-4">
+            <div class="grid gap-4 sm:grid-cols-2">
               <GovueField
-                :label="`${t('documents.lines.quantity')} (${i + 1})`"
-                :hint="t('documents.editor.quantityHint')"
-                :error="shown[`line.${i}.quantity`]"
-                required
+                :label="t('documents.fields.regime')"
+                :error="shown.regime"
+                :disabled="headerLocked"
               >
-                <GovueInput v-model="line.quantity" inputmode="decimal" autocomplete="off" />
-              </GovueField>
-              <GovueField
-                :label="`${t('documents.lines.unit')} (${i + 1})`"
-                :error="shown[`line.${i}.unit`]"
-              >
-                <GovueSelect v-model="line.unit" :options="unitOptions" />
-              </GovueField>
-              <GovueField
-                :label="`${t('documents.lines.unitPrice')} (${i + 1})`"
-                :hint="t('documents.editor.unitPriceHint')"
-                :error="shown[`line.${i}.unitPrice`]"
-                required
-              >
-                <GovueInput v-model="line.unitPrice" inputmode="decimal" autocomplete="off" />
-              </GovueField>
-              <GovueField
-                :label="`${t('documents.editor.vatRatePercent')} (${i + 1})`"
-                :hint="
-                  form.regime === 'kleinunternehmer'
-                    ? t('documents.editor.vatRateFixed')
-                    : t('documents.editor.vatRateHint')
-                "
-                :error="shown[`line.${i}.vatRate`]"
-                :required="form.regime !== 'kleinunternehmer'"
-              >
-                <GovueInput
-                  v-model="line.vatRate"
-                  inputmode="decimal"
-                  autocomplete="off"
-                  :readonly="form.regime === 'kleinunternehmer'"
+                <GovueSelect
+                  v-model="regimeModel"
+                  :options="regimeOptions"
+                  :placeholder="t('documents.editor.regimePlaceholder')"
                 />
+              </GovueField>
+              <GovueField
+                :label="t('documents.fields.language')"
+                :error="shown.language"
+                :disabled="headerLocked"
+              >
+                <GovueSelect v-model="form.language" :options="languageOptions" />
+              </GovueField>
+            </div>
+
+            <div v-if="!isOffer" class="grid gap-4 sm:grid-cols-2">
+              <GovueField
+                :label="t('documents.editor.serviceDate')"
+                :hint="t('documents.editor.dateHint')"
+                :error="shown.serviceDate"
+              >
+                <GovueInput v-model="form.serviceDate" autocomplete="off" />
+              </GovueField>
+              <GovueField
+                :label="t('documents.editor.serviceDateTo')"
+                :hint="t('documents.editor.serviceDateToHint')"
+                :error="shown.serviceDateTo"
+              >
+                <GovueInput v-model="form.serviceDateTo" autocomplete="off" />
               </GovueField>
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2">
               <GovueField
-                :label="`${t('documents.editor.lineDiscount')} (${i + 1})`"
-                :error="line.discountMode === 'none' ? shown[`line.${i}.discount`] : undefined"
+                v-if="!isOffer"
+                :label="t('documents.fields.dueDate')"
+                :hint="t('documents.editor.dateHint')"
+                :error="shown.dueDate"
               >
-                <GovueSelect
-                  :model-value="line.discountMode"
-                  :options="discountOptions"
-                  @update:model-value="setDiscountMode(line, $event)"
-                />
+                <GovueInput v-model="form.dueDate" autocomplete="off" />
               </GovueField>
               <GovueField
-                v-if="line.discountMode !== 'none'"
-                :label="`${t(`documents.editor.discountValue.${line.discountMode}`)} (${i + 1})`"
-                :error="shown[`line.${i}.discount`]"
+                v-else
+                :label="t('documents.fields.validUntil')"
+                :hint="t('documents.editor.dateHint')"
+                :error="shown.validUntil"
               >
-                <GovueInput v-model="line.discountValue" inputmode="decimal" autocomplete="off" />
+                <GovueInput v-model="form.validUntil" autocomplete="off" />
               </GovueField>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <p v-if="lineNet(i)" class="text-text-muted" :data-testid="`line-net-${i}`">
-                {{ t('documents.editor.lineNet') }}: {{ lineNet(i) }}
-              </p>
-              <span v-else />
-              <GovueButton
-                variant="quiet"
-                :aria-label="t('documents.editor.removeLine', { n: i + 1 })"
-                @click="removeLine(i)"
+              <GovueField
+                :label="t('documents.fields.customerReference')"
+                :error="shown.customerReference"
               >
-                {{ t('documents.editor.remove') }}
-              </GovueButton>
+                <GovueInput v-model="form.customerReference" autocomplete="off" />
+              </GovueField>
             </div>
           </fieldset>
 
-          <div>
-            <GovueButton variant="secondary" @click="addLine">
-              {{ t('documents.editor.addLine') }}
-            </GovueButton>
-          </div>
-        </section>
+          <section class="flex flex-col gap-4" aria-labelledby="lines-heading">
+            <h2 id="lines-heading" class="text-xl font-semibold text-text">
+              {{ t('documents.editor.lines') }}
+            </h2>
+            <p v-if="shown.lines" role="alert" class="text-danger-text">{{ shown.lines }}</p>
 
-        <fieldset class="flex flex-col gap-4">
-          <legend class="mb-2 text-xl font-semibold text-text">
-            {{ t('documents.editor.discountTitle') }}
-          </legend>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <GovueField
-              :label="t('documents.editor.documentDiscount')"
-              :error="form.discountMode === 'none' ? shown.discount : undefined"
+            <fieldset
+              v-for="(line, i) in form.lines"
+              :key="line.key"
+              class="flex flex-col gap-4 rounded-lg border border-border bg-surface p-4"
             >
-              <GovueSelect
-                :model-value="form.discountMode"
-                :options="discountOptions"
-                @update:model-value="setDiscountMode(form, $event)"
-              />
-            </GovueField>
-            <GovueField
-              v-if="form.discountMode !== 'none'"
-              :label="t(`documents.editor.discountValue.${form.discountMode}`)"
-              :error="shown.discount"
-            >
-              <GovueInput v-model="form.discountValue" inputmode="decimal" autocomplete="off" />
-            </GovueField>
-          </div>
-        </fieldset>
+              <legend class="px-1 font-medium text-text">
+                {{ t('documents.editor.lineLegend', { n: i + 1 }) }}
+              </legend>
 
-        <fieldset class="flex flex-col gap-4">
-          <legend class="mb-2 text-xl font-semibold text-text">
-            {{ t('documents.editor.texts') }}
-          </legend>
-          <GovueField :label="t('documents.fields.paymentTerms')" :error="shown.paymentTerms">
-            <GovueTextarea v-model="form.paymentTerms" :rows="3" />
-          </GovueField>
-          <GovueField :label="t('documents.fields.notes')" :error="shown.notes">
-            <GovueTextarea v-model="form.notes" :rows="3" />
-          </GovueField>
-        </fieldset>
+              <GovueField
+                :label="`${t('documents.editor.catalogue')} (${i + 1})`"
+                :error="shown[`line.${i}.catalogue`]"
+              >
+                <GovueSelect
+                  :model-value="line.catalogueItemId ?? ADHOC"
+                  :options="catalogueOptions(line)"
+                  @update:model-value="pickCatalogue(line, $event)"
+                />
+              </GovueField>
+              <GovueField
+                :label="`${t('documents.lines.description')} (${i + 1})`"
+                :error="shown[`line.${i}.description`]"
+                required
+              >
+                <GovueTextarea v-model="line.description" :rows="2" />
+              </GovueField>
 
-        <section
-          class="flex flex-col gap-2 rounded-lg border border-border bg-bg-subtle p-4"
-          aria-labelledby="preview-heading"
-        >
-          <h2 id="preview-heading" class="text-xl font-semibold text-text">
-            {{ t('documents.editor.totals') }}
-          </h2>
-          <!-- The settled total or the failure is announced once; the steps of
-               a preview cycle are not. -->
-          <p class="sr-only" role="status" aria-live="polite" data-testid="live-summary">
-            {{ liveSummary }}
-          </p>
-          <div data-testid="preview">
-            <p v-if="previewState === 'calculating'" class="text-text-muted">
-              {{ t('documents.editor.calculating') }}
-            </p>
-            <p v-else-if="previewState === 'incomplete'" class="text-text-muted">
-              {{ t('documents.editor.previewIncomplete') }}
-            </p>
-            <p v-else-if="previewState === 'invalid'" class="text-danger-text">
-              {{ t('documents.editor.previewInvalid') }}
-            </p>
-            <div v-else-if="previewState === 'failed'" class="flex flex-col items-start gap-2">
-              <p class="text-danger-text">{{ t('documents.editor.previewFailed') }}</p>
-              <GovueButton variant="secondary" @click="runPreview">
-                {{ t('documents.editor.previewRetry') }}
+              <div class="grid gap-4 sm:grid-cols-4">
+                <GovueField
+                  :label="`${t('documents.lines.quantity')} (${i + 1})`"
+                  :hint="t('documents.editor.quantityHint')"
+                  :error="shown[`line.${i}.quantity`]"
+                  required
+                >
+                  <GovueInput v-model="line.quantity" inputmode="decimal" autocomplete="off" />
+                </GovueField>
+                <GovueField
+                  :label="`${t('documents.lines.unit')} (${i + 1})`"
+                  :error="shown[`line.${i}.unit`]"
+                >
+                  <GovueSelect v-model="line.unit" :options="unitOptions" />
+                </GovueField>
+                <GovueField
+                  :label="`${t('documents.lines.unitPrice')} (${i + 1})`"
+                  :hint="t('documents.editor.unitPriceHint')"
+                  :error="shown[`line.${i}.unitPrice`]"
+                  required
+                >
+                  <GovueInput v-model="line.unitPrice" inputmode="decimal" autocomplete="off" />
+                </GovueField>
+                <GovueField
+                  :label="`${t('documents.editor.vatRatePercent')} (${i + 1})`"
+                  :hint="
+                    form.regime === 'kleinunternehmer'
+                      ? t('documents.editor.vatRateFixed')
+                      : t('documents.editor.vatRateHint')
+                  "
+                  :error="shown[`line.${i}.vatRate`]"
+                  :required="form.regime !== 'kleinunternehmer'"
+                >
+                  <GovueInput
+                    v-model="line.vatRate"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    :readonly="form.regime === 'kleinunternehmer'"
+                  />
+                </GovueField>
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <GovueField
+                  :label="`${t('documents.editor.lineDiscount')} (${i + 1})`"
+                  :error="line.discountMode === 'none' ? shown[`line.${i}.discount`] : undefined"
+                >
+                  <GovueSelect
+                    :model-value="line.discountMode"
+                    :options="discountOptions"
+                    @update:model-value="setDiscountMode(line, $event)"
+                  />
+                </GovueField>
+                <GovueField
+                  v-if="line.discountMode !== 'none'"
+                  :label="`${t(`documents.editor.discountValue.${line.discountMode}`)} (${i + 1})`"
+                  :error="shown[`line.${i}.discount`]"
+                >
+                  <GovueInput v-model="line.discountValue" inputmode="decimal" autocomplete="off" />
+                </GovueField>
+              </div>
+
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <p v-if="lineNet(i)" class="text-text-muted" :data-testid="`line-net-${i}`">
+                  {{ t('documents.editor.lineNet') }}: {{ lineNet(i) }}
+                </p>
+                <span v-else />
+                <GovueButton
+                  variant="quiet"
+                  :aria-label="t('documents.editor.removeLine', { n: i + 1 })"
+                  @click="removeLine(i)"
+                >
+                  {{ t('documents.editor.remove') }}
+                </GovueButton>
+              </div>
+            </fieldset>
+
+            <div>
+              <GovueButton variant="secondary" @click="addLine">
+                {{ t('documents.editor.addLine') }}
               </GovueButton>
             </div>
-            <dl
-              v-if="preview && (previewState === 'ok' || previewState === 'calculating')"
-              class="grid max-w-md grid-cols-[1fr_auto] gap-x-6 gap-y-1"
-              data-testid="preview-totals"
-            >
-              <dt>{{ t('documents.totals.net') }}</dt>
-              <dd class="text-right">{{ money(preview.totals.net_total_cents) }}</dd>
-              <template v-if="preview.totals.document_discount_cents > 0">
-                <dt>{{ t('documents.editor.documentDiscount') }}</dt>
-                <dd class="text-right">−{{ money(preview.totals.document_discount_cents) }}</dd>
-                <dt>{{ t('documents.totals.netAfterDiscount') }}</dt>
-                <dd class="text-right">
-                  {{ money(preview.totals.net_after_document_discount_cents) }}
-                </dd>
-              </template>
-              <template v-if="form.regime !== 'kleinunternehmer'">
-                <template v-for="bucket in preview.totals.vat" :key="bucket.rate_permyriad">
-                  <dt>
-                    {{
-                      t('documents.totals.vatAt', {
-                        rate: formatPermyriad(bucket.rate_permyriad, locale),
-                      })
-                    }}
-                  </dt>
-                  <dd class="text-right">{{ money(bucket.vat_cents) }}</dd>
+          </section>
+
+          <fieldset class="flex flex-col gap-4">
+            <legend class="mb-2 text-xl font-semibold text-text">
+              {{ t('documents.editor.discountTitle') }}
+            </legend>
+            <div class="grid gap-4 sm:grid-cols-2">
+              <GovueField
+                :label="t('documents.editor.documentDiscount')"
+                :error="form.discountMode === 'none' ? shown.discount : undefined"
+              >
+                <GovueSelect
+                  :model-value="form.discountMode"
+                  :options="discountOptions"
+                  @update:model-value="setDiscountMode(form, $event)"
+                />
+              </GovueField>
+              <GovueField
+                v-if="form.discountMode !== 'none'"
+                :label="t(`documents.editor.discountValue.${form.discountMode}`)"
+                :error="shown.discount"
+              >
+                <GovueInput v-model="form.discountValue" inputmode="decimal" autocomplete="off" />
+              </GovueField>
+            </div>
+          </fieldset>
+
+          <fieldset class="flex flex-col gap-4">
+            <legend class="mb-2 text-xl font-semibold text-text">
+              {{ t('documents.editor.texts') }}
+            </legend>
+            <GovueField :label="t('documents.fields.paymentTerms')" :error="shown.paymentTerms">
+              <GovueTextarea v-model="form.paymentTerms" :rows="3" />
+            </GovueField>
+            <GovueField :label="t('documents.fields.notes')" :error="shown.notes">
+              <GovueTextarea v-model="form.notes" :rows="3" />
+            </GovueField>
+          </fieldset>
+
+          <section
+            class="flex flex-col gap-2 rounded-lg border border-border bg-bg-subtle p-4"
+            aria-labelledby="preview-heading"
+          >
+            <h2 id="preview-heading" class="text-xl font-semibold text-text">
+              {{ t('documents.editor.totals') }}
+            </h2>
+            <!-- The settled total or the failure is announced once; the steps of
+               a preview cycle are not. -->
+            <p class="sr-only" role="status" aria-live="polite" data-testid="live-summary">
+              {{ liveSummary }}
+            </p>
+            <div data-testid="preview">
+              <p v-if="previewState === 'calculating'" class="text-text-muted">
+                {{ t('documents.editor.calculating') }}
+              </p>
+              <p v-else-if="previewState === 'incomplete'" class="text-text-muted">
+                {{ t('documents.editor.previewIncomplete') }}
+              </p>
+              <p v-else-if="previewState === 'invalid'" class="text-danger-text">
+                {{ t('documents.editor.previewInvalid') }}
+              </p>
+              <div v-else-if="previewState === 'failed'" class="flex flex-col items-start gap-2">
+                <p class="text-danger-text">{{ t('documents.editor.previewFailed') }}</p>
+                <GovueButton variant="secondary" @click="runPreview">
+                  {{ t('documents.editor.previewRetry') }}
+                </GovueButton>
+              </div>
+              <dl
+                v-if="preview && (previewState === 'ok' || previewState === 'calculating')"
+                class="grid max-w-md grid-cols-[1fr_auto] gap-x-6 gap-y-1"
+                data-testid="preview-totals"
+              >
+                <dt>{{ t('documents.totals.net') }}</dt>
+                <dd class="text-right">{{ money(preview.totals.net_total_cents) }}</dd>
+                <template v-if="preview.totals.document_discount_cents > 0">
+                  <dt>{{ t('documents.editor.documentDiscount') }}</dt>
+                  <dd class="text-right">−{{ money(preview.totals.document_discount_cents) }}</dd>
+                  <dt>{{ t('documents.totals.netAfterDiscount') }}</dt>
+                  <dd class="text-right">
+                    {{ money(preview.totals.net_after_document_discount_cents) }}
+                  </dd>
                 </template>
-              </template>
-              <dt class="font-semibold">{{ t('documents.totals.grand') }}</dt>
-              <dd class="text-right font-semibold">
-                {{ money(preview.totals.grand_total_cents) }}
-              </dd>
-            </dl>
-          </div>
-          <p v-if="form.regime === 'kleinunternehmer'" class="text-sm text-text-muted">
-            {{ t('documents.totals.kleinunternehmer') }}
+                <template v-if="form.regime !== 'kleinunternehmer'">
+                  <template v-for="bucket in preview.totals.vat" :key="bucket.rate_permyriad">
+                    <dt>
+                      {{
+                        t('documents.totals.vatAt', {
+                          rate: formatPermyriad(bucket.rate_permyriad, locale),
+                        })
+                      }}
+                    </dt>
+                    <dd class="text-right">{{ money(bucket.vat_cents) }}</dd>
+                  </template>
+                </template>
+                <dt class="font-semibold">{{ t('documents.totals.grand') }}</dt>
+                <dd class="text-right font-semibold">
+                  {{ money(preview.totals.grand_total_cents) }}
+                </dd>
+              </dl>
+            </div>
+            <p v-if="form.regime === 'kleinunternehmer'" class="text-sm text-text-muted">
+              {{ t('documents.totals.kleinunternehmer') }}
+            </p>
+          </section>
+
+          <p v-if="saveError" role="alert" class="text-danger-text">{{ saveError }}</p>
+          <p v-if="sessionFailed && !sessionReady" role="alert" class="text-danger-text">
+            {{ t('common.errors.session') }}
           </p>
-        </section>
 
-        <p v-if="saveError" role="alert" class="text-danger-text">{{ saveError }}</p>
-        <p v-if="sessionFailed && !sessionReady" role="alert" class="text-danger-text">
-          {{ t('common.errors.session') }}
-        </p>
-
-        <div class="flex flex-wrap gap-3">
-          <GovueButton
-            type="submit"
-            variant="primary"
-            :disabled="!sessionReady"
-            :loading="saving"
-            :loading-label="t('documents.editor.saving')"
-          >
-            {{ t('documents.editor.save') }}
-          </GovueButton>
-          <GovueButton
-            v-if="doc"
-            variant="secondary"
-            @click="router.push({ name: 'document-detail', params: { id: doc.id } })"
-          >
-            {{ t('documents.editor.toDocument') }}
-          </GovueButton>
-          <GovueButton variant="secondary" @click="router.push({ name: 'documents' })">
-            {{ t('documents.editor.toList') }}
-          </GovueButton>
-        </div>
+          <div class="flex flex-wrap gap-3">
+            <GovueButton
+              type="submit"
+              variant="primary"
+              :disabled="!sessionReady"
+              :loading="saving"
+              :loading-label="t('documents.editor.saving')"
+            >
+              {{ t('documents.editor.save') }}
+            </GovueButton>
+            <GovueButton
+              v-if="doc"
+              variant="secondary"
+              @click="router.push({ name: 'document-detail', params: { id: doc.id } })"
+            >
+              {{ t('documents.editor.toDocument') }}
+            </GovueButton>
+            <GovueButton variant="secondary" @click="router.push({ name: 'documents' })">
+              {{ t('documents.editor.toList') }}
+            </GovueButton>
+          </div>
+        </fieldset>
       </form>
 
       <section v-if="doc" class="flex flex-col gap-2" aria-labelledby="issue-heading">
@@ -1014,7 +1044,8 @@ const regimeModel = computed({
           @fields="onIssueFields"
           @issued="onIssued"
           @new-correction="openNewCorrection"
-          @discarded="router.push({ name: 'documents' })"
+          @preparing="issuePreparing = $event"
+          @discarded="goWithoutPrompt({ name: 'documents' })"
         />
       </section>
     </template>

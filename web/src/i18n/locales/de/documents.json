@@ -35,6 +35,7 @@
     "customer_address_postal_code": "Postleitzahl des Kunden",
     "customer_address_city": "Ort des Kunden",
     "customer_address_country_code": "Land des Kunden",
+    "seller_default_vat_regime": "Standard-Umsatzsteuerregelung des Verkäufers",
     "seller_name": "Name des Verkäufers",
     "seller_address_street": "Straße des Verkäufers",
     "seller_address_line2": "Adresszeile 2 des Verkäufers",
@@ -247,7 +248,7 @@
     "correctHint": "Startet einen Korrekturentwurf mit den Positionen des gültigen Belegs.",
     "correctOwnerOnly": "Nur die Inhaberin oder der Inhaber korrigiert eine Rechnung.",
     "pdf": "PDF herunterladen",
-    "pdfNote": "Der PDF-Download ist noch nicht verfügbar. Er folgt mit dem PDF-Renderer."
+    "pdfNote": "Der PDF-Download ist noch nicht verfügbar. Er folgt mit der PDF-Erzeugung."
   },
   "discard": {
     "action": "Entwurf verwerfen",
@@ -271,6 +272,7 @@
     "confirm": "Endgültig ausstellen",
     "done": "Als {number} ausgestellt.",
     "toProfile": "Das Verkäuferprofil öffnen",
+    "changedDuringSave": "Der Entwurf hat sich beim Speichern geändert. Speichere ihn erneut und stelle dann aus.",
     "blocked": {
       "calculating": "Das Ausstellen wartet, bis die Summen berechnet sind.",
       "incomplete": "Vervollständige zuerst die Positionen. Zum Ausstellen braucht es berechnete Summen.",
@@ -287,7 +289,7 @@
     "newCorrection": "Neue Korrektur aus dem gültigen Beleg starten",
     "recreating": "Wird ausgeführt",
     "errors": {
-      "renderer": "Das Ausstellen ist noch nicht verfügbar. Der PDF-Renderer, der einen Beleg vor dem Einfrieren prüft, ist nicht eingerichtet. Dein Entwurf ist gespeichert. Versuche es später erneut.",
+      "renderer": "Das Ausstellen ist noch nicht verfügbar. Die PDF-Erzeugung, die einen Beleg vor dem Einfrieren prüft, ist nicht eingerichtet. Dein Entwurf ist gespeichert. Versuche es später erneut.",
       "rendererCorrection": "Korrigieren ist noch nicht verfügbar. Der Beleg kann erst korrigiert werden, wenn die PDF-Erzeugung eingerichtet ist.",
       "regimeMismatch": "Die Umsatzsteuerregelung des Entwurfs weicht von der heute geltenden Regelung ab ({regime}). Ändere die Umsatzsteuerregelung des Entwurfs und stelle erneut aus.",
       "regimeUnknown": "unbekannt",
@@ -334,6 +336,9 @@
     "regimeUnknown": "Heute gilt keine Umsatzsteuerregelung. Wähle eine aus.",
     "cannotCalculate": "Die Positionen können nicht berechnet werden.",
     "typeFixed": "Die Art eines Entwurfs ändert sich nie.",
+    "typeInvalid": "Wähle Rechnung, Korrektur oder Angebot.",
+    "sellerIdRequired": "Im Verkäuferprofil fehlt die Steuernummer, die USt-IdNr oder die Kleinunternehmer-Identifikationsnummer. Trage eine in den Einstellungen ein.",
+    "unknownRegime": "Die Standard-Umsatzsteuerregelung des Verkäuferprofils ist unbekannt. Wähle in den Einstellungen eine aus.",
     "invoiceOrOffer": "Wähle Rechnung oder Angebot.",
     "taxNoteRequired": "Wenn eine Position steuerfrei ist, wird ein Steuerhinweis benötigt.",
     "invalidUtf8": "Der Text enthält ein ungültiges Zeichen.",

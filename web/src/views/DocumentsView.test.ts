@@ -308,6 +308,65 @@ describe('DocumentsView', () => {
       expect(within(rows[1]).getByText('–')).toBeVisible()
     })
 
+    it('does not read a failed id again when the list reloads', async () => {
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.resolve({ customers: [] })
+        }
+        if (path.startsWith('/customers/')) {
+          return Promise.reject(apiError(404, ErrorCode.notFound))
+        }
+        return Promise.resolve({ documents: [gone(1)] })
+      })
+      renderView()
+      await vi.waitFor(() => expect(singleReads()).toHaveLength(1))
+
+      await choose('State', 'Issued')
+      await vi.waitFor(() => expect(listQueries().at(-1)).toMatchObject({ state: 'issued' }))
+      await new Promise((resolve) => setTimeout(resolve, 40))
+
+      expect(singleReads()).toEqual(['/customers/c-gone-1'])
+    })
+
+    it('reads no single customer when the list of active customers itself failed', async () => {
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.reject(apiError(500, ErrorCode.internal))
+        }
+        if (path.startsWith('/customers/')) {
+          return Promise.resolve({ id: path, name: 'Should not be read' })
+        }
+        return Promise.resolve({ documents: [gone(1), gone(2)] })
+      })
+      renderView()
+
+      const table = await screen.findByRole('table', { name: 'List of documents' })
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      expect(singleReads()).toHaveLength(0)
+      expect(within(table).getAllByText('–')).toHaveLength(2)
+    })
+
+    it('cancels the single reads when a newer list load starts', async () => {
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.resolve({ customers: [] })
+        }
+        if (path.startsWith('/customers/')) {
+          return new Promise(() => {})
+        }
+        return Promise.resolve({ documents: [gone(1)] })
+      })
+      renderView()
+      await vi.waitFor(() => expect(singleReads()).toHaveLength(1))
+      const call = vi.mocked(apiClient.get).mock.calls.find(([p]) => p === '/customers/c-gone-1')
+      const signal = (call?.[1] as { signal: AbortSignal }).signal
+      expect(signal.aborted).toBe(false)
+
+      await choose('State', 'Issued')
+
+      await vi.waitFor(() => expect(signal.aborted).toBe(true))
+    })
+
     it('sends a 401 of a single read to the login', async () => {
       vi.mocked(apiClient.get).mockImplementation((path: string) => {
         if (path === '/customers') {

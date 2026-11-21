@@ -55,6 +55,8 @@ const emit = defineEmits<{
   fields: [mapped: MappedErrors]
   newCorrection: [id: string]
   discarded: []
+  /** The save before the confirmation is in flight (true) or over (false). */
+  preparing: [busy: boolean]
 }>()
 
 const i18n = useI18n()
@@ -87,7 +89,10 @@ async function toLogin(): Promise<void> {
 
 const profileLink = computed(() => router.hasRoute('settings'))
 
+const notice = ref('')
+
 function reset(): void {
+  notice.value = ''
   failure.value = null
   problems.value = []
   emit('fields', { fields: {}, general: [] })
@@ -107,12 +112,20 @@ async function ask(): Promise<void> {
   confirmTotals.value = props.totals ?? null
   if (props.beforeIssue) {
     preparing.value = true
+    emit('preparing', true)
     const saved = await props.beforeIssue()
     if (unmounted.signal.aborted) {
       return
     }
     preparing.value = false
+    emit('preparing', false)
     if (!saved) {
+      return
+    }
+    if (props.blockedHint) {
+      // The form changed while the draft was saved: what was saved is not
+      // what is on screen, and its totals are not settled.
+      notice.value = t('documents.issue.changedDuringSave')
       return
     }
     confirmTotals.value = saved.totals
@@ -297,6 +310,10 @@ const message = computed(() => {
       </div>
     </template>
     <p v-else class="text-sm text-text-muted">{{ t('documents.issue.ownerOnly') }}</p>
+
+    <p v-if="notice" role="alert" data-testid="issue-notice" class="text-danger-text">
+      {{ notice }}
+    </p>
 
     <div v-if="failure" role="alert" class="flex flex-col gap-2 text-danger-text">
       <p data-testid="issue-error">{{ message }}</p>
