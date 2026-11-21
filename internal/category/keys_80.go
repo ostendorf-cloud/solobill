@@ -1,10 +1,15 @@
 package category
 
 // Keys owned by the EÜR report, issue #80. Documented in
-// docs/concepts/euer-keys/80.md. The contract registers the two Zeile 65
-// keys here already; which of Kz 162 and 172 is the deductible one is
-// open and #80 resolves it in that file. #80 also adds Zeile 13 here if
-// it decides the line is chosen rather than derived.
+// docs/concepts/euer-keys/80.md, which also records how the open points
+// of the contract are handled:
+//   - Zeile 65: which of Kz 162 and 172 is the deductible one is not
+//     verified. The mapping (internal/euer/mapping) shows no Kennzahl for
+//     either key until the owner checks the form.
+//   - Zeile 13: no key. Every Kleinunternehmer receipt goes to Zeile 12,
+//     an open question for the owner.
+//   - Kz 111: stays on Zeile 12 as keys_67.go registered it, marked
+//     unverified in the mapping.
 
 const (
 	// HomeOfficeNonDeductible is Zeile 65, nicht abziehbar: häusliches
