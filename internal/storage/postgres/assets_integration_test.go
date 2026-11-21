@@ -13,9 +13,6 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
-// sqlStateCheckViolation is a CHECK constraint refusing a row.
-const sqlStateCheckViolation = "23514"
-
 func assetDate(t *testing.T, s string) time.Time {
 	t.Helper()
 
@@ -50,8 +47,25 @@ func TestAssetRepository(t *testing.T) {
 		return env.store.WithTenant(ctx, env.a.ID, fn)
 	}
 
+	// A real booked expense with is_asset set: assets_expense_fkey needs
+	// it to exist in the same tenant.
+	var expenseID uuid.UUID
+	if err := inA(func(ctx context.Context) error {
+		e := testExpense(env.a.ID, "2026-03-10")
+		e.IsAsset = true
+		draft, err := env.store.Expenses().Create(ctx, e)
+		if err != nil {
+			return err
+		}
+		booked, err := env.store.Expenses().Book(ctx, draft.ID, time.Now())
+		expenseID = booked.ID
+
+		return err
+	}); err != nil {
+		t.Fatalf("create the source expense: %v", err)
+	}
+
 	var created storage.Asset
-	expenseID := uuid.New()
 	if err := inA(func(ctx context.Context) error {
 		a := laptopAsset(t, env.a, "2026-03-10")
 		a.ExpenseID = &expenseID
@@ -275,6 +289,28 @@ func TestAssetsDatabaseRefusals(t *testing.T) {
 	t.Run("insert for another tenant", func(t *testing.T) {
 		err := scoped(t, env.a.ID, insert, env.b.ID, "2026-03-10", 149900, "linear", 36, nil, nil, nil)
 		requireSQLState(t, err, sqlStateInsufficientPrivilege, "insert with tenant B's id in tenant A's scope")
+	})
+
+	const insertWithExpense = `INSERT INTO assets (tenant_id, name, acquired_on, cost_basis_cents, method, asset_group, useful_life_months, expense_id)
+		VALUES ($1, 'Item', '2026-03-10', 149900, 'linear', 'office_equipment', 36, $2)`
+
+	t.Run("expense that does not exist", func(t *testing.T) {
+		err := scoped(t, env.a.ID, insertWithExpense, env.a.ID, uuid.New())
+		requireSQLState(t, err, sqlStateForeignKeyViolation, "expense_id naming no expense")
+	})
+
+	t.Run("expense of another tenant", func(t *testing.T) {
+		var foreign storage.Expense
+		if err := env.store.WithTenant(ctx, env.b.ID, func(ctx context.Context) error {
+			var err error
+			foreign, err = env.store.Expenses().Create(ctx, testExpense(env.b.ID, "2026-03-10"))
+
+			return err
+		}); err != nil {
+			t.Fatalf("create tenant B's expense: %v", err)
+		}
+		err := scoped(t, env.a.ID, insertWithExpense, env.a.ID, foreign.ID)
+		requireSQLState(t, err, sqlStateForeignKeyViolation, "expense_id naming tenant B's expense")
 	})
 
 	t.Run("no DELETE grant", func(t *testing.T) {

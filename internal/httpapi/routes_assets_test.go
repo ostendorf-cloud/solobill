@@ -479,24 +479,72 @@ func TestAssetsDisposal(t *testing.T) {
 	}
 }
 
-func TestAssetsExpenseLinkWithoutExpenseRepository(t *testing.T) {
+// TestAssetsSeeTheirOwnExpenseFake proves the hook order this file relies
+// on: fake_expenses_test.go's hook sets Repositories.Expenses for every
+// test, and the extras hook here runs after it. With extras, the asset
+// routes must read the asset test's fake: an expense that exists only
+// there is accepted. Without extras, they read the expense feature's
+// own fake, which does not know it.
+func TestAssetsSeeTheirOwnExpenseFake(t *testing.T) {
 	t.Parallel()
 
-	// No extras: Repositories.Expenses is what the other hooks set. On
-	// main before issue #76 that is nil, and every expense_id is refused.
-	f := newAssetFixture(t)
-	if f.app.repos.Expenses != nil {
-		t.Skip("an expense repository is wired for every test")
+	paid := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
+	only := storage.Expense{
+		ID: uuid.New(), State: storage.BookingStateBooked, PaidOn: &paid,
+		GrossCents: 80000, NetCents: 80000, IsAsset: true,
 	}
 	body := laptopBody()
-	body["expense_id"] = uuid.NewString()
-	rec := f.do(t, f.owner, http.MethodPost, assetsPath, body)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	body["expense_id"] = only.ID.String()
+	body["method"], body["cost_basis_cents"] = "gwg", 80000
+	delete(body, "useful_life_months")
+
+	seedRegime := func(t *testing.T, f profileFixture) {
+		t.Helper()
+
+		periods, ok := f.app.repos.VATRegimePeriods.(*fakeVATRegimes)
+		if !ok {
+			t.Fatalf("VATRegimePeriods is %T", f.app.repos.VATRegimePeriods)
+		}
+		if _, err := periods.Create(t.Context(), storage.VATRegimePeriod{
+			TenantID: f.tenant.ID, ValidFrom: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Regime: storage.VATRegimeKleinunternehmer,
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, ok := profileErrorDetails(t, rec)["expense_id"]; !ok {
-		t.Errorf("details = %v, want expense_id", profileErrorDetails(t, rec))
-	}
+
+	t.Run("with extras", func(t *testing.T) {
+		t.Parallel()
+
+		mine := &assetExpenses{expenses: map[uuid.UUID]storage.Expense{only.ID: only}}
+		f := newAssetFixtureWith(t, assetExtras{expenses: mine})
+		if got, ok := f.app.repos.Expenses.(*assetExpenses); !ok || got != mine {
+			t.Fatalf("Repositories.Expenses is %T, want this test's assetExpenses", f.app.repos.Expenses)
+		}
+		seedRegime(t, f)
+		if rec := f.do(t, f.owner, http.MethodPost, assetsPath, body); rec.Code != http.StatusCreated {
+			t.Errorf("status = %d, want 201, body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("without extras", func(t *testing.T) {
+		t.Parallel()
+
+		f := newAssetFixture(t)
+		if f.app.repos.Expenses == nil {
+			t.Fatal("no expense repository: the expense feature's hook did not run")
+		}
+		if _, mine := f.app.repos.Expenses.(*assetExpenses); mine {
+			t.Fatal("the asset fake leaked into a test that did not ask for it")
+		}
+		seedRegime(t, f)
+		rec := f.do(t, f.owner, http.MethodPost, assetsPath, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+		}
+		if got := profileErrorDetails(t, rec)["expense_id"]; got != "no such expense" {
+			t.Errorf("details expense_id = %v, want no such expense", got)
+		}
+	})
 }
 
 func TestAssetsExpenseLink(t *testing.T) {

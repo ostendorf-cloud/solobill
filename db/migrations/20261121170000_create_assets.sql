@@ -31,13 +31,12 @@ CREATE TABLE assets (
     -- "group" is a reserved word in SQL.
     asset_group text NOT NULL,
     useful_life_months integer,
-    -- The booked expense with is_asset set the asset came from. A plain
-    -- column without a foreign key: the expenses table is created by
-    -- issue #76 in a lower range that has not merged yet. A follow up
-    -- migration in this range adds the composite foreign key
-    -- (tenant_id, expense_id) REFERENCES expenses (tenant_id, id) once it
-    -- has. Until then the application refuses an expense_id while no
-    -- expense repository is wired, so no row can name a missing expense.
+    -- The booked expense with is_asset set the asset came from, NULL for
+    -- an asset entered without one. assets_expense_fkey keeps it inside
+    -- the tenant. That it is booked, has is_asset set and is not a storno
+    -- row is the application's check (checkAssetExpense in
+    -- internal/httpapi/routes_assets.go): a CHECK cannot read another
+    -- table.
     expense_id uuid,
     -- An imported asset's book value at 1 January of the opening year.
     opening_book_value_cents bigint,
@@ -79,7 +78,12 @@ CREATE TABLE assets (
     -- Composite foreign key target, see
     -- 20261113150832_create_customers.sql for why a single column
     -- reference would be a cross tenant existence oracle.
-    CONSTRAINT assets_tenant_id_id_unique UNIQUE (tenant_id, id)
+    CONSTRAINT assets_tenant_id_id_unique UNIQUE (tenant_id, id),
+    -- Composite, so an asset cannot name an expense of another tenant.
+    -- expenses_tenant_id_id_unique is the target. A booked expense is
+    -- never deleted (its trigger), so the reference cannot dangle.
+    CONSTRAINT assets_expense_fkey FOREIGN KEY (tenant_id, expense_id)
+        REFERENCES expenses (tenant_id, id)
 );
 
 -- One expense becomes at most one asset, or its cost would be

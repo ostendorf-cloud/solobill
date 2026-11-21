@@ -30,9 +30,6 @@ func registerAssets(mux *http.ServeMux, route routeFunc, a *app) {
 const (
 	assetDateLayout = "2006-01-02"
 	maxAssetName    = 200
-	// codeVATRegimeMissing is docs/api.md's 400 when no VAT regime period
-	// covers a date.
-	codeVATRegimeMissing = "vat_regime_missing"
 )
 
 // assetJSON is the asset of docs/api.md.
@@ -224,9 +221,10 @@ func (a *app) assetsReady(w http.ResponseWriter, r *http.Request, owner bool) (c
 // gross price for a Kleinunternehmer on the day it was paid
 // (afa.CostBasis, not verified with a Steuerberater).
 //
-// While the expense repository of issue #76 is not wired, every
-// expense_id is refused: the assets table has no foreign key to expenses
-// yet, so nothing else would catch a wrong id.
+// The table's composite foreign key only proves the expense exists in
+// the tenant. Without an expense repository (a deployment that wires
+// none) every expense_id is refused, since none of these checks could
+// run.
 func (a *app) checkAssetExpense(ctx context.Context, asset storage.Asset) error {
 	if asset.ExpenseID == nil {
 		return nil
