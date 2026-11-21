@@ -148,7 +148,7 @@ function open(d: Doc): void {
 }
 
 function create(kind: 'invoice' | 'offer'): void {
-  void router.push({ name: 'document-new', query: { type: kind } })
+  void router.push({ name: 'document-edit', query: { type: kind } })
 }
 </script>
 

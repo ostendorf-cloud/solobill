@@ -93,7 +93,7 @@ function renderView(locale: 'en' | 'de' = 'en') {
     history: createMemoryHistory(),
     routes: [
       { path: '/documents', name: 'documents', component: DocumentsView },
-      { path: '/documents/new', name: 'document-new', component: { template: '<div />' } },
+      { path: '/documents/edit/:id?', name: 'document-edit', component: { template: '<div />' } },
       { path: '/documents/:id', name: 'document-detail', component: { template: '<div />' } },
       { path: '/login', name: 'login', component: { template: '<div />' } },
     ],
@@ -244,7 +244,7 @@ describe('DocumentsView', () => {
 
     await router.push({ name: 'documents' })
     await user.click(await screen.findByRole('button', { name: 'New offer' }))
-    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('document-new'))
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('document-edit'))
     expect(router.currentRoute.value.query.type).toBe('offer')
   })
 
