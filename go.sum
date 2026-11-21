@@ -51,6 +51,8 @@ github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/ostendorf-cloud/govue v0.5.0 h1:ltWvAAIfdi+hi7s/v8VKfMAv8H3dYkqr3IN5sY2k0hQ=
 github.com/ostendorf-cloud/govue v0.5.0/go.mod h1:/q2eOzkRJ75Kq8hVMMN+HdX6/e75cGj3S5AL8LJLIFk=
+github.com/ostendorf-cloud/govue v0.6.0 h1:TlrT05DtJavvuBRmQavazvpHAsKfepo6i9BrCVZ8KHc=
+github.com/ostendorf-cloud/govue v0.6.0/go.mod h1:/q2eOzkRJ75Kq8hVMMN+HdX6/e75cGj3S5AL8LJLIFk=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
 github.com/philhofer/fwd v1.2.0/go.mod h1:RqIHx9QI14HlwKwm98g9Re5prTQ6LdeRQn+gXJFxsJM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
