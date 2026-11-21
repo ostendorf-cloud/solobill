@@ -1,0 +1,19 @@
+-- Table grants of the application role for
+-- 20261121180000_create_euer_assignments.sql (issue #80). See
+-- 20261113160002_base.sql for how these files are applied.
+--
+-- euer_assignments is append-only. The complete list of table privileges
+-- and what the role gets of each:
+--   SELECT      granted: the assignment list and the EÜR report read rows.
+--   INSERT      granted: a decision and every changed decision are new
+--               rows.
+--   UPDATE      not granted: a decision is never changed in place. A new
+--               row names the old one in supersedes_id.
+--   DELETE      not granted: a decision is never removed.
+--   TRUNCATE    not granted: the history is never emptied.
+--   REFERENCES  not granted: no table of the role's own references it.
+--   TRIGGER     not granted: the role creates no trigger.
+--   MAINTAIN    not granted: VACUUM, ANALYZE and REINDEX run as the owner.
+-- euer_assignments_block_mutation and euer_assignments_block_truncate
+-- refuse the same changes for every other role.
+GRANT SELECT, INSERT ON euer_assignments TO solobill_app;
