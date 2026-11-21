@@ -345,6 +345,18 @@ export function reasonKey(reason: string): string {
   return EXACT_REASONS[reason] ?? PATTERN_REASONS.find(([re]) => re.test(reason))?.[1] ?? 'invalid'
 }
 
+/** documentProblemList lists every reason of an answer as a path and a
+ *  translated text, for a view that has no fields to mark. */
+export function documentProblemList(
+  details: Record<string, string>,
+  t: Translate,
+): GeneralProblem[] {
+  return Object.entries(details).map(([path, reason]) => ({
+    path,
+    text: t(`documents.reasons.${reasonKey(reason)}`),
+  }))
+}
+
 export interface GeneralProblem {
   path: string
   text: string

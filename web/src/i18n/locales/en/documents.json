@@ -1,5 +1,168 @@
 {
+  "nav": "Documents",
   "cancel": "Cancel",
+  "draftMark": "Draft",
+  "draftName": {
+    "invoice": "Draft invoice",
+    "correction": "Draft correction",
+    "offer": "Draft offer"
+  },
+  "imported": "Imported",
+  "type": {
+    "invoice": "Invoice",
+    "correction": "Correction",
+    "offer": "Offer"
+  },
+  "state": {
+    "draft": "Draft",
+    "issued": "Issued"
+  },
+  "chain": {
+    "effective": "Effective",
+    "superseded": "Superseded"
+  },
+  "language": {
+    "de": "German",
+    "en": "English"
+  },
+  "regime": {
+    "standard": "Standard (with VAT)",
+    "kleinunternehmer": "Kleinunternehmer (no VAT)"
+  },
+  "units": {
+    "piece": "Piece",
+    "hour": "Hour",
+    "day": "Day"
+  },
+  "columns": {
+    "number": "Number",
+    "type": "Type",
+    "customer": "Customer",
+    "state": "State",
+    "chain": "Chain",
+    "total": "Total",
+    "issuedOn": "Issued on",
+    "actions": "Actions"
+  },
+  "filters": {
+    "label": "Filter",
+    "type": "Type",
+    "state": "State",
+    "year": "Year",
+    "allTypes": "All types",
+    "allStates": "All states",
+    "allYears": "All years"
+  },
+  "list": {
+    "title": "Documents",
+    "lead": "Your offers, invoices and corrections.",
+    "newInvoice": "New invoice",
+    "newOffer": "New offer",
+    "loading": "Loading the documents.",
+    "loadError": "The documents could not be loaded.",
+    "loadErrorTitle": "Loading failed",
+    "emptyTitle": "No documents",
+    "emptyDescription": "No document matches the filter. Create an invoice or an offer to start.",
+    "tableCaption": "List of documents",
+    "open": "Open",
+    "openFor": "Open {name} for {customer}"
+  },
+  "fields": {
+    "customer": "Customer",
+    "language": "Language of the document",
+    "regime": "VAT regime",
+    "servicePeriod": "Service period",
+    "dueDate": "Due date",
+    "validUntil": "Valid until",
+    "customerReference": "Customer reference",
+    "paymentTerms": "Payment terms",
+    "notes": "Notes"
+  },
+  "lines": {
+    "description": "Description",
+    "quantity": "Quantity",
+    "unit": "Unit",
+    "unitPrice": "Unit price",
+    "vatRate": "VAT rate",
+    "discount": "Discount"
+  },
+  "totals": {
+    "title": "Totals",
+    "net": "Net total",
+    "discount": "Document discount {discount}",
+    "netAfterDiscount": "Net after discount",
+    "vatAt": "VAT {rate} %",
+    "grand": "Total",
+    "kleinunternehmer": "Kleinunternehmer regime: no VAT is charged."
+  },
+  "detail": {
+    "title": "Document",
+    "lead": "Read only. An issued document is never changed.",
+    "loading": "Loading the document.",
+    "loadError": "The document could not be loaded.",
+    "loadErrorTitle": "Loading failed",
+    "notFoundTitle": "Document not found",
+    "notFound": "This document does not exist.",
+    "backToList": "Back to the documents",
+    "draftNote": "This is a draft. It has no number yet and can still be changed.",
+    "supersededNote": "A newer correction replaced this document. It stays as it was issued.",
+    "openEffective": "Open the effective document",
+    "customerDeleted": "deleted",
+    "corrects": "Corrects",
+    "openOriginal": "Open the original invoice",
+    "sourceOffer": "Created from",
+    "openOffer": "Open the offer",
+    "lines": "Lines",
+    "linesCaption": "Lines of the document",
+    "actions": "Actions",
+    "edit": "Edit draft",
+    "working": "Working",
+    "toInvoice": "Create invoice from offer",
+    "correct": "Correct invoice",
+    "correctHint": "Starts a correction draft with the lines of the effective document.",
+    "correctOwnerOnly": "Only the owner corrects an invoice.",
+    "pdf": "Download PDF",
+    "pdfNote": "The PDF download is not available yet. It follows with the PDF renderer."
+  },
+  "discard": {
+    "action": "Discard draft",
+    "title": "Discard this draft?",
+    "message": "The draft is deleted. This cannot be undone.",
+    "confirm": "Discard draft",
+    "done": "The draft was discarded.",
+    "conflict": "The document was issued in the meantime and cannot be deleted.",
+    "error": "The draft could not be discarded."
+  },
+  "issue": {
+    "action": "Issue",
+    "preparing": "Saving",
+    "ownerOnly": "Only the owner issues documents.",
+    "confirmTitle": {
+      "invoice": "Issue this invoice?",
+      "correction": "Issue this correction?",
+      "offer": "Issue this offer?"
+    },
+    "confirmMessage": "Issuing assigns the number and freezes the document. An issued document can never be changed or deleted again. A mistake is fixed with a correction.",
+    "confirm": "Issue permanently",
+    "done": "Issued as {number}.",
+    "toProfile": "Open the seller profile",
+    "newCorrection": "Start a new correction from the effective document",
+    "recreating": "Working",
+    "errors": {
+      "renderer": "Issuing is not available yet. The PDF renderer that checks a document before it is frozen is not set up. Your draft is saved. Try again later.",
+      "regimeMismatch": "The VAT regime of the draft differs from the regime that applies today ({regime}). Change the VAT regime of the draft and issue again.",
+      "regimeUnknown": "unknown",
+      "regimeMissing": "No VAT regime period covers today. Add one in the settings first.",
+      "baseChanged": "A newer correction became effective in the meantime (correction {seq}). This draft stays as it is. Start a new correction from the effective document.",
+      "regimeChanged": "This correction would need the VAT regime of the original invoice, but another regime applies today. A correction across a change of regime is not supported yet.",
+      "conflict": "The document was issued already, or its number exists already. Reload the page.",
+      "forbidden": "You do not have permission for this.",
+      "fields": "The document is incomplete. Check the listed fields.",
+      "transport": "The server cannot be reached. Check the connection.",
+      "server": "The server had an error. Try again later.",
+      "other": "That did not work. Try again."
+    }
+  },
   "reasons": {
     "required": "This field is required.",
     "invalidDate": "Enter a date such as 2026-11-30.",

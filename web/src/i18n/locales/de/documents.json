@@ -1,5 +1,168 @@
 {
+  "nav": "Belege",
   "cancel": "Abbrechen",
+  "draftMark": "Entwurf",
+  "draftName": {
+    "invoice": "Rechnungsentwurf",
+    "correction": "Korrekturentwurf",
+    "offer": "Angebotsentwurf"
+  },
+  "imported": "Importiert",
+  "type": {
+    "invoice": "Rechnung",
+    "correction": "Korrektur",
+    "offer": "Angebot"
+  },
+  "state": {
+    "draft": "Entwurf",
+    "issued": "Ausgestellt"
+  },
+  "chain": {
+    "effective": "Gültig",
+    "superseded": "Ersetzt"
+  },
+  "language": {
+    "de": "Deutsch",
+    "en": "Englisch"
+  },
+  "regime": {
+    "standard": "Regelbesteuerung (mit USt)",
+    "kleinunternehmer": "Kleinunternehmer (ohne USt)"
+  },
+  "units": {
+    "piece": "Stück",
+    "hour": "Stunde",
+    "day": "Tag"
+  },
+  "columns": {
+    "number": "Nummer",
+    "type": "Art",
+    "customer": "Kunde",
+    "state": "Status",
+    "chain": "Kette",
+    "total": "Summe",
+    "issuedOn": "Ausgestellt am",
+    "actions": "Aktionen"
+  },
+  "filters": {
+    "label": "Filter",
+    "type": "Art",
+    "state": "Status",
+    "year": "Jahr",
+    "allTypes": "Alle Arten",
+    "allStates": "Alle Status",
+    "allYears": "Alle Jahre"
+  },
+  "list": {
+    "title": "Belege",
+    "lead": "Deine Angebote, Rechnungen und Korrekturen.",
+    "newInvoice": "Neue Rechnung",
+    "newOffer": "Neues Angebot",
+    "loading": "Die Belege werden geladen.",
+    "loadError": "Die Belege konnten nicht geladen werden.",
+    "loadErrorTitle": "Laden fehlgeschlagen",
+    "emptyTitle": "Keine Belege",
+    "emptyDescription": "Kein Beleg passt zum Filter. Lege eine Rechnung oder ein Angebot an, um zu beginnen.",
+    "tableCaption": "Liste der Belege",
+    "open": "Öffnen",
+    "openFor": "{name} für {customer} öffnen"
+  },
+  "fields": {
+    "customer": "Kunde",
+    "language": "Sprache des Belegs",
+    "regime": "Umsatzsteuerregelung",
+    "servicePeriod": "Leistungszeitraum",
+    "dueDate": "Fällig am",
+    "validUntil": "Gültig bis",
+    "customerReference": "Kundenreferenz",
+    "paymentTerms": "Zahlungsbedingungen",
+    "notes": "Hinweise"
+  },
+  "lines": {
+    "description": "Beschreibung",
+    "quantity": "Menge",
+    "unit": "Einheit",
+    "unitPrice": "Einzelpreis",
+    "vatRate": "USt-Satz",
+    "discount": "Rabatt"
+  },
+  "totals": {
+    "title": "Summen",
+    "net": "Nettosumme",
+    "discount": "Belegrabatt {discount}",
+    "netAfterDiscount": "Netto nach Rabatt",
+    "vatAt": "USt {rate} %",
+    "grand": "Gesamtsumme",
+    "kleinunternehmer": "Kleinunternehmerregelung: Es wird keine Umsatzsteuer berechnet."
+  },
+  "detail": {
+    "title": "Beleg",
+    "lead": "Nur lesbar. Ein ausgestellter Beleg wird nie geändert.",
+    "loading": "Der Beleg wird geladen.",
+    "loadError": "Der Beleg konnte nicht geladen werden.",
+    "loadErrorTitle": "Laden fehlgeschlagen",
+    "notFoundTitle": "Beleg nicht gefunden",
+    "notFound": "Diesen Beleg gibt es nicht.",
+    "backToList": "Zurück zu den Belegen",
+    "draftNote": "Das ist ein Entwurf. Er hat noch keine Nummer und kann noch geändert werden.",
+    "supersededNote": "Eine neuere Korrektur hat diesen Beleg ersetzt. Er bleibt so, wie er ausgestellt wurde.",
+    "openEffective": "Den gültigen Beleg öffnen",
+    "customerDeleted": "gelöscht",
+    "corrects": "Korrigiert",
+    "openOriginal": "Die ursprüngliche Rechnung öffnen",
+    "sourceOffer": "Erstellt aus",
+    "openOffer": "Das Angebot öffnen",
+    "lines": "Positionen",
+    "linesCaption": "Positionen des Belegs",
+    "actions": "Aktionen",
+    "edit": "Entwurf bearbeiten",
+    "working": "Wird ausgeführt",
+    "toInvoice": "Rechnung aus Angebot erstellen",
+    "correct": "Rechnung korrigieren",
+    "correctHint": "Startet einen Korrekturentwurf mit den Positionen des gültigen Belegs.",
+    "correctOwnerOnly": "Nur die Inhaberin oder der Inhaber korrigiert eine Rechnung.",
+    "pdf": "PDF herunterladen",
+    "pdfNote": "Der PDF-Download ist noch nicht verfügbar. Er folgt mit dem PDF-Renderer."
+  },
+  "discard": {
+    "action": "Entwurf verwerfen",
+    "title": "Diesen Entwurf verwerfen?",
+    "message": "Der Entwurf wird gelöscht. Das lässt sich nicht rückgängig machen.",
+    "confirm": "Entwurf verwerfen",
+    "done": "Der Entwurf wurde verworfen.",
+    "conflict": "Der Beleg wurde inzwischen ausgestellt und kann nicht gelöscht werden.",
+    "error": "Der Entwurf konnte nicht verworfen werden."
+  },
+  "issue": {
+    "action": "Ausstellen",
+    "preparing": "Wird gespeichert",
+    "ownerOnly": "Nur die Inhaberin oder der Inhaber stellt Belege aus.",
+    "confirmTitle": {
+      "invoice": "Diese Rechnung ausstellen?",
+      "correction": "Diese Korrektur ausstellen?",
+      "offer": "Dieses Angebot ausstellen?"
+    },
+    "confirmMessage": "Beim Ausstellen wird die Nummer vergeben und der Beleg eingefroren. Ein ausgestellter Beleg kann nie wieder geändert oder gelöscht werden. Ein Fehler wird mit einer Korrektur behoben.",
+    "confirm": "Endgültig ausstellen",
+    "done": "Als {number} ausgestellt.",
+    "toProfile": "Das Verkäuferprofil öffnen",
+    "newCorrection": "Neue Korrektur aus dem gültigen Beleg starten",
+    "recreating": "Wird ausgeführt",
+    "errors": {
+      "renderer": "Das Ausstellen ist noch nicht verfügbar. Der PDF-Renderer, der einen Beleg vor dem Einfrieren prüft, ist nicht eingerichtet. Dein Entwurf ist gespeichert. Versuche es später erneut.",
+      "regimeMismatch": "Die Umsatzsteuerregelung des Entwurfs weicht von der heute geltenden Regelung ab ({regime}). Ändere die Umsatzsteuerregelung des Entwurfs und stelle erneut aus.",
+      "regimeUnknown": "unbekannt",
+      "regimeMissing": "Für heute gilt keine Umsatzsteuerregelung. Lege zuerst in den Einstellungen eine an.",
+      "baseChanged": "Inzwischen wurde eine neuere Korrektur gültig (Korrektur {seq}). Dieser Entwurf bleibt unverändert. Starte eine neue Korrektur aus dem gültigen Beleg.",
+      "regimeChanged": "Diese Korrektur bräuchte die Umsatzsteuerregelung der ursprünglichen Rechnung, heute gilt aber eine andere. Eine Korrektur über einen Regelwechsel hinweg wird noch nicht unterstützt.",
+      "conflict": "Der Beleg ist schon ausgestellt, oder seine Nummer existiert schon. Lade die Seite neu.",
+      "forbidden": "Dafür fehlt dir die Berechtigung.",
+      "fields": "Der Beleg ist unvollständig. Prüfe die aufgeführten Felder.",
+      "transport": "Der Server ist nicht erreichbar. Prüfe die Verbindung.",
+      "server": "Der Server hatte einen Fehler. Versuche es später erneut.",
+      "other": "Das hat nicht geklappt. Versuche es erneut."
+    }
+  },
   "reasons": {
     "required": "Dieses Feld ist erforderlich.",
     "invalidDate": "Gib ein Datum wie 2026-11-30 ein.",
