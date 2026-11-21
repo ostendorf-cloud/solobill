@@ -74,6 +74,18 @@ type Document struct {
 	IssuedAt                 pgtype.Timestamptz
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
+	OriginalNumber           pgtype.Text
+	SourceOfferID            pgtype.UUID
+	Language                 string
+	ValidUntil               pgtype.Date
+	ServiceDateTo            pgtype.Date
+	PaymentTerms             pgtype.Text
+	Notes                    pgtype.Text
+	CustomerReference        pgtype.Text
+	CorrectionSeq            pgtype.Int4
+	DisplayNumber            pgtype.Text
+	CorrectionBaseID         pgtype.UUID
+	CorrectionBaseSeq        pgtype.Int4
 }
 
 type DocumentLine struct {

@@ -16,13 +16,17 @@ const createDocument = `-- name: CreateDocument :one
 
 INSERT INTO documents (
     tenant_id, type, customer_id, corrects_document_id, vat_regime,
-    service_date, due_date, discount_percent_permyriad, discount_amount_cents
+    service_date, due_date, discount_percent_permyriad, discount_amount_cents,
+    source_offer_id, language, valid_until, service_date_to, payment_terms, notes,
+    customer_reference, correction_base_id, correction_base_seq
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 RETURNING id, tenant_id, type, state, customer_id, corrects_document_id, vat_regime,
     service_date, due_date, discount_percent_permyriad, discount_amount_cents,
     number, number_year, imported, frozen_payload, frozen_payload_sha256, issued_at,
-    created_at, updated_at
+    created_at, updated_at, original_number, source_offer_id, language, valid_until,
+    service_date_to, payment_terms, notes, customer_reference, correction_seq,
+    display_number, correction_base_id, correction_base_seq
 `
 
 type CreateDocumentParams struct {
@@ -35,6 +39,15 @@ type CreateDocumentParams struct {
 	DueDate                  pgtype.Date
 	DiscountPercentPermyriad pgtype.Int4
 	DiscountAmountCents      pgtype.Int8
+	SourceOfferID            pgtype.UUID
+	Language                 string
+	ValidUntil               pgtype.Date
+	ServiceDateTo            pgtype.Date
+	PaymentTerms             pgtype.Text
+	Notes                    pgtype.Text
+	CustomerReference        pgtype.Text
+	CorrectionBaseID         pgtype.UUID
+	CorrectionBaseSeq        pgtype.Int4
 }
 
 // Same reasoning as customers.sql and catalogue_items.sql: tenant
@@ -54,6 +67,9 @@ type CreateDocumentParams struct {
 // against a draft in practice, because nothing in this package ever
 // calls either on a row it does not already know is a draft, read back
 // moments earlier in the same WithTenant scope.
+//
+// Every query that returns a document names all of its columns in table
+// order, so sqlc maps the row to sqlcgen.Document.
 func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error) {
 	row := q.db.QueryRow(ctx, createDocument,
 		arg.TenantID,
@@ -65,6 +81,15 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		arg.DueDate,
 		arg.DiscountPercentPermyriad,
 		arg.DiscountAmountCents,
+		arg.SourceOfferID,
+		arg.Language,
+		arg.ValidUntil,
+		arg.ServiceDateTo,
+		arg.PaymentTerms,
+		arg.Notes,
+		arg.CustomerReference,
+		arg.CorrectionBaseID,
+		arg.CorrectionBaseSeq,
 	)
 	var i Document
 	err := row.Scan(
@@ -87,6 +112,18 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.IssuedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginalNumber,
+		&i.SourceOfferID,
+		&i.Language,
+		&i.ValidUntil,
+		&i.ServiceDateTo,
+		&i.PaymentTerms,
+		&i.Notes,
+		&i.CustomerReference,
+		&i.CorrectionSeq,
+		&i.DisplayNumber,
+		&i.CorrectionBaseID,
+		&i.CorrectionBaseSeq,
 	)
 	return i, err
 }
@@ -117,7 +154,9 @@ const getDocumentByID = `-- name: GetDocumentByID :one
 SELECT id, tenant_id, type, state, customer_id, corrects_document_id, vat_regime,
     service_date, due_date, discount_percent_permyriad, discount_amount_cents,
     number, number_year, imported, frozen_payload, frozen_payload_sha256, issued_at,
-    created_at, updated_at
+    created_at, updated_at, original_number, source_offer_id, language, valid_until,
+    service_date_to, payment_terms, notes, customer_reference, correction_seq,
+    display_number, correction_base_id, correction_base_seq
 FROM documents
 WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 `
@@ -145,6 +184,18 @@ func (q *Queries) GetDocumentByID(ctx context.Context, id uuid.UUID) (Document, 
 		&i.IssuedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginalNumber,
+		&i.SourceOfferID,
+		&i.Language,
+		&i.ValidUntil,
+		&i.ServiceDateTo,
+		&i.PaymentTerms,
+		&i.Notes,
+		&i.CustomerReference,
+		&i.CorrectionSeq,
+		&i.DisplayNumber,
+		&i.CorrectionBaseID,
+		&i.CorrectionBaseSeq,
 	)
 	return i, err
 }
@@ -157,15 +208,19 @@ SET state = 'issued',
     issued_at = $4,
     frozen_payload = $5,
     frozen_payload_sha256 = $6,
+    display_number = $7,
+    correction_seq = $8,
     updated_at = now()
 WHERE id = $1
     AND state = 'draft'
-    AND type = $7
+    AND type = $9
     AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 RETURNING id, tenant_id, type, state, customer_id, corrects_document_id, vat_regime,
     service_date, due_date, discount_percent_permyriad, discount_amount_cents,
     number, number_year, imported, frozen_payload, frozen_payload_sha256, issued_at,
-    created_at, updated_at
+    created_at, updated_at, original_number, source_offer_id, language, valid_until,
+    service_date_to, payment_terms, notes, customer_reference, correction_seq,
+    display_number, correction_base_id, correction_base_seq
 `
 
 type IssueDocumentParams struct {
@@ -175,42 +230,33 @@ type IssueDocumentParams struct {
 	IssuedAt            pgtype.Timestamptz
 	FrozenPayload       []byte
 	FrozenPayloadSha256 pgtype.Text
+	DisplayNumber       pgtype.Text
+	CorrectionSeq       pgtype.Int4
 	Type                string
 }
 
 // IssueDocument is the one statement that ever moves a document from
-// draft to issued: it writes the allocated number together with
-// number_year, issued_at, the frozen payload and its hash in the same
-// UPDATE, matching documents_issued_fields_consistent's requirement that
-// all five land together. "AND state = 'draft'" here is not redundant
-// with documents_block_issued_mutation the way UpdateDocument's guard
-// would be: that trigger only ever rejects an UPDATE on a row that is
-// ALREADY issued; it has nothing to say about a row that is still draft,
-// which is exactly the row this statement targets. By the time this
-// statement runs, LockDraftDocumentForIssue above has already verified
-// and locked exactly this (id, type, state) combination for the rest of
-// the transaction, so this guard no longer has anything left to actually
-// catch in practice; it stays as defense in depth; for example against a
-// future caller that runs this statement directly, bypassing
-// documentRepository.Issue's own ordering. The guard is what originally
-// stopped two concurrent calls to Issue racing on the very same document
-// (as opposed to the very same counter, which document_numbers' own
-// locking already serialises): without it, a second IssueDocument on an
-// already-issued row would silently succeed a second time, each
-// allocating its own number, both written to the same document_id,
-// rather than failing; LockDraftDocumentForIssue's own FOR NO KEY UPDATE
-// now serialises that race one statement earlier instead.
+// draft to issued: it writes the number, number_year, issued_at, the
+// frozen payload and its hash, the display number and, for a correction,
+// its correction_seq in the same UPDATE, matching
+// documents_issued_fields_consistent,
+// documents_display_number_consistent and
+// documents_correction_seq_consistent. "AND state = 'draft'" here is not
+// redundant with documents_block_issued_mutation the way UpdateDocument's
+// guard would be: that trigger only ever rejects an UPDATE on a row that
+// is ALREADY issued; it has nothing to say about a row that is still
+// draft, which is exactly the row this statement targets. LockDocument
+// has already locked the row and the caller checked its state and type,
+// so the guard stays as defence in depth against a caller that runs this
+// statement without that order.
 //
-// "AND type = $7" guards against a second, different mistake: the
-// caller (documentRepository.Issue) already has to name docType itself,
-// separately from id, because document_numbers' counter has to be
-// allocated, under that exact type, before this statement can even run
-// (see internal/storage/postgres/numbering.go). Without this guard,
-// passing a docType that does not match this row's own, already-stored
+// "AND type = $9" guards against a second, different mistake: the
+// caller names the type it allocated the number under, separately from
+// id. Without this guard, a docType that does not match this row's own
 // type would still succeed, silently issuing the document under a
-// counter that belongs to a different type than the row itself claims
-// to be; this makes that mismatch fail instead, the same zero-row,
-// storage.ErrConflict outcome as issuing a non-draft.
+// counter that belongs to a different type; this makes that mismatch
+// fail instead, the same zero-row, storage.ErrConflict outcome as
+// issuing a non-draft.
 func (q *Queries) IssueDocument(ctx context.Context, arg IssueDocumentParams) (Document, error) {
 	row := q.db.QueryRow(ctx, issueDocument,
 		arg.ID,
@@ -219,6 +265,8 @@ func (q *Queries) IssueDocument(ctx context.Context, arg IssueDocumentParams) (D
 		arg.IssuedAt,
 		arg.FrozenPayload,
 		arg.FrozenPayloadSha256,
+		arg.DisplayNumber,
+		arg.CorrectionSeq,
 		arg.Type,
 	)
 	var i Document
@@ -242,25 +290,112 @@ func (q *Queries) IssueDocument(ctx context.Context, arg IssueDocumentParams) (D
 		&i.IssuedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginalNumber,
+		&i.SourceOfferID,
+		&i.Language,
+		&i.ValidUntil,
+		&i.ServiceDateTo,
+		&i.PaymentTerms,
+		&i.Notes,
+		&i.CustomerReference,
+		&i.CorrectionSeq,
+		&i.DisplayNumber,
+		&i.CorrectionBaseID,
+		&i.CorrectionBaseSeq,
 	)
 	return i, err
+}
+
+const listChainDocuments = `-- name: ListChainDocuments :many
+SELECT id, tenant_id, type, state, customer_id, corrects_document_id, vat_regime,
+    service_date, due_date, discount_percent_permyriad, discount_amount_cents,
+    number, number_year, imported, frozen_payload, frozen_payload_sha256, issued_at,
+    created_at, updated_at, original_number, source_offer_id, language, valid_until,
+    service_date_to, payment_terms, notes, customer_reference, correction_seq,
+    display_number, correction_base_id, correction_base_seq
+FROM documents
+WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+    AND state = 'issued'
+    AND (id = $1 OR corrects_document_id = $1)
+ORDER BY correction_seq NULLS FIRST
+`
+
+// ListChainDocuments returns the issued documents of the chain rooted at
+// $1: the original invoice and every issued correction naming it. Under
+// READ COMMITTED each statement reads the latest committed rows, so run
+// after LockDocument on the root it sees every correction a concurrent
+// issue committed before this transaction got the lock.
+func (q *Queries) ListChainDocuments(ctx context.Context, id uuid.UUID) ([]Document, error) {
+	rows, err := q.db.Query(ctx, listChainDocuments, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Document
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Type,
+			&i.State,
+			&i.CustomerID,
+			&i.CorrectsDocumentID,
+			&i.VatRegime,
+			&i.ServiceDate,
+			&i.DueDate,
+			&i.DiscountPercentPermyriad,
+			&i.DiscountAmountCents,
+			&i.Number,
+			&i.NumberYear,
+			&i.Imported,
+			&i.FrozenPayload,
+			&i.FrozenPayloadSha256,
+			&i.IssuedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OriginalNumber,
+			&i.SourceOfferID,
+			&i.Language,
+			&i.ValidUntil,
+			&i.ServiceDateTo,
+			&i.PaymentTerms,
+			&i.Notes,
+			&i.CustomerReference,
+			&i.CorrectionSeq,
+			&i.DisplayNumber,
+			&i.CorrectionBaseID,
+			&i.CorrectionBaseSeq,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDocuments = `-- name: ListDocuments :many
 SELECT id, tenant_id, type, state, customer_id, corrects_document_id, vat_regime,
     service_date, due_date, discount_percent_permyriad, discount_amount_cents,
     number, number_year, imported, frozen_payload, frozen_payload_sha256, issued_at,
-    created_at, updated_at
+    created_at, updated_at, original_number, source_offer_id, language, valid_until,
+    service_date_to, payment_terms, notes, customer_reference, correction_seq,
+    display_number, correction_base_id, correction_base_seq
 FROM documents
 WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 `
 
 // ListDocuments is ordered by created_at descending, unlike
 // ListCustomers and ListCatalogueItems' alphabetical-by-name order:
 // there is no name here to sort by, and a human-facing document list is
 // expected to show the most recently drafted or issued document first,
-// the same ordering ListAccounts already uses for the same reason.
+// the same ordering ListAccounts already uses for the same reason. The
+// id breaks a tie, so two rows created in the same microsecond keep one
+// order.
 func (q *Queries) ListDocuments(ctx context.Context) ([]Document, error) {
 	rows, err := q.db.Query(ctx, listDocuments)
 	if err != nil {
@@ -290,6 +425,18 @@ func (q *Queries) ListDocuments(ctx context.Context) ([]Document, error) {
 			&i.IssuedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OriginalNumber,
+			&i.SourceOfferID,
+			&i.Language,
+			&i.ValidUntil,
+			&i.ServiceDateTo,
+			&i.PaymentTerms,
+			&i.Notes,
+			&i.CustomerReference,
+			&i.CorrectionSeq,
+			&i.DisplayNumber,
+			&i.CorrectionBaseID,
+			&i.CorrectionBaseSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -301,51 +448,123 @@ func (q *Queries) ListDocuments(ctx context.Context) ([]Document, error) {
 	return items, nil
 }
 
-const lockDraftDocumentForIssue = `-- name: LockDraftDocumentForIssue :one
-SELECT 1 FROM documents
-WHERE id = $1
-    AND type = $2
-    AND state = 'draft'
-    AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+const lockDocument = `-- name: LockDocument :one
+SELECT id, tenant_id, type, state, customer_id, corrects_document_id, vat_regime,
+    service_date, due_date, discount_percent_permyriad, discount_amount_cents,
+    number, number_year, imported, frozen_payload, frozen_payload_sha256, issued_at,
+    created_at, updated_at, original_number, source_offer_id, language, valid_until,
+    service_date_to, payment_terms, notes, customer_reference, correction_seq,
+    display_number, correction_base_id, correction_base_seq
+FROM documents
+WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 FOR NO KEY UPDATE
 `
 
-type LockDraftDocumentForIssueParams struct {
-	ID   uuid.UUID
-	Type string
+// LockDocument reads one document and takes a FOR NO KEY UPDATE lock on
+// it for the rest of the transaction. Issuing runs it twice, always
+// before document_numbers' counter is touched:
+//
+//   - On the draft being issued, so nothing else can move it out from
+//     under the allocation that follows (a second, concurrent issue of
+//     the same draft waits here and then finds it issued). The caller
+//     checks the state and the type of the row it reads back, so a
+//     document that cannot be issued is refused before a number is ever
+//     allocated: storage.ErrConflict on that path never depends on a
+//     caller propagating an error to roll an allocation back.
+//   - On the root of a correction's chain, the original invoice, so two
+//     corrections of one chain are issued one after the other and each
+//     sees the other's correction_seq. FOR NO KEY UPDATE conflicts with
+//     itself but not with the KEY SHARE lock a foreign key check takes,
+//     so creating a correction draft or a payment that references the
+//     root is never blocked by it. Locking an issued row is no UPDATE:
+//     documents_block_issued_mutation does not fire.
+func (q *Queries) LockDocument(ctx context.Context, id uuid.UUID) (Document, error) {
+	row := q.db.QueryRow(ctx, lockDocument, id)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Type,
+		&i.State,
+		&i.CustomerID,
+		&i.CorrectsDocumentID,
+		&i.VatRegime,
+		&i.ServiceDate,
+		&i.DueDate,
+		&i.DiscountPercentPermyriad,
+		&i.DiscountAmountCents,
+		&i.Number,
+		&i.NumberYear,
+		&i.Imported,
+		&i.FrozenPayload,
+		&i.FrozenPayloadSha256,
+		&i.IssuedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OriginalNumber,
+		&i.SourceOfferID,
+		&i.Language,
+		&i.ValidUntil,
+		&i.ServiceDateTo,
+		&i.PaymentTerms,
+		&i.Notes,
+		&i.CustomerReference,
+		&i.CorrectionSeq,
+		&i.DisplayNumber,
+		&i.CorrectionBaseID,
+		&i.CorrectionBaseSeq,
+	)
+	return i, err
 }
 
-// LockDraftDocumentForIssue is documentRepository.Issue's first
-// statement, run before document_numbers' own counter is ever touched:
-// it verifies id resolves to a draft of type $2 in this tenant, and
-// takes a FOR NO KEY UPDATE lock on that row for the rest of the
-// transaction, so nothing else can move it out from under the
-// allocation that follows. Without this, Issue allocated a number first
-// and only found out it could not actually issue the document second
-// (IssueDocument's own "AND state = 'draft'" below answering zero rows):
-// storage.ErrConflict on that path then depended entirely on the
-// caller propagating the error and letting TenantScope.WithTenant roll
-// the transaction back, since WithTenant commits whenever the closure
-// returns nil; a caller that mapped ErrConflict to a response and
-// returned nil from that closure would commit the already-incremented
-// counter and permanently skip the number nobody ever issued. Locking
-// and verifying before allocating makes the ordering itself carry that
-// guarantee instead: Issue now returns storage.ErrConflict from this
-// statement's own zero rows before allocateNextDocumentNumber ever
-// runs, so there is nothing for a careless caller to leave half
-// committed.
-//
-// A :one query with zero rows answers pgx.ErrNoRows;
-// internal/storage/postgres/documents.go maps that to
-// storage.ErrConflict here, not storage.ErrNotFound, since the row
-// usually does exist, just not in the state (or type) this call needed
-// it in; see IssueDocument's own comment below for why type is checked
-// here too, not only state.
-func (q *Queries) LockDraftDocumentForIssue(ctx context.Context, arg LockDraftDocumentForIssueParams) (int32, error) {
-	row := q.db.QueryRow(ctx, lockDraftDocumentForIssue, arg.ID, arg.Type)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
+const lockSellerProfileForIssue = `-- name: LockSellerProfileForIssue :one
+SELECT tenant_id, legal_name, street, address_line2, postal_code, city, country_code,
+       tax_number, vat_id, kleinunternehmer_id, default_vat_regime, default_language,
+       bank_name, iban, bic, email, phone, website, footer_text, number_formats,
+       created_at, updated_at
+FROM seller_profiles
+WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+FOR SHARE
+`
+
+// LockSellerProfileForIssue reads the seller profile issuing freezes and
+// holds a FOR SHARE lock on it until the issuing transaction ends. A
+// concurrent PUT /api/v1/profile (an upsert, which needs the row
+// exclusively) waits until the issue commits or rolls back, so the
+// snapshot validated and frozen is one consistent row, and a profile
+// save never commits between the read and the issue. Concurrent issues
+// share the lock and never wait for each other here. The unique index on
+// documents.display_number stays the last guard behind the template
+// rules. Issue #68 owns the profile's own queries; this read lives here
+// because only issuing needs the lock.
+func (q *Queries) LockSellerProfileForIssue(ctx context.Context) (SellerProfile, error) {
+	row := q.db.QueryRow(ctx, lockSellerProfileForIssue)
+	var i SellerProfile
+	err := row.Scan(
+		&i.TenantID,
+		&i.LegalName,
+		&i.Street,
+		&i.AddressLine2,
+		&i.PostalCode,
+		&i.City,
+		&i.CountryCode,
+		&i.TaxNumber,
+		&i.VatID,
+		&i.KleinunternehmerID,
+		&i.DefaultVatRegime,
+		&i.DefaultLanguage,
+		&i.BankName,
+		&i.Iban,
+		&i.Bic,
+		&i.Email,
+		&i.Phone,
+		&i.Website,
+		&i.FooterText,
+		&i.NumberFormats,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateDocument = `-- name: UpdateDocument :one
@@ -356,12 +575,20 @@ SET customer_id = $2,
     due_date = $5,
     discount_percent_permyriad = $6,
     discount_amount_cents = $7,
+    language = $8,
+    valid_until = $9,
+    service_date_to = $10,
+    payment_terms = $11,
+    notes = $12,
+    customer_reference = $13,
     updated_at = now()
 WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 RETURNING id, tenant_id, type, state, customer_id, corrects_document_id, vat_regime,
     service_date, due_date, discount_percent_permyriad, discount_amount_cents,
     number, number_year, imported, frozen_payload, frozen_payload_sha256, issued_at,
-    created_at, updated_at
+    created_at, updated_at, original_number, source_offer_id, language, valid_until,
+    service_date_to, payment_terms, notes, customer_reference, correction_seq,
+    display_number, correction_base_id, correction_base_seq
 `
 
 type UpdateDocumentParams struct {
@@ -372,18 +599,27 @@ type UpdateDocumentParams struct {
 	DueDate                  pgtype.Date
 	DiscountPercentPermyriad pgtype.Int4
 	DiscountAmountCents      pgtype.Int8
+	Language                 string
+	ValidUntil               pgtype.Date
+	ServiceDateTo            pgtype.Date
+	PaymentTerms             pgtype.Text
+	Notes                    pgtype.Text
+	CustomerReference        pgtype.Text
 }
 
 // UpdateDocument replaces a draft's own header fields (not its lines;
-// see document_lines.sql for ReplaceDocumentLines). It carries no
-// explicit "AND state = 'draft'" guard the way customers.sql's
-// UpdateCustomer guards against a soft-deleted row: documents_block_issued_mutation
-// already refuses this UPDATE outright once the row is issued, so adding
-// the same guard here would only ever change which layer reports the
-// rejection, not whether it happens. A :one query against a row that
-// does not exist in this tenant at all still answers pgx.ErrNoRows the
-// same way; see internal/storage/postgres/documents.go for how that is
-// distinguished from the trigger's own rejection.
+// see document_lines.sql for ReplaceDocumentLines). It never changes the
+// type, the chain (corrects_document_id, correction_base_id and
+// correction_base_seq) or source_offer_id: those are fixed when the draft
+// is created. It carries no explicit "AND state = 'draft'" guard the way
+// customers.sql's UpdateCustomer guards against a soft-deleted row:
+// documents_block_issued_mutation already refuses this UPDATE outright
+// once the row is issued, so adding the same guard here would only ever
+// change which layer reports the rejection, not whether it happens. A
+// :one query against a row that does not exist in this tenant at all
+// still answers pgx.ErrNoRows the same way; see
+// internal/storage/postgres/documents.go for how that is distinguished
+// from the trigger's own rejection.
 func (q *Queries) UpdateDocument(ctx context.Context, arg UpdateDocumentParams) (Document, error) {
 	row := q.db.QueryRow(ctx, updateDocument,
 		arg.ID,
@@ -393,6 +629,12 @@ func (q *Queries) UpdateDocument(ctx context.Context, arg UpdateDocumentParams) 
 		arg.DueDate,
 		arg.DiscountPercentPermyriad,
 		arg.DiscountAmountCents,
+		arg.Language,
+		arg.ValidUntil,
+		arg.ServiceDateTo,
+		arg.PaymentTerms,
+		arg.Notes,
+		arg.CustomerReference,
 	)
 	var i Document
 	err := row.Scan(
@@ -415,6 +657,18 @@ func (q *Queries) UpdateDocument(ctx context.Context, arg UpdateDocumentParams) 
 		&i.IssuedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OriginalNumber,
+		&i.SourceOfferID,
+		&i.Language,
+		&i.ValidUntil,
+		&i.ServiceDateTo,
+		&i.PaymentTerms,
+		&i.Notes,
+		&i.CustomerReference,
+		&i.CorrectionSeq,
+		&i.DisplayNumber,
+		&i.CorrectionBaseID,
+		&i.CorrectionBaseSeq,
 	)
 	return i, err
 }

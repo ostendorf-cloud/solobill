@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -51,9 +50,18 @@ func (r *documentRepository) Create(ctx context.Context, document storage.Docume
 		DueDate:                  ptrToDate(document.DueDate),
 		DiscountPercentPermyriad: ptrToInt4(document.DiscountPercentPermyriad),
 		DiscountAmountCents:      ptrToInt8(document.DiscountAmountCents),
+		SourceOfferID:            ptrToUUID(document.SourceOfferID),
+		Language:                 string(documentLanguage(document.Language)),
+		ValidUntil:               ptrToDate(document.ValidUntil),
+		ServiceDateTo:            ptrToDate(document.ServiceDateTo),
+		PaymentTerms:             ptrToText(document.PaymentTerms),
+		Notes:                    ptrToText(document.Notes),
+		CustomerReference:        ptrToText(document.CustomerReference),
+		CorrectionBaseID:         ptrToUUID(document.CorrectionBaseID),
+		CorrectionBaseSeq:        ptrToInt4(document.CorrectionBaseSeq),
 	})
 	if err != nil {
-		return storage.Document{}, mapWriteError(err)
+		return storage.Document{}, mapDocumentWriteError(err)
 	}
 
 	createdLines, err := createDocumentLines(ctx, tx, row.TenantID, row.ID, lines)
@@ -135,6 +143,12 @@ func (r *documentRepository) Update(ctx context.Context, document storage.Docume
 		DueDate:                  ptrToDate(document.DueDate),
 		DiscountPercentPermyriad: ptrToInt4(document.DiscountPercentPermyriad),
 		DiscountAmountCents:      ptrToInt8(document.DiscountAmountCents),
+		Language:                 string(documentLanguage(document.Language)),
+		ValidUntil:               ptrToDate(document.ValidUntil),
+		ServiceDateTo:            ptrToDate(document.ServiceDateTo),
+		PaymentTerms:             ptrToText(document.PaymentTerms),
+		Notes:                    ptrToText(document.Notes),
+		CustomerReference:        ptrToText(document.CustomerReference),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -182,83 +196,118 @@ func (r *documentRepository) DeleteDraft(ctx context.Context, id uuid.UUID) erro
 	return nil
 }
 
-// Issue implements storage.DocumentRepository. It first verifies and
-// locks the draft via queries/documents.sql's LockDraftDocumentForIssue
-// (storage.ErrConflict when id does not resolve to a draft of docType in
-// this tenant), so that a document which cannot actually be issued is
-// caught before document_numbers' own counter is ever touched: see that
-// query's own comment for why the ordering itself, not a caller's own
-// discipline, is what has to carry gaplessness on this path. Only then
-// does it allocate the next number for docType and year via
-// allocateNextDocumentNumber, on this same transaction, and write it
-// together with issuedAt, payload and payloadHash in the one UPDATE
-// queries/documents.sql's IssueDocument performs. All three statements
-// run inside the transaction WithTenant already opened, which is exactly
-// what makes a rolled-back Issue call give its allocated number back:
-// see storage.DocumentNumberRepository.AllocateNext.
-func (r *documentRepository) Issue(ctx context.Context, id uuid.UUID, docType storage.DocumentType, year int, issuedAt time.Time, payload []byte, payloadHash string) (storage.Document, error) {
+// Lock implements storage.DocumentRepository: queries/documents.sql's
+// LockDocument, then the lines. It reports no state: the caller checks
+// it before it allocates anything. See LockDocument for why issuing
+// locks the draft and a correction's root before the counter.
+func (r *documentRepository) Lock(ctx context.Context, id uuid.UUID) (storage.Document, error) {
 	tx, err := txFromContext(ctx)
 	if err != nil {
 		return storage.Document{}, err
 	}
 
-	// A counter-issued document's number_year and issuedAt must agree:
-	// number_year is only ever independent of issuedAt for an imported
-	// historical document (see db/migrations' documents migration),
-	// which sets Number/NumberYear directly and never calls this method
-	// at all. A caller of Issue passing a year that does not match
-	// issuedAt's own calendar year would otherwise silently allocate
-	// from the wrong counter and freeze a number whose year contradicts
-	// the invoice date it is issued under.
-	if issuedAt.Year() != year {
-		return storage.Document{}, fmt.Errorf("issue: year %d does not match issuedAt's own year %d", year, issuedAt.Year())
-	}
-
-	yearInt32 := int32(year) //nolint:gosec // year is a calendar year, far inside int32's range
-
-	if _, err := sqlcgen.New(tx).LockDraftDocumentForIssue(ctx, sqlcgen.LockDraftDocumentForIssueParams{
-		ID:   id,
-		Type: string(docType),
-	}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// id does not exist in this tenant at all, exists but is not
-			// a draft (already issued, or raced by a concurrent Issue
-			// call that won this lock first), or exists as a draft of a
-			// different type: see LockDraftDocumentForIssue's own
-			// comment for why this is a conflict, not a not-found, the
-			// same reasoning IssueDocument below already documented.
-			return storage.Document{}, storage.ErrConflict
-		}
-
-		return storage.Document{}, mapWriteError(err)
-	}
-
-	number, err := allocateNextDocumentNumber(ctx, tx, docType, year)
+	row, err := sqlcgen.New(tx).LockDocument(ctx, id)
 	if err != nil {
-		return storage.Document{}, fmt.Errorf("allocate document number: %w", err)
+		return storage.Document{}, mapReadError(err)
+	}
+
+	lineRows, err := sqlcgen.New(tx).ListDocumentLines(ctx, row.ID)
+	if err != nil {
+		return storage.Document{}, mapReadError(err)
+	}
+
+	result := documentFromRow(row)
+	result.Lines = documentLinesFromRows(lineRows)
+
+	return result, nil
+}
+
+// Chain implements storage.DocumentRepository.
+func (r *documentRepository) Chain(ctx context.Context, rootID uuid.UUID) ([]storage.Document, error) {
+	tx, err := txFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := sqlcgen.New(tx).ListChainDocuments(ctx, rootID)
+	if err != nil {
+		return nil, mapReadError(err)
+	}
+
+	documents := make([]storage.Document, len(rows))
+	for i, row := range rows {
+		documents[i] = documentFromRow(row)
+	}
+
+	return documents, nil
+}
+
+// SellerProfileForIssue implements storage.DocumentRepository through
+// queries/documents.sql's LockSellerProfileForIssue, mapped by issue
+// #68's own sellerProfileFromRow.
+func (r *documentRepository) SellerProfileForIssue(ctx context.Context) (storage.SellerProfile, error) {
+	tx, err := txFromContext(ctx)
+	if err != nil {
+		return storage.SellerProfile{}, err
+	}
+
+	row, err := sqlcgen.New(tx).LockSellerProfileForIssue(ctx)
+	if err != nil {
+		return storage.SellerProfile{}, mapReadError(err)
+	}
+
+	return sellerProfileFromRow(row)
+}
+
+// Issue implements storage.DocumentRepository: the one UPDATE
+// queries/documents.sql's IssueDocument performs. It allocates nothing:
+// the caller has locked the draft (Lock) and, for an invoice or an
+// offer, allocated the number with DocumentNumberRepository.AllocateNext
+// inside the same transaction, so a rolled-back issue gives its number
+// back (see storage.DocumentNumberRepository.AllocateNext).
+func (r *documentRepository) Issue(ctx context.Context, id uuid.UUID, issue storage.DocumentIssue) (storage.Document, error) {
+	tx, err := txFromContext(ctx)
+	if err != nil {
+		return storage.Document{}, err
+	}
+
+	// A counter-issued document's number_year and issuedAt must agree: a
+	// caller passing a year that does not match issuedAt's own calendar
+	// year would freeze a number whose year contradicts the invoice date
+	// it is issued under. A correction repeats its original's number and
+	// year, so its year may lie before its own issue date. An imported
+	// document never comes here (storage.ImportedDocumentRepository).
+	isCorrection := issue.Type == storage.DocumentTypeCorrection
+	if !isCorrection && issue.IssuedAt.Year() != issue.NumberYear {
+		return storage.Document{}, fmt.Errorf("issue: year %d does not match issuedAt's own year %d", issue.NumberYear, issue.IssuedAt.Year())
+	}
+	if isCorrection != (issue.CorrectionSeq != nil) {
+		return storage.Document{}, errors.New("issue: a correction, and only a correction, carries a correction sequence")
 	}
 
 	row, err := sqlcgen.New(tx).IssueDocument(ctx, sqlcgen.IssueDocumentParams{
 		ID:                  id,
-		Number:              pgtype.Int8{Int64: number, Valid: true},
-		NumberYear:          pgtype.Int4{Int32: yearInt32, Valid: true},
-		IssuedAt:            toTimestamptz(issuedAt),
-		FrozenPayload:       payload,
-		FrozenPayloadSha256: pgtype.Text{String: payloadHash, Valid: true},
-		Type:                string(docType),
+		Number:              pgtype.Int8{Int64: issue.Number, Valid: true},
+		NumberYear:          pgtype.Int4{Int32: int32(issue.NumberYear), Valid: true}, //nolint:gosec // a calendar year, far inside int32's range
+		IssuedAt:            toTimestamptz(issue.IssuedAt),
+		FrozenPayload:       issue.Payload,
+		FrozenPayloadSha256: pgtype.Text{String: issue.PayloadSHA256, Valid: true},
+		DisplayNumber:       pgtype.Text{String: issue.DisplayNumber, Valid: true},
+		CorrectionSeq:       ptrToInt4(issue.CorrectionSeq),
+		Type:                string(issue.Type),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Either id does not exist in this tenant at all, or it does
-			// but is not a draft (already issued, or raced by a
-			// concurrent Issue call that won): queries/documents.sql's
+			// but is not a draft of this type: queries/documents.sql's
 			// IssueDocument's own doc comment is why this is reported as
 			// a conflict, not a not-found, unlike every other :one query
-			// in this package reaching pgx.ErrNoRows.
-			return storage.Document{}, storage.ErrConflict
+			// in this package reaching pgx.ErrNoRows. ErrNotADraft tells
+			// it apart from a unique index refusing the number.
+			return storage.Document{}, fmt.Errorf("%w: %w", storage.ErrConflict, storage.ErrNotADraft)
 		}
 
-		return storage.Document{}, mapWriteError(err)
+		return storage.Document{}, mapDocumentWriteError(err)
 	}
 
 	lineRows, err := sqlcgen.New(tx).ListDocumentLines(ctx, row.ID)
@@ -318,12 +367,18 @@ func mapDocumentWriteError(err error) error {
 	}
 
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == pgIntegrityConstraintViolationClass {
+	if errors.As(err, &pgErr) && (pgErr.Code == pgIntegrityConstraintViolationClass || pgErr.Code == pgForeignKeyViolation) {
 		return storage.ErrConflict
 	}
 
 	return mapWriteError(err)
 }
+
+// pgForeignKeyViolation is the code of a foreign key violation. On the
+// document paths it means the row is still referenced (an offer draft an
+// invoice was created from cannot be deleted) or a referenced row is
+// gone: a write losing to the state of another row, storage.ErrConflict.
+const pgForeignKeyViolation = "23503"
 
 func documentFromRow(row sqlcgen.Document) storage.Document {
 	return storage.Document{
@@ -346,7 +401,29 @@ func documentFromRow(row sqlcgen.Document) storage.Document {
 		IssuedAt:                 timeToPtr(row.IssuedAt),
 		CreatedAt:                timeFromTimestamptz(row.CreatedAt),
 		UpdatedAt:                timeFromTimestamptz(row.UpdatedAt),
+		OriginalNumber:           textToPtr(row.OriginalNumber),
+		SourceOfferID:            uuidToPtr(row.SourceOfferID),
+		Language:                 storage.DocumentLanguage(row.Language),
+		ValidUntil:               dateToPtr(row.ValidUntil),
+		ServiceDateTo:            dateToPtr(row.ServiceDateTo),
+		PaymentTerms:             textToPtr(row.PaymentTerms),
+		Notes:                    textToPtr(row.Notes),
+		CustomerReference:        textToPtr(row.CustomerReference),
+		CorrectionSeq:            int4ToPtr(row.CorrectionSeq),
+		DisplayNumber:            textToPtr(row.DisplayNumber),
+		CorrectionBaseID:         uuidToPtr(row.CorrectionBaseID),
+		CorrectionBaseSeq:        int4ToPtr(row.CorrectionBaseSeq),
 	}
+}
+
+// documentLanguage is the language a document row is written with: an
+// empty value is German, the column's own default.
+func documentLanguage(l storage.DocumentLanguage) storage.DocumentLanguage {
+	if l == "" {
+		return storage.DocumentLanguageGerman
+	}
+
+	return l
 }
 
 func documentLinesFromRows(rows []sqlcgen.DocumentLine) []storage.DocumentLine {

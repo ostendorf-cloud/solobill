@@ -119,7 +119,19 @@ func (f *fakeIssuedDocuments) DeleteDraft(context.Context, uuid.UUID) error {
 	return errFakeDocumentsUnsupported
 }
 
-func (f *fakeIssuedDocuments) Issue(context.Context, uuid.UUID, storage.DocumentType, int, time.Time, []byte, string) (storage.Document, error) {
+func (f *fakeIssuedDocuments) Lock(context.Context, uuid.UUID) (storage.Document, error) {
+	return storage.Document{}, errFakeDocumentsUnsupported
+}
+
+func (f *fakeIssuedDocuments) Chain(context.Context, uuid.UUID) ([]storage.Document, error) {
+	return nil, errFakeDocumentsUnsupported
+}
+
+func (f *fakeIssuedDocuments) SellerProfileForIssue(context.Context) (storage.SellerProfile, error) {
+	return storage.SellerProfile{}, errFakeDocumentsUnsupported
+}
+
+func (f *fakeIssuedDocuments) Issue(context.Context, uuid.UUID, storage.DocumentIssue) (storage.Document, error) {
 	return storage.Document{}, errFakeDocumentsUnsupported
 }
 

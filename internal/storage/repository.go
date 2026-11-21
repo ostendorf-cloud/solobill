@@ -188,32 +188,54 @@ type DocumentRepository interface {
 	// ErrConflict for the same two cases, and the same reason, as Update.
 	DeleteDraft(ctx context.Context, id uuid.UUID) error
 
-	// Issue first verifies that id resolves to a draft of docType in
-	// this tenant and locks that row for the rest of the transaction
-	// (ErrConflict otherwise: already issued, no such row, or the wrong
-	// type), before it ever allocates a number. Only then does it
-	// allocate the next number for docType and year (via
-	// DocumentNumberRepository.AllocateNext, inside this call's own
-	// transaction: see that method's doc comment for what that
-	// allocation actually guarantees under concurrency) and write it,
-	// together with issuedAt, payload and payloadHash, moving the
-	// document from DocumentStateDraft to DocumentStateIssued in one
-	// statement. See internal/storage/postgres/queries/documents.sql's
-	// LockDraftDocumentForIssue for why this ordering, not a caller's
-	// own discipline, is what keeps gaplessness holding even when the
-	// caller maps ErrConflict to a response and returns nil.
+	// Lock returns the document with id together with its lines and
+	// locks its row for the rest of the transaction (FOR NO KEY UPDATE).
+	// ErrNotFound when id does not exist in this tenant. It does not
+	// check the state or the type: the caller does, and refuses before it
+	// allocates anything. Issuing locks the draft first, and for a
+	// correction the root of its chain next, always before
+	// DocumentNumberRepository.AllocateNext: see
+	// internal/storage/postgres/queries/documents.sql's LockDocument.
+	Lock(ctx context.Context, id uuid.UUID) (Document, error)
+
+	// Chain returns the issued documents of the chain rooted at rootID:
+	// the original invoice and every issued correction naming it, the
+	// original first, then by CorrectionSeq. Lines is left nil. It locks
+	// nothing: issuing a correction calls Lock on rootID first, so two
+	// corrections of one chain are issued one after the other.
+	Chain(ctx context.Context, rootID uuid.UUID) ([]Document, error)
+
+	// SellerProfileForIssue returns the tenant's seller profile and holds
+	// a shared lock on it until the transaction ends, so a concurrent
+	// SellerProfileRepository.Put waits for the issue to finish and the
+	// frozen seller snapshot is the profile that was validated.
+	// ErrNotFound when no profile was saved yet.
+	SellerProfileForIssue(ctx context.Context) (SellerProfile, error)
+
+	// Issue moves the draft id to issued in one statement, writing
+	// everything DocumentIssue holds. ErrConflict wrapping ErrNotADraft
+	// when id is not a draft of issue.Type in this tenant; ErrConflict
+	// alone when the display number or the correction sequence is taken
+	// already (the unique indexes).
 	//
-	// year must equal issuedAt's own calendar year; Issue returns an
-	// error otherwise. This is a precondition on the caller, not
-	// something this method derives on its own.
+	// The caller locks the draft with Lock first, validates, and only
+	// then allocates the number of an invoice or an offer with
+	// DocumentNumberRepository.AllocateNext, inside the same transaction:
+	// a refused issue never touches the counter, and an error after the
+	// allocation rolls it back with the transaction. A correction never
+	// allocates: it repeats its original's Number and NumberYear and
+	// carries CorrectionSeq.
 	//
-	// payloadHash must be the lowercase hex-encoded SHA-256 of payload's
-	// own bytes, exactly as the caller is about to freeze them: this is
-	// a precondition on the caller, not something this method derives
-	// on its own, and db/migrations' documents_frozen_payload_sha256_matches
-	// CHECK (see 20261113160000_create_documents.sql) refuses the write
+	// For every type but a correction, issue.NumberYear must equal
+	// issue.IssuedAt's own calendar year; Issue returns an error
+	// otherwise.
+	//
+	// issue.PayloadSHA256 must be the lowercase hex-encoded SHA-256 of
+	// issue.Payload's own bytes, exactly as the caller is about to freeze
+	// them: db/migrations' documents_frozen_payload_sha256_matches CHECK
+	// (see 20261113160000_create_documents.sql) refuses the write
 	// outright when the two disagree.
-	Issue(ctx context.Context, id uuid.UUID, docType DocumentType, year int, issuedAt time.Time, payload []byte, payloadHash string) (Document, error)
+	Issue(ctx context.Context, id uuid.UUID, issue DocumentIssue) (Document, error)
 }
 
 // DocumentNumberRepository allocates and reads the per-tenant,
