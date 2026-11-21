@@ -16,7 +16,10 @@
 //
 // Rounding. Each payment's exact share is a fraction. The shares are
 // rounded cumulatively, in the order the payments were recorded
-// (CreatedAt, then id): the share of payment i is the running exact sum of
+// (CreatedAt, then a reversal after the rows it may reverse, then id;
+// payments.created_at is clock_timestamp() taken under the lock on the
+// chain's root row, so it follows the lock order of the writes): the
+// share of payment i is the running exact sum of
 // all shares up to and including i, rounded half away from zero, minus the
 // shares already handed out. So
 //   - no cent is lost or invented: the shares always sum to the rounded
@@ -95,7 +98,8 @@ type Share struct {
 var ErrUnknownReversal = errors.New("paymentvat: a reversal names no earlier payment of the chain")
 
 // Split returns one Share per payment, in the order the payments were
-// recorded: CreatedAt, then id.
+// recorded: CreatedAt, then a reversal after every row that is not one,
+// then id.
 //
 // members is the whole chain: the original (Seq 0) and every issued
 // correction, with IssuedOn set. figures must hold every member a
@@ -120,6 +124,12 @@ func Split(members []docchain.Member, figures map[uuid.UUID]Figures, payments []
 		a, b := sorted[i], sorted[j]
 		if !a.CreatedAt.Equal(b.CreatedAt) {
 			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		// Rows of one transaction can tie on created_at. A reversal
+		// always comes after every row that is not one: the payment it
+		// reverses is never a reversal itself.
+		if aRev, bRev := a.ReversesPaymentID != nil, b.ReversesPaymentID != nil; aRev != bRev {
+			return bRev
 		}
 
 		return a.ID.String() < b.ID.String()

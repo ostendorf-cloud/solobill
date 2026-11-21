@@ -50,8 +50,9 @@ import (
 //     same date is the owner's decision, NOT VERIFIED against section 11
 //     EStG; a Steuerberater confirms it. The table's trigger checks the
 //     same.
-//   - A note is free text with line breaks, without other control or
-//     Unicode format characters.
+//   - A note is free text with "\n" line breaks, without other control
+//     or Unicode format characters and without U+2028 or U+2029. A
+//     client sending CRLF gets 400.
 //
 // Both writes and the reads they decide on run under a lock on the root
 // document row, so two refunds or a refund and a correction cannot both
@@ -201,15 +202,17 @@ func (r paymentRequest) payment(today time.Time) (storage.Payment, error) {
 }
 
 // paymentNoteHasBadRune reports a control character (C0 including NUL,
-// DEL, C1) or a Unicode format character (Cf) other than a line break,
-// the rule of internal/sellerprofile's hasBadRune for a multi line text.
-// PostgreSQL refuses a NUL in text outright.
+// DEL, C1), a Unicode format character (Cf) or a Unicode line or
+// paragraph separator (Zl U+2028, Zp U+2029). Only "\n" passes as a line
+// break, so a "\r" of CRLF is refused too. The rule of
+// internal/sellerprofile's hasBadRune for a multi line text, plus Zl and
+// Zp. PostgreSQL refuses a NUL in text outright.
 func paymentNoteHasBadRune(s string) bool {
 	for _, r := range s {
 		if r == '\n' {
 			continue
 		}
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return true
 		}
 	}

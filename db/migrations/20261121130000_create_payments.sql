@@ -48,7 +48,13 @@ CREATE TABLE payments (
     reverses_payment_id uuid,
     -- A payment of an imported 2026 invoice, brought in by issue #81.
     imported boolean NOT NULL DEFAULT false,
-    created_at timestamptz NOT NULL DEFAULT now(),
+    -- clock_timestamp(), not now(): now() is the start of the
+    -- transaction, so a transaction that started earlier but took the
+    -- root lock later would sort before a payment already committed.
+    -- The application inserts under a lock on the chain's root row, so
+    -- clock_timestamp() follows the lock order. internal/paymentvat
+    -- rounds the VAT shares in this order.
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT payments_method_check
         CHECK (method IN ('bank_transfer', 'cash', 'card', 'paypal', 'other')),
     -- A payment of zero moves no money and has no place in the EÜR.

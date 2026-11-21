@@ -433,13 +433,54 @@ func TestSplitRefusals(t *testing.T) {
 func TestTheRootIsTheOriginal(t *testing.T) {
 	t.Parallel()
 
-	m := chainOf()
-	m = append(m, docchain.Member{ID: uuid.New(), Seq: 1})
-	figures := map[uuid.UUID]paymentvat.Figures{m[0].ID: {GrossCents: 119, VATCents: 19}, m[1].ID: {GrossCents: 119, VATCents: 19}}
-	l := paymentList{root: m[0].ID}
+	// The original is listed last, so neither the zero date nor the
+	// position in the slice finds it: only Seq == 0 does.
+	original := chainOf()[0]
+	m := []docchain.Member{
+		{ID: uuid.New(), Seq: 2, IssuedOn: day("2026-11-20")},
+		{ID: uuid.New(), Seq: 1},
+		original,
+	}
+	figures := map[uuid.UUID]paymentvat.Figures{}
+	for _, member := range m {
+		figures[member.ID] = paymentvat.Figures{GrossCents: 119, VATCents: 19}
+	}
+	l := paymentList{root: original.ID}
 	l.add("2026-11-02", 119)
 	if got := vatOf(mustSplit(t, m, figures, l.list)); !equal(got, []int64{19}) {
 		t.Fatalf("VAT shares = %v, want [19]", got)
+	}
+}
+
+// TestRowsOfOneTransactionTieOnCreatedAt: an import (#81) may write a
+// payment and its reversal in one transaction, so both carry the same
+// created_at. In any input order and with any ids, the reversal comes
+// after the payment it reverses.
+func TestRowsOfOneTransactionTieOnCreatedAt(t *testing.T) {
+	t.Parallel()
+
+	m := chainOf()
+	figures := map[uuid.UUID]paymentvat.Figures{m[0].ID: {GrossCents: 11900, VATCents: 1900}}
+	rng := rand.New(rand.NewPCG(71, 7))
+	at := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	for range 500 {
+		l := paymentList{root: m[0].ID}
+		l.add("2026-11-02", 101)
+		mistake := l.add("2026-11-02", 3)
+		l.add("2026-11-02", 11799)
+		l.reverse(mistake)
+		for i := range l.list {
+			l.list[i].CreatedAt = at
+		}
+		rng.Shuffle(len(l.list), func(i, j int) { l.list[i], l.list[j] = l.list[j], l.list[i] })
+
+		shares := mustSplit(t, m, figures, l.list)
+		if got := sum(vatOf(shares)); got != 1900 {
+			t.Fatalf("VAT shares %v sum to %d, want 1900", vatOf(shares), got)
+		}
+		if last := shares[len(shares)-1]; last.GrossCents != -3 {
+			t.Fatalf("last share = %+v, want the reversal", last)
+		}
 	}
 }
 

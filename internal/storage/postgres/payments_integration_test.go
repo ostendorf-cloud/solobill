@@ -276,20 +276,17 @@ func TestPaymentRepository(t *testing.T) {
 		})
 
 		// A row of tenant A written in B's scope, raw, so the SQLSTATE is
-		// visible. payments_check_insert looks the invoice up under B's row
-		// level security and finds none; the policy's WITH CHECK refuses
-		// the row as well. Which of the two reports first depends on the
-		// order Postgres runs BEFORE ROW triggers and WITH CHECK in, which
-		// this test does not pin: either refusal is accepted.
+		// visible. In PostgreSQL's ExecInsert the BEFORE ROW triggers run
+		// before the row level security WITH CHECK, which runs before the
+		// CHECK constraints and the unique indexes. payments_check_insert
+		// looks the invoice up under B's row level security, finds none and
+		// raises first, so its 23000 comes back, not the policy's 42501.
 		err := e.rawErr(t, e.restrictedPool, e.other.tenant.ID, `INSERT INTO payments (tenant_id, document_id, received_on,
 			amount_cents, method) VALUES ($1, $2, '2026-11-25', 100, 'cash')`, e.tenant.ID, e.root.ID)
-		var pgErr *pgconn.PgError
-		if !errors.As(err, &pgErr) || (pgErr.Code != pgIntegrityConstraintViolationClass && pgErr.Code != sqlStateInsufficientPrivilege) {
-			t.Errorf("tenant B writing a payment of tenant A: error = %v, want 23000 or 42501", err)
-		}
-		// Through the repository the same write fails too.
-		if _, err := e.create(e.other.tenant.ID, e.payment(e.root.ID, "2026-11-25", 100)); err == nil {
-			t.Error("tenant B wrote a payment of tenant A through the repository")
+		requireSQLState(t, err, pgIntegrityConstraintViolationClass, "tenant B writing a payment of tenant A")
+		// Through the repository the trigger's 23000 is storage.ErrConflict.
+		if _, err := e.create(e.other.tenant.ID, e.payment(e.root.ID, "2026-11-25", 100)); !errors.Is(err, storage.ErrConflict) {
+			t.Errorf("tenant B writing a payment of tenant A through the repository: error = %v, want ErrConflict", err)
 		}
 
 		// B's own row naming A's invoice: the trigger does not see it.

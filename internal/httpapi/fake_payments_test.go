@@ -32,6 +32,9 @@ type fakePaymentRepository struct {
 	rows  map[uuid.UUID]storage.Payment
 	clock int
 	leaky bool
+	// locksAtList is the documents fake's lock record at the last
+	// ListByChain.
+	locksAtList []uuid.UUID
 }
 
 // leakyDocumentsByTest holds the tests whose app reads documents through
@@ -223,9 +226,26 @@ func (r *fakePaymentRepository) list(ctx context.Context, keep func(storage.Paym
 	return out, nil
 }
 
-// ListByChain implements storage.PaymentRepository.
+// ListByChain implements storage.PaymentRepository. It records the locks
+// the documents fake had taken at the moment of the read, so a test can
+// prove the write locks the root before it reads the chain's payments.
 func (r *fakePaymentRepository) ListByChain(ctx context.Context, rootID uuid.UUID) ([]storage.Payment, error) {
+	if docs := r.docs(); docs != nil {
+		locked := docs.Locked()
+		r.mu.Lock()
+		r.locksAtList = locked
+		r.mu.Unlock()
+	}
+
 	return r.list(ctx, func(p storage.Payment) bool { return p.DocumentID == rootID })
+}
+
+// locksAtLastList returns the locks taken before the last ListByChain.
+func (r *fakePaymentRepository) locksAtLastList() []uuid.UUID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]uuid.UUID(nil), r.locksAtList...)
 }
 
 // ListReceivedBetween implements storage.PaymentRepository.

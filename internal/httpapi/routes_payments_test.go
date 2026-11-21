@@ -130,6 +130,11 @@ func TestPartialPaymentsAndTheOpenAmount(t *testing.T) {
 	if locked := documentStore(t, f.app).Locked(); len(locked) != locksBefore+1 || locked[len(locked)-1].String() != invoice {
 		t.Fatalf("locks after the payment = %v, had %d before, want one more lock of the root %s", locked, locksBefore, invoice)
 	}
+	// The lock came before the read of the chain's payments: the read the
+	// open amount is decided on already saw it.
+	if seen := paymentRepo(t, f.app).locksAtLastList(); len(seen) != locksBefore+1 || seen[len(seen)-1].String() != invoice {
+		t.Fatalf("locks when the payments were read = %v, had %d before, want the root locked first", seen, locksBefore)
+	}
 	got := f.wantOpen(t, invoice, kuInvoiceTotal, 0)
 	if len(got.Payments) != 2 || got.Payments[0].ID != first.ID || got.EffectiveDocumentID != invoice {
 		t.Fatalf("list = %+v", got)
@@ -449,6 +454,9 @@ func TestPaymentBodyValidation(t *testing.T) {
 		"note with NUL":   {with("note", "paid\x00"), "note"},
 		"note with tab":   {with("note", "paid\tcash"), "note"},
 		"note with bidi":  {with("note", "paid"+string(rune(0x202e))+"cash"), "note"},
+		"note with CRLF":  {with("note", "first\r\nsecond"), "note"},
+		"note with LS":    {with("note", "first"+string(rune(0x2028))+"second"), "note"},
+		"note with PS":    {with("note", "first"+string(rune(0x2029))+"second"), "note"},
 		"wrong type":      {with("amount_cents", "100"), "amount_cents"},
 		"bad reversal id": {with("reverses_payment_id", "x"), "reverses_payment_id"},
 	} {
