@@ -21,10 +21,16 @@
 # built on "helm lint" alone would prove nothing about whether a guard still fires.
 # charts/solobill/tests/*_test.yaml's own helm-unittest "failedTemplate" assertions
 # check the identical guards independently; the two have to agree before either can be
-# trusted alone to catch a guard quietly dropped out of both. One guard,
-# templates/migration-configmap.yaml's "charts/solobill/migrations is empty", has no
-# must-fail case here: it fires on the chart's own migrations directory being empty,
-# not on a --set value, so no combination of --set flags isolates it.
+# trusted alone to catch a guard quietly dropped out of both. Two guards have no
+# must-fail case here, each for its own reason:
+#   - templates/migration-configmap.yaml's "charts/solobill/migrations is empty" fires on
+#     the chart's own migrations directory being empty, not on a --set value, so no
+#     combination of --set flags isolates it.
+#   - templates/deployment.yaml's "replicaCount above 1" is refused by values.schema.json
+#     first, and only fires with --skip-schema-validation, which this loop does not pass.
+#     Its helm-unittest suite covers it.
+# A case that feeds a URL carries the fake token s3cr3tTOKEN as its password, and the loop
+# fails when that token shows up in the error text: no message may print the URL.
 #
 # kubeconform resolves its Kubernetes schemas over the network with its normal default
 # behaviour (no local schema clone, no relaxed TLS verification): a CI runner with normal
@@ -175,7 +181,24 @@ if [ "$mode" = "lint" ]; then
     "config.sessionAllowPlainHttp true behind an ingress"
     "config.databaseUrl port outside 1 to 65535"
     "config.oidc.issuerUrl port outside 1 to 65535"
+    "objectStore.endpoint set, objectStore.bucket empty"
+    "objectStore.endpoint carries user info"
+    "objectStore.endpoint names a non-numeric port in its host part"
+    "objectStore.endpoint holds a bad percent escape"
+    "config.databaseUrl holds a bad percent escape"
+    "config.databaseUrl holds whitespace"
+    "config.oidc.issuerUrl holds a bad percent escape"
+    "config.databaseUrl holds a DEL character"
+    "config.databaseUrl holds a caret in its password"
+    "config.databaseUrl holds an unclosed bracket"
+    "objectStore.endpoint names a scheme this chart knows no port for"
+    "objectStore.endpoint names no scheme"
   )
+
+  # The DEL character (U+007F), set through printf: bash's $'\x7f' next to a quoted string
+  # adds a stray U+0001 in front of it, which would make that case reject for the wrong
+  # character.
+  del=$(printf '\177')
 
   guard_sets=(
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx,httpRoute.enabled=true,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
@@ -201,6 +224,18 @@ if [ "$mode" = "lint" ]; then
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx,config.sessionAllowPlainHttp=true"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:65536/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.oidc.issuerUrl=https://idp.example.com:0/realms/solobill"
+    "${baseline},objectStore.endpoint=http://s3.example.svc:8333,objectStore.bucket="
+    "${baseline},objectStore.endpoint=http://key:s3cr3tTOKEN@s3.example.svc:8333,objectStore.bucket=solobill"
+    "${baseline},objectStore.endpoint=http://s3.example.svc:abc,objectStore.bucket=solobill"
+    "${baseline},objectStore.endpoint=http://s3.example.svc:8333/%zz,objectStore.bucket=solobill"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://u:s3cr3tTOKEN@postgres.example.svc:5432/solobill?x=%zz,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://u:s3cr3tTOKEN@post gres.example.svc:5432/solobill,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+    "${baseline},config.oidc.issuerUrl=https://u:s3cr3tTOKEN@idp.example.com/realms/%zz"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://u:s3cr3tTOKEN@postgres.example.svc:5432/solobill${del},config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://u:s3cr^3tTOKEN@postgres.example.svc:5432/solobill,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://u:s3cr3tTOKEN@[::1:5432/solobill,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+    "${baseline},objectStore.endpoint=ftp://s3.example.svc,objectStore.bucket=solobill"
+    "${baseline},objectStore.endpoint=s3.example.svc,objectStore.bucket=solobill"
   )
 
   # The distinctive lead sentence of each guard's own fail message (see
@@ -235,6 +270,18 @@ if [ "$mode" = "lint" ]; then
     "config.sessionAllowPlainHttp is true with an ingress or a gateway in front"
     "config.databaseUrl names a port outside 1 to 65535"
     "config.oidc.issuerUrl names a port outside 1 to 65535"
+    "objectStore.bucket is required when objectStore.endpoint is set"
+    "objectStore.endpoint must be an http or https URL with a host, scheme and host only"
+    "objectStore.endpoint has a non-numeric port in its host part"
+    "objectStore.endpoint is not a valid URL"
+    "config.databaseUrl is not a valid URL"
+    "config.databaseUrl is not a valid URL"
+    "config.oidc.issuerUrl is not a valid URL"
+    "config.databaseUrl is not a valid URL"
+    "config.databaseUrl is not a valid URL"
+    "config.databaseUrl is not a valid URL"
+    "objectStore.endpoint names no scheme this chart knows a port for"
+    "objectStore.endpoint names no scheme this chart knows a port for"
   )
 
   for i in "${!guard_names[@]}"; do
@@ -256,6 +303,13 @@ if [ "$mode" = "lint" ]; then
       echo "expected the render's error to contain: ${message}" >&2
       echo "actual output:" >&2
       echo "${output}" >&2
+      exit 1
+    fi
+
+    # No case may print the URL it was given. The fake token s3cr3tTOKEN stands for a
+    # password. The output is not echoed here, it would carry the token.
+    if grep -qF "s3cr3tTOKEN" <<<"${output}"; then
+      echo "validate-chart: the error text prints the URL (the fake token is in it): ${name}" >&2
       exit 1
     fi
   done

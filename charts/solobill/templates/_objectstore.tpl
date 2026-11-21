@@ -34,6 +34,15 @@ object_store_unavailable.
 - name: S3_REQUIRE_VERSIONING
   value: {{ $os.requireVersioning | quote }}
 {{- if $os.endpoint }}
+{{- /*
+The shape of the endpoint is checked here and not by a "pattern" in values.schema.json:
+helm prints the rejected value in a schema pattern error, user info included, and an
+error text reaches CI and "helm upgrade" logs. This message names only the key.
+Scheme and host only: no user info, path, query or fragment, one trailing "/" allowed.
+*/ -}}
+{{- if not (regexMatch "^https?://[^/?#@]+/?$" $os.endpoint) }}
+{{ fail "objectStore.endpoint must be an http or https URL with a host, scheme and host only: no user info, path, query or fragment. The value is not printed here because a URL may carry a password." }}
+{{- end }}
 - name: S3_ENDPOINT
   value: {{ $os.endpoint | quote }}
 - name: S3_BUCKET
@@ -70,12 +79,12 @@ same story as PostgreSQL in networkpolicy.yaml.
 {{- define "solobill.objectStore.egress" -}}
 {{- $os := .Values.objectStore -}}
 {{- if $os.endpoint -}}
-{{- $port := include "solobill.urlPort" $os.endpoint -}}
+{{- $port := include "solobill.urlPort" (dict "key" "objectStore.endpoint" "url" $os.endpoint) -}}
 {{- $peers := include "solobill.networkPolicy.peers" ($os.egress | default dict) -}}
 # The S3 compatible object store (objectStore.endpoint).
 - ports:
     - protocol: TCP
-      port: {{ required "objectStore.endpoint must be an http or https URL" $port }}
+      port: {{ required "objectStore.endpoint names no scheme this chart knows a port for: use an http or https URL." $port }}
   {{- with $peers }}
   to:
     {{- . | nindent 4 }}

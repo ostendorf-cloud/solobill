@@ -33,6 +33,55 @@ tests:
               - protocol: TCP
                 port: 8333
 
+  - it: names objectStore.endpoint in the error for a non-numeric port
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:abc"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint has a non-numeric port in its host part: a URL's
+            port must be digits only. Fix the port after the host's ":", or remove
+            it so this chart falls back to the scheme's own default port.
+
+  - it: names objectStore.endpoint in the error for a bad percent escape
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:8333/%zz"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
+  - it: names no known scheme for an endpoint with an unknown scheme
+    set:
+      objectStore:
+        endpoint: "ftp://s3.seaweedfs.svc"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint names no scheme this chart knows a port for: use an
+            http or https URL.
+
+  - it: names no known scheme for an endpoint without a scheme
+    set:
+      objectStore:
+        endpoint: "s3.seaweedfs.svc"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint names no scheme this chart knows a port for: use an
+            http or https URL.
+
   - it: allows 443 for an https endpoint without a port, scoped to the configured peers
     set:
       objectStore:

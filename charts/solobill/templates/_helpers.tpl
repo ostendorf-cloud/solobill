@@ -145,10 +145,10 @@ percent-encoded or multi-valued in practice, so the simple split is exact for
 what this helper is asked to answer. The last "port" pair wins when the query
 string repeats it, matching pgconn's own last-occurrence-wins behaviour.
 
-The argument is either the URL as a plain string, or a dict with the keys "url"
-and "key", where "key" is the values key the URL came from (for example
-"config.databaseUrl"). The error messages name that key; with a plain string
-they say "a URL" instead.
+The argument is a dict with the keys "url" and "key", where "key" is the values
+key the URL came from (for example "config.databaseUrl"). Every error message
+names that key. There is no plain string form: every caller passes the dict, so
+a message cannot fall back to a vague "a URL".
 
 A port that is not plain digits fails the render here, naming the values key,
 the part of the URL that holds it and the fix, rather than either reaching a caller's own
@@ -167,21 +167,55 @@ closely enough for the URLs this chart actually takes (an optional
 parameter case is checked the same way, after the safe call to urlParse that
 reads the rest of the URL.
 
-The two errors this helper raises itself print neither the URL, any part of
-it nor the bad port value: the URL may carry userinfo, a database password
-included, and an error text reaches CI and "helm upgrade" logs. A URL that
-net/url rejects outright (a bad percent escape, a space in the host) aborts
-the render in sprig's urlParse, and that error does print the whole URL; this
-helper does not catch it. A URL whose password holds an unencoded "/" or "@"
-is not a valid URL either, and this helper makes no promise for it: the text
-after such a character is read as part of the host or the port.
+None of the errors this helper raises prints the URL, any part of it or the bad
+value: the URL may carry userinfo, a database password included, and an error
+text reaches CI and "helm upgrade" logs.
+
+A URL that net/url rejects outright aborts the render inside sprig's urlParse,
+and that error prints the whole URL. This helper therefore checks the raw string
+before urlParse and fails naming only the values key. The check is an allowlist,
+not a list of known bad characters: the URL may hold only the RFC 3986 characters
+(A-Za-z0-9 - . _ ~, the reserved set : / ? # [ ] @ ! $ & ' ( ) * + , ; =, and "%"
+followed by two hex digits). Whitespace, control characters (DEL included),
+^ { } | < > ` " \ and anything outside ASCII fail. Three shapes the allowlist
+cannot see are checked on top of it: a scheme part that is not a scheme (":x",
+"a!b:x"), a "[" or "]" in the user info or a bracketed host that is not an IPv6
+literal (no ":" in it, a second bracket after it, an unclosed "["), and a "%" in a
+host other than the "%25" zone of an IPv6 literal. Consequence: a host with a
+percent-encoded non-ASCII name and an IPv4 address in brackets are rejected too.
+
+What this does not cover, tested with helm and the fake token s3cr3tTOKEN: a
+bracketed host that has a ":" and only hex digits and dots but is still not an
+IPv6 address, for example "[::1::2]", still aborts in urlParse and prints the
+whole URL. Any other shape net/url rejects that this list does not name does the
+same. A URL whose password holds an unencoded "/" or "@" is not a valid URL
+either and is out of scope: the text after such a character is read as part of
+the host or the port, and this helper makes no promise for it.
 */}}
 {{- define "solobill.urlPort" -}}
-{{- $url := . -}}
-{{- $key := "a URL" -}}
-{{- if kindIs "map" . -}}
-{{- $url = .url -}}
-{{- $key = .key -}}
+{{- $url := .url -}}
+{{- $key := .key -}}
+{{- $invalid := not (regexMatch `^[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=-]*$` (regexReplaceAll "%[0-9A-Fa-f]{2}" $url "")) -}}
+{{- $head := regexFind `^[^:/?#]*:` $url -}}
+{{- if and $head (not (regexMatch `^[A-Za-z][A-Za-z0-9+.-]*:$` $head)) -}}
+{{- $invalid = true -}}
+{{- end -}}
+{{- if contains "://" $url -}}
+{{- $pcAuthority := regexReplaceAll "^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]*).*$" $url "$1" -}}
+{{- if and (contains "@" $pcAuthority) (regexMatch `[\[\]]` (regexReplaceAll "@[^@]*$" $pcAuthority "")) -}}
+{{- $invalid = true -}}
+{{- end -}}
+{{- $pcHost := regexReplaceAll "^.*@" $pcAuthority "" -}}
+{{- if regexMatch `[\[\]]` $pcHost -}}
+{{- if not (regexMatch `^\[[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*(%25[A-Za-z0-9._~-]+)?\][^\[\]]*$` $pcHost) -}}
+{{- $invalid = true -}}
+{{- end -}}
+{{- else if contains "%" $pcHost -}}
+{{- $invalid = true -}}
+{{- end -}}
+{{- end -}}
+{{- if $invalid -}}
+{{ fail (printf "%s is not a valid URL: it holds a character or shape a URL may not have: whitespace, a control character, a percent sign not followed by two hex digits, a non-ASCII character, one of ^ { } | < > ` the double quote or the backslash, a misplaced bracket, a percent escape in the host or a missing scheme. Fix it. The value is not printed here because a URL may carry a password." $key) }}
 {{- end -}}
 {{- if contains "://" $url -}}
 {{- $authority := regexReplaceAll "^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]*).*$" $url "$1" -}}

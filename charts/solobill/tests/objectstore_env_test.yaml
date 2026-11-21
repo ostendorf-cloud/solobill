@@ -97,10 +97,50 @@ tests:
       - failedTemplate:
           errorPattern: "objectStore.bucket is required"
 
-  - it: refuses an endpoint with a path through the schema
+  - it: refuses an endpoint with a path without printing it
     set:
       objectStore:
         endpoint: "http://s3.seaweedfs.svc:8333/solobill"
         bucket: solobill
     asserts:
-      - failedTemplate: {}
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint must be an http or https URL with a host, scheme and
+            host only: no user info, path, query or fragment. The value is not printed
+            here because a URL may carry a password.
+
+  - it: refuses an endpoint with user info without printing it
+    set:
+      objectStore:
+        endpoint: "http://key:s3cr3tTOKEN@s3.seaweedfs.svc:8333"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint must be an http or https URL with a host, scheme and
+            host only: no user info, path, query or fragment. The value is not printed
+            here because a URL may carry a password.
+
+  - it: refuses an endpoint with an uppercase scheme without printing it
+    set:
+      objectStore:
+        endpoint: "HTTP://s3.seaweedfs.svc:8333"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint must be an http or https URL with a host, scheme and
+            host only: no user info, path, query or fragment. The value is not printed
+            here because a URL may carry a password.
+
+  - it: refuses an endpoint with another scheme without printing it
+    set:
+      objectStore:
+        endpoint: "ftp://s3.seaweedfs.svc"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint must be an http or https URL with a host, scheme and
+            host only: no user info, path, query or fragment. The value is not printed
+            here because a URL may carry a password.

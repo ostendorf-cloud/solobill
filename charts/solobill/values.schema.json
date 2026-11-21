@@ -262,8 +262,7 @@
       "properties": {
         "endpoint": {
           "type": "string",
-          "pattern": "^(https?://[^/?#@]+/?)?$",
-          "description": "Base URL of the S3 API, scheme and host only. Empty: no store, the file routes answer 503."
+          "description": "Base URL of the S3 API, scheme and host only: http or https, no user info, path, query or fragment. Empty: no store, the file routes answer 503. Checked by a template fail guard in templates/_objectstore.tpl, not a schema pattern: helm prints a rejected value in a schema error, and an error text must never carry a URL."
         },
         "bucket": { "type": "string" },
         "region": { "type": "string", "minLength": 1 },
