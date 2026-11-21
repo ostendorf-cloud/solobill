@@ -282,6 +282,143 @@ tests:
             without. Set networkPolicy.egress.postgres.port to 6432, or point
             config.databaseUrl at port 5432.
 
+  # net/url takes the port of an http or https URL from the first colon of the host, so a
+  # second colon in the host aborted urlParse and printed the URL. The helper takes the
+  # host port after the first colon as well.
+  - it: config.oidc.issuerUrl rejects an unbracketed IPv6 host as a bad host port
+    set:
+      config:
+        oidc:
+          issuerUrl: "https://u:s3cr3tTOKEN@::1/realms/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: &issuerHostPort >-
+            config.oidc.issuerUrl has a non-numeric port in its host part: a URL's
+            port must be digits only. Fix the port after the host's ":", or remove
+            it so this chart falls back to the scheme's own default port.
+
+  - it: config.oidc.issuerUrl rejects a second colon in the host
+    set:
+      config:
+        oidc:
+          issuerUrl: "https://u:s3cr3tTOKEN@idp:x.example.com:443/realms/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: *issuerHostPort
+
+  - it: config.oidc.issuerUrl rejects a second colon in the port
+    set:
+      config:
+        oidc:
+          issuerUrl: "https://u:s3cr3tTOKEN@idp.example.com:44:3/realms/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: *issuerHostPort
+
+  - it: config.databaseUrl rejects a second colon in the host
+    set:
+      config:
+        databaseUrl: "postgres://u:s3cr3tTOKEN@postgres.example.svc:5432:6/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl has a non-numeric port in its host part: a URL's
+            port must be digits only. Fix the port after the host's ":", or remove
+            it so this chart falls back to the scheme's own default port.
+
+  # A scheme-relative URL ("//host") has no scheme, so it is no usable URL for this chart,
+  # and urlParse would read its authority without the checks above.
+  - it: config.databaseUrl rejects a scheme-relative URL with a bad port
+    set:
+      config:
+        databaseUrl: "//u:s3cr3tTOKEN@postgres.example.svc:abc/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: *dbMessage
+
+  - it: config.databaseUrl rejects a scheme-relative URL with a bad IPv6 literal
+    set:
+      config:
+        databaseUrl: "//u:s3cr3tTOKEN@[::1::2]/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: *dbMessage
+
+  - it: config.oidc.issuerUrl rejects a scheme-relative URL with a bracket in the user info
+    set:
+      config:
+        oidc:
+          issuerUrl: "//u:s3cr3t[TOKEN@idp.example.com/realms/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: *issuerMessage
+
+  - it: config.oidc.issuerUrl rejects a scheme-relative URL with a percent escape in the host
+    set:
+      config:
+        oidc:
+          issuerUrl: "//u:s3cr3tTOKEN@idp%41.example.com/realms/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: *issuerMessage
+
+  - it: config.databaseUrl rejects a malformed IPv6 literal
+    set:
+      config:
+        databaseUrl: "postgres://u:s3cr3tTOKEN@[1:2:3:4:5:6:7:8:9]:5432/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: *dbMessage
+
+  - it: config.databaseUrl rejects an IPv6 literal with a bad IPv4 tail
+    set:
+      config:
+        databaseUrl: "postgres://u:s3cr3tTOKEN@[::ffff:1.2.3.256]:5432/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: *dbMessage
+
+  - it: config.databaseUrl accepts an IPv6 literal with a documentation prefix
+    set:
+      config:
+        databaseUrl: "postgres://u:p@[2001:db8::1]:5432/solobill"
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: config.databaseUrl accepts an IPv4 mapped IPv6 literal
+    set:
+      config:
+        databaseUrl: "postgres://u:p@[::ffff:1.2.3.4]:5432/solobill"
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: config.databaseUrl accepts an IPv6 literal with a zone
+    set:
+      config:
+        databaseUrl: "postgres://u:p@[fe80::1%25eth0]:5432/solobill"
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: config.databaseUrl accepts a plain host and port
+    set:
+      config:
+        databaseUrl: "postgres://u:p@postgres.example.svc:5432/solobill"
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: config.oidc.issuerUrl accepts an IPv6 literal with a port
+    set:
+      config:
+        oidc:
+          issuerUrl: "https://[2001:db8::1]:443/realms/solobill"
+    asserts:
+      - hasDocuments:
+          count: 1
+
   - it: reads the port of an IPv6 literal with a bad port as a port error
     set:
       config:

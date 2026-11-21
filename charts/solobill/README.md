@@ -492,22 +492,27 @@ URL may hold only the characters RFC 3986 allows (letters, digits, `-._~`, the r
 `^ { } | < > "` a backtick, a backslash and anything outside ASCII fail the render on their own
 guard, which names only the values key (`config.databaseUrl`, `config.oidc.issuerUrl` or
 `objectStore.endpoint`) and never the URL. The same guard rejects a scheme part that is not a
-scheme, a bracket in the user info, a bracketed host that is not an IPv6 literal, and a `%` in
-the host other than an IPv6 zone. An IPv4 address in brackets and a percent-encoded non-ASCII
-host name are rejected as well.
+scheme, a scheme-relative URL (`//host`), a bracket in the user info, a bracketed host that is
+not a valid IPv6 literal, and a `%` in the host other than an IPv6 zone. The host port is read
+after the first colon of the host, as `net/url` does, so a second colon in the host or the port
+is a non-numeric port. An IPv4 address in brackets, a percent-encoded non-ASCII host name, a
+scheme-relative URL and a `postgres://` URL with a second colon in the host are rejected as
+well. None of them is a usable URL here.
 
-What this does not cover: a bracketed host that looks like an IPv6 literal but is not a valid one
-(for example `[::1::2]`) still aborts in `urlParse` and prints the whole URL, and so does any
-other shape `net/url` rejects that the list above does not name. A password with an unencoded `/`
-or `@` is not a valid URL and is out of scope: the text after that character is read as part of
-the host or the port. Percent-encode such a password, or keep it out of the URL, as the chart
-already asks for `config.databaseUrl`.
+The guards were run over 2610 renders of the three keys with a fake password (punctuation,
+control characters, percent escapes, IPv6 forms, scheme-relative and opaque URLs, long values),
+and none printed the URL. That is a test, not a proof: a shape that none of those renders hit
+could still abort in `urlParse` and print it. A password with an unencoded `/`, `?`, `#` or `@`
+is not a valid URL and is out of scope: the text after that character is read as part of the host
+or the port. Percent-encode such a password, or keep it out of the URL, as the chart already
+asks for `config.databaseUrl`.
 
 `objectStore.endpoint`'s shape (`http` or `https`, host only, no user info, path, query or
 fragment) is a `fail` guard in `templates/_objectstore.tpl`, not a pattern in
 `values.schema.json`: helm prints the rejected value in a schema pattern error, user info
-included. The guard names only the key. The schema keeps no pattern for a URL value, so no
-schema error carries one.
+included. The guard names only the key. No schema pattern applies to a URL value, so no schema
+error carries one. `config.passkey.origins` items keep a `^https://` pattern: they are origins,
+never carry credentials, and a rejected one is printed in the schema error.
 
 The last guard is not about a URL at all: `service.port` and `adminPort` select two different
 listeners, and the public ingress rule above, unscoped by default, renders on whichever port

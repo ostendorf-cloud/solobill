@@ -193,6 +193,8 @@ if [ "$mode" = "lint" ]; then
     "config.databaseUrl holds an unclosed bracket"
     "objectStore.endpoint names a scheme this chart knows no port for"
     "objectStore.endpoint names no scheme"
+    "config.oidc.issuerUrl holds a second colon in its host"
+    "config.databaseUrl is scheme-relative"
   )
 
   # The DEL character (U+007F), set through printf: bash's $'\x7f' next to a quoted string
@@ -236,6 +238,8 @@ if [ "$mode" = "lint" ]; then
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://u:s3cr3tTOKEN@[::1:5432/solobill,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
     "${baseline},objectStore.endpoint=ftp://s3.example.svc,objectStore.bucket=solobill"
     "${baseline},objectStore.endpoint=s3.example.svc,objectStore.bucket=solobill"
+    "${baseline},config.oidc.issuerUrl=https://u:s3cr3tTOKEN@::1/realms/solobill"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=//u:s3cr3tTOKEN@postgres.example.svc:abc/solobill,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
   )
 
   # The distinctive lead sentence of each guard's own fail message (see
@@ -282,6 +286,8 @@ if [ "$mode" = "lint" ]; then
     "config.databaseUrl is not a valid URL"
     "objectStore.endpoint names no scheme this chart knows a port for"
     "objectStore.endpoint names no scheme this chart knows a port for"
+    "config.oidc.issuerUrl has a non-numeric port in its host part"
+    "config.databaseUrl is not a valid URL"
   )
 
   for i in "${!guard_names[@]}"; do
@@ -307,7 +313,8 @@ if [ "$mode" = "lint" ]; then
     fi
 
     # No case may print the URL it was given. The fake token s3cr3tTOKEN stands for a
-    # password. The output is not echoed here, it would carry the token.
+    # password. This branch does not echo the output, which would carry the token. The two
+    # branches above echo it, they only run while a guard is broken.
     if grep -qF "s3cr3tTOKEN" <<<"${output}"; then
       echo "validate-chart: the error text prints the URL (the fake token is in it): ${name}" >&2
       exit 1

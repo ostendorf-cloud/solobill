@@ -179,18 +179,22 @@ not a list of known bad characters: the URL may hold only the RFC 3986 character
 followed by two hex digits). Whitespace, control characters (DEL included),
 ^ { } | < > ` " \ and anything outside ASCII fail. Three shapes the allowlist
 cannot see are checked on top of it: a scheme part that is not a scheme (":x",
-"a!b:x"), a "[" or "]" in the user info or a bracketed host that is not an IPv6
-literal (no ":" in it, a second bracket after it, an unclosed "["), and a "%" in a
-host other than the "%25" zone of an IPv6 literal. Consequence: a host with a
-percent-encoded non-ASCII name and an IPv4 address in brackets are rejected too.
+"a!b:x"), a scheme-relative URL ("//host"), a "[" or "]" in the user info, a
+bracketed host that is not a valid IPv6 literal (RFC 4291 text forms, an IPv4 tail
+allowed, an optional "%25" zone, an unclosed "[" fails), and a "%" in a host other
+than that zone. The host port is read after the FIRST colon of the host, as net/url
+does for http and https, so a second colon in the host or the port is a non-numeric
+port. Consequence: a host with a percent-encoded non-ASCII name, an IPv4 address in
+brackets, a scheme-relative URL and a "postgres://" URL with a second colon in the
+host are rejected too, none of them is a usable URL for this chart.
 
-What this does not cover, tested with helm and the fake token s3cr3tTOKEN: a
-bracketed host that has a ":" and only hex digits and dots but is still not an
-IPv6 address, for example "[::1::2]", still aborts in urlParse and prints the
-whole URL. Any other shape net/url rejects that this list does not name does the
-same. A URL whose password holds an unencoded "/" or "@" is not a valid URL
-either and is out of scope: the text after such a character is read as part of
-the host or the port, and this helper makes no promise for it.
+Tested with helm and the fake token s3cr3tTOKEN over 2610 renders of the three keys
+(punctuation, control characters, percent escapes, IPv6 forms, scheme-relative and
+opaque URLs, long values): none prints the URL. That is a test, not a proof: a shape
+net/url rejects that none of those renders hit would still abort in urlParse and
+print the URL. A URL whose password holds an unencoded "/", "?", "#" or "@" is not a
+valid URL either and is out of scope: the text after such a character is read as
+part of the host or the port, and this helper makes no promise for it.
 */}}
 {{- define "solobill.urlPort" -}}
 {{- $url := .url -}}
@@ -200,6 +204,12 @@ the host or the port, and this helper makes no promise for it.
 {{- if and $head (not (regexMatch `^[A-Za-z][A-Za-z0-9+.-]*:$` $head)) -}}
 {{- $invalid = true -}}
 {{- end -}}
+{{- if hasPrefix "//" $url -}}
+{{- $invalid = true -}}
+{{- end -}}
+{{- $hex := "[0-9A-Fa-f]{1,4}" -}}
+{{- $v4 := `((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])` -}}
+{{- $ip6 := `(HEX:){7}HEX|(HEX:){1,7}:|(HEX:){1,6}:HEX|(HEX:){1,5}(:HEX){1,2}|(HEX:){1,4}(:HEX){1,3}|(HEX:){1,3}(:HEX){1,4}|(HEX:){1,2}(:HEX){1,5}|HEX:(:HEX){1,6}|:((:HEX){1,7}|:)|(HEX:){6}IPV4|::([Ff]{4}(:0{1,4})?:)?IPV4|(HEX:){1,5}:IPV4` | replace "HEX" $hex | replace "IPV4" $v4 -}}
 {{- if contains "://" $url -}}
 {{- $pcAuthority := regexReplaceAll "^[a-zA-Z][a-zA-Z0-9+.-]*://([^/?#]*).*$" $url "$1" -}}
 {{- if and (contains "@" $pcAuthority) (regexMatch `[\[\]]` (regexReplaceAll "@[^@]*$" $pcAuthority "")) -}}
@@ -207,7 +217,7 @@ the host or the port, and this helper makes no promise for it.
 {{- end -}}
 {{- $pcHost := regexReplaceAll "^.*@" $pcAuthority "" -}}
 {{- if regexMatch `[\[\]]` $pcHost -}}
-{{- if not (regexMatch `^\[[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*(%25[A-Za-z0-9._~-]+)?\][^\[\]]*$` $pcHost) -}}
+{{- if not (regexMatch (print `^\[(` $ip6 `)(%25[A-Za-z0-9._~-]+)?\][^\[\]]*$`) $pcHost) -}}
 {{- $invalid = true -}}
 {{- end -}}
 {{- else if contains "%" $pcHost -}}
@@ -225,7 +235,7 @@ the host or the port, and this helper makes no promise for it.
 {{- $afterBracket := regexReplaceAll "^.*\\]" $hostport "" -}}
 {{- $hostPortCandidate = trimPrefix ":" $afterBracket -}}
 {{- else if contains ":" $hostport -}}
-{{- $hostPortCandidate = regexReplaceAll "^.*:" $hostport "" -}}
+{{- $hostPortCandidate = regexReplaceAll "^[^:]*:" $hostport "" -}}
 {{- end -}}
 {{- if and $hostPortCandidate (not (regexMatch "^[0-9]+$" $hostPortCandidate)) -}}
 {{ fail (printf "%s has a non-numeric port in its host part: a URL's port must be digits only. Fix the port after the host's \":\", or remove it so this chart falls back to the scheme's own default port." $key) }}

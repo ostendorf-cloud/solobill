@@ -45,6 +45,33 @@ tests:
             port must be digits only. Fix the port after the host's ":", or remove
             it so this chart falls back to the scheme's own default port.
 
+  - it: names objectStore.endpoint in the error for a second colon in the host
+    set:
+      objectStore:
+        endpoint: "http://key:s3cr3tTOKEN@s3.seaweedfs.svc:x:8333"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint has a non-numeric port in its host part: a URL's
+            port must be digits only. Fix the port after the host's ":", or remove
+            it so this chart falls back to the scheme's own default port.
+
+  - it: names objectStore.endpoint in the error for a scheme-relative URL
+    set:
+      objectStore:
+        endpoint: "//key:s3cr3tTOKEN@s3.seaweedfs.svc:abc"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
   - it: names objectStore.endpoint in the error for a bad percent escape
     set:
       objectStore:
