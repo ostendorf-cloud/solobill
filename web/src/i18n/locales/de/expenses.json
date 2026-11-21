@@ -1,1 +1,162 @@
-{}
+{
+  "nav": "Ausgaben",
+  "title": "Ausgaben",
+  "lead": "Deine Betriebsausgaben pro Jahr mit ihren Belegen.",
+  "tableCaption": "Liste der Ausgaben",
+  "loading": "Die Ausgaben werden geladen.",
+  "loadError": "Die Ausgaben konnten nicht geladen werden.",
+  "loadErrorTitle": "Laden fehlgeschlagen",
+  "emptyTitle": "Keine Ausgaben",
+  "emptyDescription": "Keine Ausgabe passt zum Filter. Erfasse einen Beleg, um eine anzulegen.",
+  "create": "Beleg erfassen",
+  "open": "Öffnen",
+  "openFor": "{name} öffnen",
+  "noSupplier": "Kein Lieferant",
+  "filters": {
+    "label": "Filter",
+    "year": "Zahlungsjahr",
+    "state": "Status",
+    "category": "Kategorie",
+    "allStates": "Alle Status",
+    "allCategories": "Alle Kategorien"
+  },
+  "state": {
+    "draft": "Entwurf",
+    "booked": "Gebucht",
+    "storno": "Storno"
+  },
+  "columns": {
+    "paidOn": "Bezahlt am",
+    "supplier": "Lieferant",
+    "category": "Kategorie",
+    "state": "Status",
+    "gross": "Brutto",
+    "net": "Netto",
+    "actions": "Aktionen"
+  },
+  "totals": {
+    "label": "Summe der aufgelisteten Ausgaben",
+    "gross": "Brutto",
+    "net": "Netto"
+  },
+  "fields": {
+    "paidOn": "Bezahlt am",
+    "paidOnHint": "Datum als 2026-11-18. Es bestimmt das Jahr und die Umsatzsteuerregelung.",
+    "receiptDate": "Belegdatum",
+    "receiptDateHint": "Datum auf dem Beleg, als 2026-11-17.",
+    "supplier": "Lieferant",
+    "description": "Beschreibung",
+    "gross": "Bruttobetrag",
+    "grossHint": "Gezahlter Betrag, zum Beispiel 59,50.",
+    "rate": "Umsatzsteuersatz in Prozent",
+    "rateHint": "Zum Beispiel 19 oder 7.",
+    "vat": "Umsatzsteuerbetrag",
+    "vatHint": "Die Umsatzsteuer laut Beleg.",
+    "net": "Nettobetrag",
+    "category": "Kategorie (EÜR-Zeile)",
+    "categoryPlaceholder": "Kategorie wählen"
+  },
+  "regime": {
+    "kleinunternehmer": "Umsatzsteuerregelung an diesem Datum: Kleinunternehmer. Der Bruttobetrag zählt, Umsatzsteuer wird nicht erfasst.",
+    "standard": "Umsatzsteuerregelung an diesem Datum: Regelbesteuerung. Trage die Umsatzsteuer vom Beleg ein.",
+    "unknown": "Kein Zeitraum der Umsatzsteuerregelung deckt dieses Datum ab. Lege vor dem Buchen einen an. Bis dahin werden die Umsatzsteuerfelder angezeigt.",
+    "loadFailed": "Die Umsatzsteuerregelung konnte nicht geladen werden. Die Umsatzsteuerfelder werden angezeigt."
+  },
+  "upload": {
+    "title": "Beleg erfassen",
+    "lead": "Wähle zuerst den Beleg. Das Formular öffnet sich neben einer Vorschau.",
+    "file": "Belegdatei",
+    "fileHint": "PDF, JPEG, PNG oder XML, höchstens 10 MiB.",
+    "button": "Beleg hochladen",
+    "uploading": "Der Beleg wird hochgeladen",
+    "skip": "Ohne Beleg fortfahren",
+    "errors": {
+      "empty": "Die Datei ist leer.",
+      "tooLarge": "Die Datei ist größer als 10 MiB.",
+      "unsupportedType": "Dieser Dateityp wird nicht akzeptiert. Wähle eine PDF-, JPEG-, PNG- oder XML-Datei.",
+      "serverTooLarge": "Der Server hat die Datei abgelehnt: Sie ist zu groß.",
+      "serverUnsupported": "Der Server hat die Datei abgelehnt: Sie ist keine PDF-, JPEG-, PNG- oder XML-Datei.",
+      "storeUnavailable": "Der Belegspeicher ist nicht erreichbar. Versuche es später erneut.",
+      "failed": "Der Beleg konnte nicht hochgeladen werden. Versuche es erneut."
+    },
+    "duplicateTitle": "Dieser Beleg ist schon gespeichert",
+    "duplicateMessage": "Eine Datei mit gleichem Inhalt wurde schon hochgeladen: {names}. Du kannst fortfahren, aber der Beleg könnte doppelt gebucht werden.",
+    "duplicateContinue": "Trotzdem fortfahren",
+    "duplicateChoose": "Andere Datei wählen"
+  },
+  "capture": {
+    "title": "Neue Ausgabe",
+    "titleDraft": "Ausgabe (Entwurf)",
+    "titleBooked": "Ausgabe (gebucht)",
+    "lead": "Prüfe links den Beleg und fülle rechts das Formular aus.",
+    "loading": "Die Ausgabe wird geladen.",
+    "loadError": "Die Ausgabe konnte nicht geladen werden.",
+    "loadErrorTitle": "Laden fehlgeschlagen",
+    "back": "Zurück zu den Ausgaben",
+    "formCaption": "Daten der Ausgabe",
+    "save": "Entwurf speichern",
+    "saving": "Die Ausgabe wird gespeichert",
+    "saved": "Der Entwurf ist gespeichert.",
+    "saveError": "Die Ausgabe konnte nicht gespeichert werden. Prüfe die markierten Felder.",
+    "unsaved": "Speichere den Entwurf, bevor du ihn buchst.",
+    "bookedNote": "Diese Ausgabe ist gebucht. Sie ist schreibgeschützt und kann weder geändert noch gelöscht werden.",
+    "stornoNote": "Diese Zeile ist eine Stornobuchung. Sie macht eine frühere Ausgabe rückgängig und ist schreibgeschützt.",
+    "openOriginal": "Ursprüngliche Ausgabe öffnen",
+    "bookedAt": "Gebucht am {date}"
+  },
+  "preview": {
+    "title": "Beleg",
+    "imageAlt": "Beleg {name}",
+    "download": "{name} herunterladen",
+    "noReceipt": "Es ist kein Beleg angehängt.",
+    "notShown": "Dieser Dateityp wird hier nicht angezeigt. Lade ihn herunter, um ihn zu lesen.",
+    "loadError": "Die Belegdaten konnten nicht geladen werden."
+  },
+  "book": {
+    "action": "Buchen",
+    "title": "Diese Ausgabe buchen?",
+    "message": "Eine gebuchte Ausgabe kann nie wieder geändert oder gelöscht werden. Ein Fehler wird nur durch eine Stornobuchung und eine neue Ausgabe behoben.",
+    "confirm": "Endgültig buchen",
+    "done": "Die Ausgabe ist gebucht.",
+    "already": "Die Ausgabe ist schon gebucht.",
+    "error": "Die Ausgabe konnte nicht gebucht werden."
+  },
+  "storno": {
+    "action": "Mit Storno rückgängig machen",
+    "title": "Diese Ausgabe stornieren?",
+    "message": "Die gebuchte Ausgabe bleibt unverändert sichtbar. Stattdessen wird eine Stornozeile mit negierten Beträgen gebucht. Ein Storno kann weder zurückgenommen noch bearbeitet werden.",
+    "paidOn": "Datum der Rückzahlung",
+    "paidOnHint": "Datum als 2026-11-25. Es bestimmt das Jahr der Stornozeile.",
+    "confirm": "Storno buchen",
+    "done": "Der Storno ist gebucht.",
+    "error": "Der Storno konnte nicht gebucht werden.",
+    "conflict": "Diese Ausgabe kann nicht storniert werden. Sie ist möglicherweise schon storniert."
+  },
+  "delete": {
+    "action": "Entwurf löschen",
+    "title": "Diesen Entwurf löschen?",
+    "message": "Der Entwurf verschwindet. Die hochgeladene Belegdatei bleibt gespeichert.",
+    "done": "Der Entwurf ist gelöscht.",
+    "error": "Der Entwurf konnte nicht gelöscht werden."
+  },
+  "cancel": "Abbrechen",
+  "reasons": {
+    "invalidDate": "Gib ein Datum wie 2026-11-18 ein.",
+    "dateRange": "Das Datum muss zwischen 2000-01-01 und einem Jahr ab heute liegen.",
+    "noReceipt": "Die Belegdatei ist ungültig. Lade sie erneut hoch.",
+    "positive": "Der Betrag muss größer als 0 sein.",
+    "tooLarge": "Der Betrag ist zu groß.",
+    "invalidRate": "Der Satz muss zwischen 0 und 100 Prozent liegen.",
+    "vatSum": "Netto und Umsatzsteuer müssen zusammen den Bruttobetrag ergeben.",
+    "kleinunternehmer": "Bei Kleinunternehmern wird keine Umsatzsteuer erfasst.",
+    "vatMismatch": "Die Umsatzsteuer passt bei diesem Satz nicht zum Bruttobetrag.",
+    "requiredForBooking": "Dieses Feld ist zum Buchen erforderlich.",
+    "stornoBefore": "Das Datum darf nicht vor dem Zahlungsdatum des Originals liegen.",
+    "tooLong": "Der Text ist zu lang.",
+    "invalidCategory": "Wähle eine Kategorie aus der Liste.",
+    "regimeMissing": "Kein Zeitraum der Umsatzsteuerregelung deckt dieses Datum ab.",
+    "badAmount": "Gib einen Betrag wie 59,50 ein.",
+    "badRate": "Gib einen Satz wie 19 oder 7,5 ein.",
+    "vatAboveGross": "Die Umsatzsteuer darf nicht höher als der Bruttobetrag sein."
+  }
+}

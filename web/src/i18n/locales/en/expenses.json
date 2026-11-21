@@ -1,1 +1,162 @@
-{}
+{
+  "nav": "Expenses",
+  "title": "Expenses",
+  "lead": "Your business expenses per year with their receipts.",
+  "tableCaption": "List of expenses",
+  "loading": "Loading the expenses.",
+  "loadError": "The expenses could not be loaded.",
+  "loadErrorTitle": "Loading failed",
+  "emptyTitle": "No expenses",
+  "emptyDescription": "No expense matches the filter. Capture a receipt to add one.",
+  "create": "Capture receipt",
+  "open": "Open",
+  "openFor": "Open {name}",
+  "noSupplier": "No supplier",
+  "filters": {
+    "label": "Filter",
+    "year": "Year of payment",
+    "state": "State",
+    "category": "Category",
+    "allStates": "All states",
+    "allCategories": "All categories"
+  },
+  "state": {
+    "draft": "Draft",
+    "booked": "Booked",
+    "storno": "Storno"
+  },
+  "columns": {
+    "paidOn": "Paid on",
+    "supplier": "Supplier",
+    "category": "Category",
+    "state": "State",
+    "gross": "Gross",
+    "net": "Net",
+    "actions": "Actions"
+  },
+  "totals": {
+    "label": "Total of the listed expenses",
+    "gross": "Gross",
+    "net": "Net"
+  },
+  "fields": {
+    "paidOn": "Paid on",
+    "paidOnHint": "Date as 2026-11-18. It decides the year and the VAT regime.",
+    "receiptDate": "Receipt date",
+    "receiptDateHint": "Date on the receipt, as 2026-11-17.",
+    "supplier": "Supplier",
+    "description": "Description",
+    "gross": "Gross amount",
+    "grossHint": "Amount paid, for example 59,50.",
+    "rate": "VAT rate in percent",
+    "rateHint": "For example 19 or 7.",
+    "vat": "VAT amount",
+    "vatHint": "The VAT shown on the receipt.",
+    "net": "Net amount",
+    "category": "Category (EÜR line)",
+    "categoryPlaceholder": "Choose a category"
+  },
+  "regime": {
+    "kleinunternehmer": "VAT regime on this date: Kleinunternehmer. The gross amount counts and no VAT is recorded.",
+    "standard": "VAT regime on this date: standard. Enter the VAT from the receipt.",
+    "unknown": "No VAT regime period covers this date. Add one in the VAT regime settings before you book. The VAT fields are shown until then.",
+    "loadFailed": "The VAT regime could not be loaded. The VAT fields are shown."
+  },
+  "upload": {
+    "title": "Capture a receipt",
+    "lead": "Choose the receipt first. The form opens beside a preview of it.",
+    "file": "Receipt file",
+    "fileHint": "PDF, JPEG, PNG or XML, at most 10 MiB.",
+    "button": "Upload receipt",
+    "uploading": "Uploading the receipt",
+    "skip": "Continue without a receipt",
+    "errors": {
+      "empty": "The file is empty.",
+      "tooLarge": "The file is larger than 10 MiB.",
+      "unsupportedType": "This file type is not accepted. Choose a PDF, JPEG, PNG or XML file.",
+      "serverTooLarge": "The server refused the file: it is too large.",
+      "serverUnsupported": "The server refused the file: it is not a PDF, JPEG, PNG or XML file.",
+      "storeUnavailable": "The receipt storage is not available. Try again later.",
+      "failed": "The receipt could not be uploaded. Try again."
+    },
+    "duplicateTitle": "This receipt is already stored",
+    "duplicateMessage": "A file with the same content was uploaded before: {names}. You may continue, but the receipt could be booked twice.",
+    "duplicateContinue": "Continue anyway",
+    "duplicateChoose": "Choose another file"
+  },
+  "capture": {
+    "title": "New expense",
+    "titleDraft": "Expense (draft)",
+    "titleBooked": "Expense (booked)",
+    "lead": "Check the receipt on the left and fill the form on the right.",
+    "loading": "Loading the expense.",
+    "loadError": "The expense could not be loaded.",
+    "loadErrorTitle": "Loading failed",
+    "back": "Back to the expenses",
+    "formCaption": "Expense data",
+    "save": "Save draft",
+    "saving": "Saving the expense",
+    "saved": "The draft is saved.",
+    "saveError": "The expense could not be saved. Check the marked fields.",
+    "unsaved": "Save the draft before you book it.",
+    "bookedNote": "This expense is booked. It is read only and cannot be changed or deleted.",
+    "stornoNote": "This row is a storno booking. It reverses an earlier expense and is read only.",
+    "openOriginal": "Open the original expense",
+    "bookedAt": "Booked at {date}"
+  },
+  "preview": {
+    "title": "Receipt",
+    "imageAlt": "Receipt {name}",
+    "download": "Download {name}",
+    "noReceipt": "No receipt is attached.",
+    "notShown": "This file type is not shown here. Download it to read it.",
+    "loadError": "The receipt data could not be loaded."
+  },
+  "book": {
+    "action": "Book",
+    "title": "Book this expense?",
+    "message": "A booked expense can never be changed or deleted again. A mistake is fixed only by a storno booking and a new expense.",
+    "confirm": "Book permanently",
+    "done": "The expense is booked.",
+    "already": "The expense is booked already.",
+    "error": "The expense could not be booked."
+  },
+  "storno": {
+    "action": "Reverse with a storno",
+    "title": "Reverse this expense?",
+    "message": "The booked expense stays unchanged and visible. A storno row with negated amounts is booked instead. A storno cannot be undone or edited.",
+    "paidOn": "Date the money flowed back",
+    "paidOnHint": "Date as 2026-11-25. It decides the year of the storno row.",
+    "confirm": "Book the storno",
+    "done": "The storno is booked.",
+    "error": "The storno could not be booked.",
+    "conflict": "This expense cannot be reversed. It may be reversed already."
+  },
+  "delete": {
+    "action": "Delete draft",
+    "title": "Delete this draft?",
+    "message": "The draft disappears. The uploaded receipt file stays stored.",
+    "done": "The draft is deleted.",
+    "error": "The draft could not be deleted."
+  },
+  "cancel": "Cancel",
+  "reasons": {
+    "invalidDate": "Enter a date such as 2026-11-18.",
+    "dateRange": "The date must be between 2000-01-01 and one year from today.",
+    "noReceipt": "The receipt file is not valid. Upload it again.",
+    "positive": "The amount must be greater than 0.",
+    "tooLarge": "The amount is too large.",
+    "invalidRate": "The rate must be between 0 and 100 percent.",
+    "vatSum": "Net amount and VAT must add up to the gross amount.",
+    "kleinunternehmer": "Under the Kleinunternehmer regime no VAT is recorded.",
+    "vatMismatch": "The VAT does not match the gross amount at this rate.",
+    "requiredForBooking": "This field is required for booking.",
+    "stornoBefore": "The date must not be before the payment date of the original.",
+    "tooLong": "The text is too long.",
+    "invalidCategory": "Choose a category from the list.",
+    "regimeMissing": "No VAT regime period covers this date.",
+    "badAmount": "Enter an amount such as 59,50.",
+    "badRate": "Enter a rate such as 19 or 7,5.",
+    "vatAboveGross": "The VAT cannot be higher than the gross amount."
+  }
+}
