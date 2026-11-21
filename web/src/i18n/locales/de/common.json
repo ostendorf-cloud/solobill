@@ -21,6 +21,7 @@
     "forbidden": "Dafür fehlt dir die Berechtigung.",
     "server": "Der Server hatte einen Fehler. Versuche es später noch einmal.",
     "network": "Der Server ist nicht erreichbar. Prüfe die Verbindung.",
+    "session": "Die Sitzung konnte nicht geladen werden. Speichern und Löschen sind gesperrt. Lade die Seite neu.",
     "generic": "Das hat nicht geklappt. Versuche es noch einmal."
   },
   "gobdBanner": "Der Dateispeicher ist nicht gegen Änderung und Löschung geschützt. Belege werden so nicht revisionssicher aufbewahrt."

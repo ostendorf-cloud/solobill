@@ -7,7 +7,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { apiClient } from '../api'
 import { de, en } from '../i18n/locales'
-import { me } from '../session'
+import { clearSession, me } from '../session'
 import CatalogueView from './CatalogueView.vue'
 
 vi.mock('../api', () => ({
@@ -45,6 +45,7 @@ describe('CatalogueView', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     useToasts().dismissAll()
+    clearSession()
     me.value = { email: 'a@b.test', name: 'Ada', role: 'owner', csrf_token: 'csrf' }
   })
 
@@ -208,16 +209,87 @@ describe('CatalogueView', () => {
     expect(within(dialog).queryByText(/marked fields/)).toBeNull()
   })
 
-  it('keeps save disabled until the shell loaded the session', async () => {
+  function mockListAndMe(meAnswer: 'ok' | 'fail') {
+    vi.mocked(apiClient.get).mockImplementation((path: string) => {
+      if (path === '/me') {
+        return meAnswer === 'ok'
+          ? Promise.resolve({ email: 'a@b.test', name: 'Ada', role: 'owner', csrf_token: 'csrf' })
+          : Promise.reject(apiError(503, ErrorCode.unavailable))
+      }
+      return Promise.resolve({ items: [item] })
+    })
+  }
+
+  it('keeps save disabled and says why when /me failed, after one retry', async () => {
     me.value = null
-    vi.mocked(apiClient.get).mockResolvedValue({ items: [item] })
+    mockListAndMe('fail')
     const user = userEvent.setup()
     renderView()
 
     await user.click(await screen.findByRole('button', { name: 'Edit Consulting hour' }))
     const dialog = await screen.findByRole('dialog')
 
+    expect(await within(dialog).findByText(/The session could not be loaded/)).toBeVisible()
     expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(apiClient.get).toHaveBeenCalledWith('/me')
+  })
+
+  it('enables save when the retry of /me succeeds', async () => {
+    me.value = null
+    mockListAndMe('ok')
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Consulting hour' }))
+    const dialog = await screen.findByRole('dialog')
+
+    await vi.waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Save' })).toBeEnabled(),
+    )
+  })
+
+  it('does not send a delete without a session', async () => {
+    me.value = null
+    mockListAndMe('fail')
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Delete Consulting hour' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(apiClient.del).not.toHaveBeenCalled()
+    expect(useToasts().toasts.value.map((x) => x.title)).toContainEqual(
+      expect.stringContaining('The session could not be loaded'),
+    )
+  })
+
+  it('clears the shell session on a 401 during save', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ items: [item] })
+    vi.mocked(apiClient.put).mockRejectedValue(apiError(401, ErrorCode.unauthenticated))
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Edit Consulting hour' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(me.value).not.toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    await vi.waitFor(() => expect(me.value).toBeNull())
+  })
+
+  it('clears the shell session on a 401 during delete', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ items: [item] })
+    vi.mocked(apiClient.del).mockRejectedValue(apiError(401, ErrorCode.unauthenticated))
+    const user = userEvent.setup()
+    renderView()
+
+    await user.click(await screen.findByRole('button', { name: 'Delete Consulting hour' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    await vi.waitFor(() => expect(me.value).toBeNull())
+    expect(useToasts().toasts.value).toHaveLength(0)
   })
 
   it('clears the shell session on a 401', async () => {

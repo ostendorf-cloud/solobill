@@ -22,12 +22,17 @@ export const status = ref<StatusResponse | null>(null)
  *  so a mutating request can carry it. */
 export const sessionReady = computed(() => me.value !== null)
 
+/** sessionFailed is true after the last /me answered an error, so a view
+ *  can say why a mutating action stays disabled. */
+export const sessionFailed = ref(false)
+
 // A load that was started before a clear must not write its answer back.
 let generation = 0
 
 /** clearSession forgets the user, the status and the CSRF token. */
 export function clearSession(): void {
   generation++
+  sessionFailed.value = false
   me.value = null
   status.value = null
   csrfToken.value = undefined
@@ -38,11 +43,16 @@ export function clearSession(): void {
  *  status is unknown and shows no banner. */
 export async function loadSession(): Promise<void> {
   const current = ++generation
+  sessionFailed.value = false
   let response: MeResponse
   try {
     response = await apiClient.get<MeResponse>('/me')
   } catch {
-    // Not signed in. The views send the visitor to the login themselves.
+    // Not signed in, or the session store is down. The views send the
+    // visitor to the login on a 401 themselves and explain a disabled save.
+    if (current === generation) {
+      sessionFailed.value = true
+    }
     return
   }
   if (current !== generation) {

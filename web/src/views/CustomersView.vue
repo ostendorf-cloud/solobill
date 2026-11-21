@@ -23,7 +23,7 @@ import { useRouter } from 'vue-router'
 
 import { apiClient } from '../api'
 import { saveErrorText, translateDetails } from '../fieldErrors'
-import { clearSession, sessionReady } from '../session'
+import { clearSession, loadSession, sessionFailed, sessionReady } from '../session'
 
 interface Customer {
   id: string
@@ -117,6 +117,11 @@ function openForm(customer: Customer | null): void {
   errors.value = {}
   saveError.value = ''
   formOpen.value = true
+  // The mutating calls need the CSRF token from /me: try once more when the
+  // shell's own load failed.
+  if (!sessionReady.value) {
+    void loadSession()
+  }
 }
 
 async function save(): Promise<void> {
@@ -170,6 +175,12 @@ async function confirmDelete(): Promise<void> {
   if (!deleteTarget.value) {
     return
   }
+  if (!sessionReady.value) {
+    // No CSRF token yet: the request would only be refused.
+    notify({ kind: 'error', title: t('common.errors.session') })
+    void loadSession()
+    return
+  }
   deleting.value = true
   try {
     await apiClient.del(`/customers/${deleteTarget.value.id}`)
@@ -177,6 +188,12 @@ async function confirmDelete(): Promise<void> {
     notify({ kind: 'success', title: t('customers.deleted') })
     await load(false)
   } catch (error) {
+    if (isApiError(error) && error.isUnauthenticated) {
+      clearSession()
+      deleteOpen.value = false
+      await router.push({ name: 'login' })
+      return
+    }
     if (isApiError(error) && error.status === 404) {
       // Already gone: the list is stale, not the delete wrong.
       deleteOpen.value = false
@@ -318,6 +335,9 @@ async function confirmDelete(): Promise<void> {
           <GovueSelect v-model="form.document_language" :options="languageOptions" />
         </GovueField>
         <p v-if="saveError" role="alert" class="text-danger-text">{{ saveError }}</p>
+        <p v-if="sessionFailed && !sessionReady" role="alert" class="text-danger-text">
+          {{ t('common.errors.session') }}
+        </p>
       </form>
 
       <template #actions>

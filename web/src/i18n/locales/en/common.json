@@ -21,6 +21,7 @@
     "forbidden": "You do not have permission for this.",
     "server": "The server had an error. Try again later.",
     "network": "The server cannot be reached. Check the connection.",
+    "session": "The session could not be loaded. Saving and deleting are blocked. Reload the page.",
     "generic": "That did not work. Try again."
   },
   "gobdBanner": "The file storage is not protected against change and deletion. Receipts are not kept in an audit proof way."
