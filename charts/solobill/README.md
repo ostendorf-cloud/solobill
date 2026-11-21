@@ -406,7 +406,7 @@ by the ingress rules themselves.
   scoped by destination as well as by port.
 - **PostgreSQL**, on `networkPolicy.egress.postgres.port` (default `5432`). The port is an
   explicit value rather than read out of `config.databaseUrl`, and a guard fails the render
-  when the two disagree; see "Four guards" below. The destination is left to that block's own
+  when the two disagree; see "Five guards" below. The destination is left to that block's own
   selectors, which **default to nothing, so this rule admits any destination on its port**. No
   default could do better: `config.databaseUrl` may name a managed PostgreSQL instance outside
   this cluster entirely, which no namespace or pod selector can describe, and a guessed
@@ -444,7 +444,7 @@ SMTP setting and no package builds a mail client. Mail is part of a later milest
 (`docs/concepts/solobill.md`'s document delivery), and the rule lands with it rather than now,
 as a guess at a port and a destination that nothing dials.
 
-### Four guards turn a runtime failure, a silent inversion, or a raw template crash, into a render failure
+### Five guards turn a runtime failure, a silent inversion, or a raw template crash, into a render failure
 
 A default-deny egress policy whose allowed port does not match the port the application
 actually dials does not fail at render. It fails later, as a connection that times out, with
@@ -473,7 +473,15 @@ render, but with a message built for a numeric mismatch ("set `networkPolicy.egr
 to `abc`"); a non-numeric host-embedded port crashed inside `urlParse` itself, aborting the whole
 render with a raw Go template error instead of a message this chart authored.
 
-A fourth guard is not about a URL at all: `service.port` and `adminPort` select two different
+The two mismatch guards compare the ports as integers, so `05432` and `5432` are the same port:
+a leading zero in a URL no longer fails the render with advice to set the policy port to
+`05432`, which could not work. The messages name the numeric values. A URL port that is digits
+but outside 1 to 65535, such as `0` or `65536`, or too large for an integer, fails on a fourth
+guard, naming the values key only, before the comparison. `networkPolicy.egress.postgres.port`
+and `networkPolicy.egress.oidc.port` are integers by schema, so a leading zero there is refused
+by `values.schema.json` already.
+
+A fifth guard is not about a URL at all: `service.port` and `adminPort` select two different
 listeners, and the public ingress rule above, unscoped by default, renders on whichever port
 number `service.port` names. Equal, that same rule now also covers `adminPort`, admitting it
 from any source regardless of `networkPolicy.ingress.admin` and inverting, silently, the
@@ -621,7 +629,7 @@ see "NetworkPolicy" above.
 `config.listenAddr` and `config.adminListenAddr` are not: nothing fails the render when either
 disagrees with `service.port` or `adminPort`, only the comment on each in `values.yaml` and the
 "Keep in sync with" notes in the values table above. A mismatch there does not invert a boundary
-the way the four guards above do, but it still breaks the pod: the `Service`, the probes and
+the way the five guards above do, but it still breaks the pod: the `Service`, the probes and
 this policy's own ingress rules all read `service.port` and `adminPort`, while `cmd/solobill`
 listens on whatever `config.listenAddr` and `config.adminListenAddr` actually say, so a mismatch
 means the probes and the `Service` reach a port nothing is listening on. Keep the two pairs in

@@ -21,18 +21,40 @@ value means anything with the policy off.
 A URL whose scheme solobill.urlPort does not know yields an empty port and is
 skipped rather than guessed at; see that helper and README.md's "NetworkPolicy"
 section.
+
+Ports compare as integers, never as strings: "05432" and 5432 are the same
+port, and a string comparison turned that into a mismatch whose message
+advised an impossible fix. Both sides go through printf "%v" and atoi first
+because --set yields an int64 and a values file an int or float64, which
+Helm's eq refuses to compare with each other. A URL port outside 1 to 65535
+fails on its own message before the comparison, which names the key only:
+no URL and no port value.
 */}}
 {{- if $egress.enabled -}}
 {{- $_ := $postgresPort | required "networkPolicy.egress.postgres.port is required while networkPolicy.egress.enabled is true: it is the only port this policy allows PostgreSQL egress on." -}}
 {{- $_ = $oidcPort | required "networkPolicy.egress.oidc.port is required while networkPolicy.egress.enabled is true: it is the only port this policy allows identity provider egress on." -}}
 {{- $dbPort := include "solobill.urlPort" (dict "key" "config.databaseUrl" "url" .Values.config.databaseUrl) -}}
-{{- if and $dbPort (ne $dbPort (printf "%v" $postgresPort)) -}}
-{{ fail (printf "config.databaseUrl names port %s but networkPolicy.egress.postgres.port is %v: with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would deny the one connection this application cannot start without. Set networkPolicy.egress.postgres.port to %s, or point config.databaseUrl at port %v." $dbPort $postgresPort $dbPort $postgresPort) }}
+{{- if $dbPort -}}
+{{- $dbPortNum := atoi $dbPort -}}
+{{- if or (lt $dbPortNum 1) (gt $dbPortNum 65535) -}}
+{{ fail "config.databaseUrl names a port outside 1 to 65535: a URL's port must be a number from 1 to 65535. Fix the port after the host's \":\" or in the \"port\" query parameter, or remove it so this chart falls back to the scheme's own default port." }}
+{{- end -}}
+{{- $postgresPortNum := atoi (printf "%v" $postgresPort) -}}
+{{- if ne $dbPortNum $postgresPortNum -}}
+{{ fail (printf "config.databaseUrl names port %d but networkPolicy.egress.postgres.port is %d: with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would deny the one connection this application cannot start without. Set networkPolicy.egress.postgres.port to %d, or point config.databaseUrl at port %d." $dbPortNum $postgresPortNum $dbPortNum $postgresPortNum) }}
+{{- end -}}
 {{- end -}}
 {{- if .Values.config.oidc.issuerUrl -}}
 {{- $issuerPort := include "solobill.urlPort" (dict "key" "config.oidc.issuerUrl" "url" .Values.config.oidc.issuerUrl) -}}
-{{- if and $issuerPort (ne $issuerPort (printf "%v" $oidcPort)) -}}
-{{ fail (printf "config.oidc.issuerUrl names port %s but networkPolicy.egress.oidc.port is %v: with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would deny every OIDC discovery, token and JWKS call, so every OIDC login fails while the local login path keeps working. Set networkPolicy.egress.oidc.port to %s, or point config.oidc.issuerUrl at port %v." $issuerPort $oidcPort $issuerPort $oidcPort) }}
+{{- if $issuerPort -}}
+{{- $issuerPortNum := atoi $issuerPort -}}
+{{- if or (lt $issuerPortNum 1) (gt $issuerPortNum 65535) -}}
+{{ fail "config.oidc.issuerUrl names a port outside 1 to 65535: a URL's port must be a number from 1 to 65535. Fix the port after the host's \":\" or in the \"port\" query parameter, or remove it so this chart falls back to the scheme's own default port." }}
+{{- end -}}
+{{- $oidcPortNum := atoi (printf "%v" $oidcPort) -}}
+{{- if ne $issuerPortNum $oidcPortNum -}}
+{{ fail (printf "config.oidc.issuerUrl names port %d but networkPolicy.egress.oidc.port is %d: with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would deny every OIDC discovery, token and JWKS call, so every OIDC login fails while the local login path keeps working. Set networkPolicy.egress.oidc.port to %d, or point config.oidc.issuerUrl at port %d." $issuerPortNum $oidcPortNum $issuerPortNum $oidcPortNum) }}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

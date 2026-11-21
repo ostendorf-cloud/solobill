@@ -453,6 +453,272 @@ tests:
             local login path keeps working. Set networkPolicy.egress.oidc.port to 8080, or point
             config.oidc.issuerUrl at port 443.
 
+  # ---------------------------------------------------------------------
+  # Port comparison is numeric, however either side is spelled (issue #42)
+  # ---------------------------------------------------------------------
+  # Both mismatch guards used to compare strings, so "05432" differed from
+  # "5432" and the message told the operator to set the policy port to the
+  # spelling the URL used. The two guards share a shape, so every case below
+  # exists for both.
+  - it: renders when config.databaseUrl names a leading-zero port equal to the PostgreSQL egress port
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:05432/solobill?sslmode=require"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 5432
+
+  - it: renders when config.databaseUrl's port query parameter has a leading zero and matches the egress port
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc/solobill?sslmode=require&port=05432"
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 5432
+
+  # The policy port reaches the template as an int64 from --set and as a
+  # float64 or int from a values file, so the guard has to convert both sides
+  # rather than compare them as they come.
+  - it: renders when the PostgreSQL egress port is set and config.databaseUrl spells the same port with a leading zero
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:06432/solobill?sslmode=require"
+      networkPolicy:
+        egress:
+          postgres:
+            port: 6432
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 6432
+
+  - it: renders when config.oidc.issuerUrl names a leading-zero port equal to the identity provider egress port
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://idp.example.com:00443/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 443
+
+  - it: renders when config.oidc.issuerUrl's port query parameter has a leading zero and matches the egress port
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://idp.example.com/realms/solobill?port=00443"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 443
+
+  - it: renders when the identity provider egress port is set and config.oidc.issuerUrl spells the same port with a leading zero
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "http://keycloak.identity.svc.cluster.local:08080/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+      networkPolicy:
+        egress:
+          oidc:
+            port: 8080
+    asserts:
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 8080
+
+  # A real mismatch still fails, and the message names the numbers, not the
+  # URL's spelling: "set the policy port to 06432" is the impossible advice
+  # this issue is about.
+  - it: fails a leading-zero config.databaseUrl port that differs numerically, naming both ports without the leading zero
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:06432/solobill?sslmode=require"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl names port 6432 but networkPolicy.egress.postgres.port is 5432:
+            with networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy
+            would deny the one connection this application cannot start without. Set
+            networkPolicy.egress.postgres.port to 6432, or point config.databaseUrl at port 5432.
+
+  - it: fails a leading-zero config.oidc.issuerUrl port that differs numerically, naming both ports without the leading zero
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "http://keycloak.identity.svc.cluster.local:08080/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.oidc.issuerUrl names port 8080 but networkPolicy.egress.oidc.port is 443: with
+            networkPolicy.enabled and networkPolicy.egress.enabled both true, this policy would
+            deny every OIDC discovery, token and JWKS call, so every OIDC login fails while the
+            local login path keeps working. Set networkPolicy.egress.oidc.port to 8080, or point
+            config.oidc.issuerUrl at port 443.
+
+  # ---------------------------------------------------------------------
+  # A URL's port outside 1 to 65535 fails on its own guard (issue #42)
+  # ---------------------------------------------------------------------
+  # Digits only is not enough: 0 and 65536 are digits. They used to reach the
+  # mismatch guard, which then told the operator to set a policy port the
+  # schema refuses. The message names the key only: no URL, no value.
+  - it: renders when config.databaseUrl names port 1 and the PostgreSQL egress port is 1
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:1/solobill?sslmode=require"
+      networkPolicy:
+        egress:
+          postgres:
+            port: 1
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 1
+
+  - it: renders when config.databaseUrl names port 65535 and the PostgreSQL egress port is 65535
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:65535/solobill?sslmode=require"
+      networkPolicy:
+        egress:
+          postgres:
+            port: 65535
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 65535
+
+  - it: fails the render when config.databaseUrl names port 0
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:0/solobill?sslmode=require"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl names a port outside 1 to 65535: a URL's port must be a number
+            from 1 to 65535. Fix the port after the host's ":" or in the "port" query parameter,
+            or remove it so this chart falls back to the scheme's own default port.
+
+  - it: fails the render when config.databaseUrl names port 65536
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:65536/solobill?sslmode=require"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl names a port outside 1 to 65535: a URL's port must be a number
+            from 1 to 65535. Fix the port after the host's ":" or in the "port" query parameter,
+            or remove it so this chart falls back to the scheme's own default port.
+
+  # Digits that overflow an int must land on the same guard, not wrap into range.
+  - it: fails the render when config.databaseUrl's port query parameter is a number too large for an integer
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc/solobill?sslmode=require&port=99999999999999999999"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl names a port outside 1 to 65535: a URL's port must be a number
+            from 1 to 65535. Fix the port after the host's ":" or in the "port" query parameter,
+            or remove it so this chart falls back to the scheme's own default port.
+
+  - it: renders when config.oidc.issuerUrl names port 1 and the identity provider egress port is 1
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://idp.example.com:1/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+      networkPolicy:
+        egress:
+          oidc:
+            port: 1
+    asserts:
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 1
+
+  - it: renders when config.oidc.issuerUrl names port 65535 and the identity provider egress port is 65535
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://idp.example.com:65535/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+      networkPolicy:
+        egress:
+          oidc:
+            port: 65535
+    asserts:
+      - equal:
+          path: spec.egress[2].ports[0].port
+          value: 65535
+
+  - it: fails the render when config.oidc.issuerUrl names port 0
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://idp.example.com:0/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.oidc.issuerUrl names a port outside 1 to 65535: a URL's port must be a number
+            from 1 to 65535. Fix the port after the host's ":" or in the "port" query parameter,
+            or remove it so this chart falls back to the scheme's own default port.
+
+  - it: fails the render when config.oidc.issuerUrl names port 65536
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://idp.example.com:65536/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.oidc.issuerUrl names a port outside 1 to 65535: a URL's port must be a number
+            from 1 to 65535. Fix the port after the host's ":" or in the "port" query parameter,
+            or remove it so this chart falls back to the scheme's own default port.
+
   # The guard above only fires for a URL whose port this chart can read. A
   # scheme with no known default port yields none, and the render goes ahead
   # rather than guessing: stated as a test so the behaviour is deliberate.
