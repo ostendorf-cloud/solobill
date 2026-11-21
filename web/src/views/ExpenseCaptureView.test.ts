@@ -161,6 +161,7 @@ describe('ExpenseCaptureView', () => {
       )
 
       expect(await screen.findByText(/This file type is not accepted/)).toBeVisible()
+      expect(screen.getByLabelText('Receipt file')).toHaveAttribute('aria-invalid', 'true')
       expect(screen.getByRole('button', { name: 'Upload receipt' })).toBeDisabled()
       expect(uploadReceipt).not.toHaveBeenCalled()
     })
@@ -193,9 +194,17 @@ describe('ExpenseCaptureView', () => {
 
     it.each([
       [413, ErrorCode.requestTooLarge, 'The server refused the file: it is too large.'],
-      [415, ErrorCode.unsupportedMediaType, /it is not a PDF, JPEG, PNG or XML file/],
+      [
+        415,
+        ErrorCode.unsupportedMediaType,
+        /file type or content is not accepted\. Allowed are PDF, JPEG, PNG and XML files without a DOCTYPE or stylesheet/,
+      ],
       [503, 'object_store_unavailable', 'The receipt storage is not available. Try again later.'],
-    ])('names a %i answer of the server', async (status, code, text) => {
+      [403, ErrorCode.permissionDenied, 'You do not have permission for this.'],
+      [0, ErrorCode.network, 'The server cannot be reached. Check the connection.'],
+      [0, ErrorCode.timeout, /The upload took too long/],
+      [500, ErrorCode.internal, 'The receipt could not be uploaded. Try again.'],
+    ])('names a %i answer of the upload (%s)', async (status, code, text) => {
       vi.mocked(uploadReceipt).mockRejectedValue(apiError(status, code))
       const user = userWithoutAccept()
       await renderView()
@@ -300,6 +309,35 @@ describe('ExpenseCaptureView', () => {
 
       await vi.waitFor(() => expect(me.value).toBeNull())
       await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+    })
+
+    it('cancels a running upload when the view goes away and ignores a late 401', async () => {
+      let reject: (error: unknown) => void = () => {}
+      vi.mocked(uploadReceipt).mockImplementation(
+        () =>
+          new Promise((_resolve, rej) => {
+            reject = rej
+          }),
+      )
+      const user = userWithoutAccept()
+      const { router, unmount } = await renderView()
+
+      await user.upload(
+        await screen.findByLabelText('Receipt file'),
+        fileOf('a.pdf', 'application/pdf'),
+      )
+      await user.click(screen.getByRole('button', { name: 'Upload receipt' }))
+      const signal = vi.mocked(uploadReceipt).mock.calls[0]?.[1]
+      expect(signal).toBeInstanceOf(AbortSignal)
+      expect(signal?.aborted).toBe(false)
+
+      unmount()
+      expect(signal?.aborted).toBe(true)
+      reject(apiError(401, ErrorCode.unauthenticated))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(me.value).not.toBeNull()
+      expect(router.currentRoute.value.name).not.toBe('login')
     })
 
     it('keeps the upload disabled without a session', async () => {
@@ -503,6 +541,35 @@ describe('ExpenseCaptureView', () => {
 
       expect(await screen.findByText('No VAT regime period covers this date.')).toBeVisible()
       expect(screen.getByLabelText(/^Paid on/)).toHaveAttribute('aria-invalid', 'true')
+    })
+
+    it('moves the focus to the first invalid field after a refused save', async () => {
+      vi.mocked(apiClient.post).mockRejectedValue(
+        apiError(400, ErrorCode.invalidArgument, {
+          receipt_date: 'must be a date such as 2026-11-18',
+          category: 'must be a key of kind expense from GET /api/v1/categories',
+        }),
+      )
+      const user = userEvent.setup()
+      await renderView()
+      await skipUpload(user)
+
+      await user.type(screen.getByLabelText(/^Gross amount/), '10')
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+      await vi.waitFor(() => expect(screen.getByLabelText('Receipt date')).toHaveFocus())
+      expect(screen.getByText(/Check the marked fields/)).toBeVisible()
+    })
+
+    it('moves the focus to the amount field when the amount is not an amount', async () => {
+      const user = userEvent.setup()
+      await renderView()
+      await skipUpload(user)
+
+      await user.type(screen.getByLabelText(/^Gross amount/), 'abc')
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+      await vi.waitFor(() => expect(screen.getByLabelText(/^Gross amount/)).toHaveFocus())
     })
 
     it('clears the session on a 401 during save', async () => {
@@ -762,6 +829,61 @@ describe('ExpenseCaptureView', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Book the storno' }))
 
       expect(await within(dialog).findByText(/cannot be reversed/)).toBeVisible()
+    })
+
+    it('show the negated amounts of a storno row with their sign', async () => {
+      mockApi({
+        expense: {
+          ...booked,
+          id: 'e-5',
+          paid_on: '2027-02-01',
+          storno_of_id: 'e-1',
+          gross_cents: -11900,
+          net_cents: -10000,
+          vat_rate_permyriad: 1900,
+          vat_cents: -1900,
+        },
+      })
+      await renderView('/expenses/capture/e-5')
+
+      expect(await screen.findByLabelText(/^Gross amount/)).toHaveValue('-119.00')
+      expect(screen.getByLabelText('VAT amount')).toHaveValue('-19.00')
+      expect(screen.getByLabelText('Net amount')).toHaveValue('-100.00')
+      expect(screen.getByLabelText('VAT rate in percent')).toHaveValue('19.00')
+    })
+
+    it('show a negated Kleinunternehmer storno amount with its sign', async () => {
+      mockApi({
+        expense: {
+          ...booked,
+          id: 'e-5',
+          storno_of_id: 'e-1',
+          gross_cents: -5950,
+          net_cents: -5950,
+        },
+      })
+      await renderView('/expenses/capture/e-5')
+
+      expect(await screen.findByLabelText(/^Gross amount/)).toHaveValue('-59.50')
+    })
+
+    it('move the focus to the storno date when it is refused', async () => {
+      mockApi({ expense: booked })
+      vi.mocked(apiClient.post).mockRejectedValue(
+        apiError(400, ErrorCode.invalidArgument, {
+          paid_on: 'must not be before the paid_on of the original',
+        }),
+      )
+      const user = userEvent.setup()
+      await renderView('/expenses/capture/e-1')
+
+      await user.click(await screen.findByRole('button', { name: 'Reverse with a storno' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Book the storno' }))
+
+      await vi.waitFor(() =>
+        expect(within(dialog).getByLabelText(/Date the money flowed back/)).toHaveFocus(),
+      )
     })
 
     it('put a date error of the storno on the date field', async () => {

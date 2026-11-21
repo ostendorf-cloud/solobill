@@ -75,7 +75,8 @@
       "tooLarge": "The file is larger than 10 MiB.",
       "unsupportedType": "This file type is not accepted. Choose a PDF, JPEG, PNG or XML file.",
       "serverTooLarge": "The server refused the file: it is too large.",
-      "serverUnsupported": "The server refused the file: it is not a PDF, JPEG, PNG or XML file.",
+      "serverUnsupported": "The server refused the file: the file type or content is not accepted. Allowed are PDF, JPEG, PNG and XML files without a DOCTYPE or stylesheet.",
+      "timeout": "The upload took too long. Check the connection and try again.",
       "storeUnavailable": "The receipt storage is not available. Try again later.",
       "failed": "The receipt could not be uploaded. Try again."
     },

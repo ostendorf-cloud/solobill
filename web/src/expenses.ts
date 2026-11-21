@@ -6,6 +6,7 @@ import { ApiError, ErrorCode, isApiError } from '@ostendorf-cloud/govue'
 
 import { csrfToken } from './api'
 import { translateDetails } from './fieldErrors'
+import { centsToInput } from './money'
 
 export type Regime = 'kleinunternehmer' | 'standard'
 
@@ -53,6 +54,15 @@ export interface StoredFile {
 export interface UploadResult {
   file: StoredFile
   duplicates: StoredFile[]
+}
+
+const UPLOAD_TIMEOUT_MS = 60_000
+
+/** signedCentsToInput writes cents as editable text and keeps the sign. A
+ *  storno row stores negated amounts, which money.ts's centsToInput would
+ *  clamp to 0. */
+export function signedCentsToInput(cents: number, locale: string): string {
+  return `${cents < 0 ? '-' : ''}${centsToInput(Math.abs(cents), locale)}`
 }
 
 /** MAX_RECEIPT_BYTES is the limit of the file part, docs/api.md "Files". */
@@ -108,7 +118,7 @@ export function receiptContentUrl(id: string): string {
  *  JSON only, so this is the one place besides it that calls fetch. It
  *  attaches the CSRF token and answers every failure as an ApiError, like the
  *  client does. */
-export async function uploadReceipt(file: File): Promise<UploadResult> {
+export async function uploadReceipt(file: File, signal?: AbortSignal): Promise<UploadResult> {
   const body = new FormData()
   body.append('purpose', 'receipt')
   body.append('file', file)
@@ -116,6 +126,7 @@ export async function uploadReceipt(file: File): Promise<UploadResult> {
   if (csrfToken.value) {
     headers['X-CSRF-Token'] = csrfToken.value
   }
+  const timeout = AbortSignal.timeout(UPLOAD_TIMEOUT_MS)
   let response: Response
   try {
     response = await fetch('/api/v1/files', {
@@ -123,10 +134,16 @@ export async function uploadReceipt(file: File): Promise<UploadResult> {
       headers,
       body,
       credentials: 'same-origin',
-      signal: AbortSignal.timeout(60_000),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
   } catch {
-    throw new ApiError({ code: ErrorCode.network, message: 'The upload did not reach the server.' })
+    // The timeout is its own kind: the user can tell a slow link from none.
+    throw new ApiError({
+      code: timeout.aborted ? ErrorCode.timeout : ErrorCode.network,
+      message: timeout.aborted
+        ? 'The upload took too long.'
+        : 'The upload did not reach the server.',
+    })
   }
   if (!response.ok) {
     let error: {

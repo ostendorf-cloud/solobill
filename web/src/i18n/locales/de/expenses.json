@@ -75,7 +75,8 @@
       "tooLarge": "Die Datei ist größer als 10 MiB.",
       "unsupportedType": "Dieser Dateityp wird nicht akzeptiert. Wähle eine PDF-, JPEG-, PNG- oder XML-Datei.",
       "serverTooLarge": "Der Server hat die Datei abgelehnt: Sie ist zu groß.",
-      "serverUnsupported": "Der Server hat die Datei abgelehnt: Sie ist keine PDF-, JPEG-, PNG- oder XML-Datei.",
+      "serverUnsupported": "Der Server hat die Datei abgelehnt: Dateityp oder Inhalt werden nicht akzeptiert. Erlaubt sind PDF-, JPEG-, PNG- und XML-Dateien ohne DOCTYPE oder Stylesheet.",
+      "timeout": "Der Upload hat zu lange gedauert. Prüfe die Verbindung und versuche es erneut.",
       "storeUnavailable": "Der Belegspeicher ist nicht erreichbar. Versuche es später erneut.",
       "failed": "Der Beleg konnte nicht hochgeladen werden. Versuche es erneut."
     },

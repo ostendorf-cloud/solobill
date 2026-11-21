@@ -8,6 +8,7 @@ import {
   expenseFieldErrors,
   isInlineImage,
   regimeOn,
+  signedCentsToInput,
   uploadReceipt,
   type VatPeriod,
 } from './expenses'
@@ -45,6 +46,19 @@ describe('checkReceiptFile', () => {
 
   it('refuses an empty file', () => {
     expect(checkReceiptFile({ name: 'a.pdf', size: 0, type: 'application/pdf' })).toBe('empty')
+  })
+})
+
+describe('signedCentsToInput', () => {
+  it('keeps the sign that centsToInput would clamp away', () => {
+    expect(signedCentsToInput(-5950, 'en')).toBe('-59.50')
+    expect(signedCentsToInput(-5950, 'de')).toBe('-59,50')
+    expect(signedCentsToInput(-5, 'en')).toBe('-0.05')
+  })
+
+  it('writes a positive amount and zero without a sign', () => {
+    expect(signedCentsToInput(5950, 'de')).toBe('59,50')
+    expect(signedCentsToInput(0, 'en')).toBe('0.00')
   })
 })
 
@@ -155,6 +169,31 @@ describe('uploadReceipt', () => {
 
     expect(isApiError(error)).toBe(true)
     expect(error).toMatchObject({ status: 415, code: 'unsupported_media_type' })
+  })
+
+  it('reports a timeout as its own kind', async () => {
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort())
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('x', 'TimeoutError')))
+
+    const error = await uploadReceipt(pdf()).catch((e: unknown) => e)
+
+    expect(error).toMatchObject({ code: 'timeout' })
+    vi.restoreAllMocks()
+  })
+
+  it('passes the caller signal on and reports its abort as a network failure', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      expect(init.signal?.aborted).toBe(false)
+      controller.abort()
+      expect(init.signal?.aborted).toBe(true)
+      return Promise.reject(new DOMException('x', 'AbortError'))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const error = await uploadReceipt(pdf(), controller.signal).catch((e: unknown) => e)
+
+    expect(error).toMatchObject({ code: 'network' })
   })
 
   it('turns a transport failure into a transport ApiError', async () => {

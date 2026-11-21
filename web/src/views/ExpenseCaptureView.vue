@@ -26,10 +26,11 @@ import {
   GovueSelect,
   GovueSkeleton,
   GovueTextarea,
+  ErrorCode,
   isApiError,
   useToasts,
 } from '@ostendorf-cloud/govue'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -41,6 +42,7 @@ import {
   isRegimeMissing,
   receiptContentUrl,
   regimeOn,
+  signedCentsToInput,
   uploadReceipt,
   type Category,
   type Expense,
@@ -146,6 +148,11 @@ const regimeNote = computed(() => {
 })
 
 const netText = computed(() => {
+  // A booked row, a storno row with negated amounts included, shows the
+  // stored net amount with its sign.
+  if (expense.value && booked.value) {
+    return signedCentsToInput(expense.value.net_cents, locale.value)
+  }
   const gross = parseCents(form.gross)
   if (gross === null) {
     return ''
@@ -168,9 +175,9 @@ function fillForm(e: Expense): void {
   form.receiptDate = e.receipt_date ?? ''
   form.supplier = e.supplier
   form.description = e.description
-  form.gross = centsToInput(e.gross_cents, locale.value)
+  form.gross = signedCentsToInput(e.gross_cents, locale.value)
   form.rate = e.vat_rate_permyriad === 0 ? '' : centsToInput(e.vat_rate_permyriad, locale.value)
-  form.vat = e.vat_cents === 0 ? '' : centsToInput(e.vat_cents, locale.value)
+  form.vat = e.vat_cents === 0 ? '' : signedCentsToInput(e.vat_cents, locale.value)
   form.category = e.category
   isAsset.value = e.is_asset
   takeSnapshot()
@@ -318,11 +325,29 @@ function uploadErrorText(error: unknown): string {
     if (error.status === 403) {
       return t('common.errors.forbidden')
     }
+    if (error.code === ErrorCode.timeout) {
+      return t('expenses.upload.errors.timeout')
+    }
     if (error.isTransport) {
       return t('common.errors.network')
     }
   }
   return t('expenses.upload.errors.failed')
+}
+
+// An upload that is still running when the view goes away is cancelled, and
+// its answer, a 401 included, changes nothing afterwards.
+const uploadAbort = new AbortController()
+onBeforeUnmount(() => uploadAbort.abort())
+
+/** focusFirstInvalid moves the focus to the first field of the form that
+ *  carries an error. The alert texts stay as they are. A timeout lets a
+ *  closing dialog give the focus back first. */
+async function focusFirstInvalid(formId: string): Promise<void> {
+  await nextTick()
+  setTimeout(() => {
+    document.querySelector<HTMLElement>(`#${formId} [aria-invalid="true"]`)?.focus()
+  }, 0)
 }
 
 async function upload(): Promise<void> {
@@ -337,7 +362,10 @@ async function upload(): Promise<void> {
   uploading.value = true
   uploadError.value = ''
   try {
-    const result = await uploadReceipt(chosen.value)
+    const result = await uploadReceipt(chosen.value, uploadAbort.signal)
+    if (uploadAbort.signal.aborted) {
+      return
+    }
     file.value = result.file
     fileLoadFailed.value = false
     if (result.duplicates.length > 0) {
@@ -346,6 +374,9 @@ async function upload(): Promise<void> {
       step.value = 'form'
     }
   } catch (error) {
+    if (uploadAbort.signal.aborted) {
+      return
+    }
     if (isApiError(error) && error.isUnauthenticated) {
       await toLogin()
       return
@@ -440,6 +471,7 @@ async function save(): Promise<void> {
   const body = buildBody()
   if (!body) {
     saveError.value = t('expenses.capture.saveError')
+    void focusFirstInvalid('expense-form')
     return
   }
   saving.value = true
@@ -462,6 +494,7 @@ async function save(): Promise<void> {
     if (isRegimeMissing(error)) {
       saveError.value = t('expenses.capture.saveError')
     }
+    void focusFirstInvalid('expense-form')
   } finally {
     saving.value = false
   }
@@ -504,6 +537,7 @@ async function confirmBook(): Promise<void> {
     }
     errors.value = fieldErrorsOf(error)
     notify({ kind: 'error', title: t('expenses.book.error') })
+    void focusFirstInvalid('expense-form')
   } finally {
     booking.value = false
   }
@@ -548,6 +582,7 @@ async function confirmStorno(): Promise<void> {
     } else {
       stornoErrors.value = fieldErrorsOf(error)
       stornoError.value = t('expenses.storno.error')
+      void focusFirstInvalid('storno-form')
     }
   } finally {
     stornoing.value = false
@@ -653,6 +688,7 @@ function back(): void {
             class="block w-full min-h-11 rounded-md border border-border-strong bg-surface px-3 py-2 text-base text-text"
             accept=".pdf,.jpg,.jpeg,.png,.xml,application/pdf,image/jpeg,image/png,application/xml,text/xml"
             :aria-describedby="describedBy"
+            :aria-invalid="uploadError ? 'true' : undefined"
             @change="chooseFile"
           />
         </GovueField>

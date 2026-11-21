@@ -73,7 +73,12 @@ async function toLogin(): Promise<void> {
   await router.push({ name: 'login' })
 }
 
+// Each load takes a number. An answer that is not the newest request's is
+// dropped, so a slow earlier filter cannot overwrite a newer list.
+let latestRequest = 0
+
 async function load(showSkeleton = true): Promise<void> {
+  const request = ++latestRequest
   if (showSkeleton) {
     loading.value = true
   }
@@ -86,10 +91,16 @@ async function load(showSkeleton = true): Promise<void> {
         category: categoryKey.value === ALL ? undefined : categoryKey.value,
       },
     })
+    if (request !== latestRequest) {
+      return
+    }
     expenses.value = answer.expenses
     totalGross.value = answer.total_gross_cents
     totalNet.value = answer.total_net_cents
   } catch (error) {
+    if (request !== latestRequest) {
+      return
+    }
     if (isApiError(error) && error.isUnauthenticated) {
       await toLogin()
       return
@@ -97,7 +108,9 @@ async function load(showSkeleton = true): Promise<void> {
     loadRequestId.value = isApiError(error) ? error.requestId : ''
     loadFailed.value = true
   } finally {
-    loading.value = false
+    if (request === latestRequest) {
+      loading.value = false
+    }
   }
 }
 

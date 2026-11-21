@@ -167,6 +167,55 @@ describe('ExpensesView', () => {
     expect(screen.queryByRole('option', { name: 'Sonstige Einnahmen' })).toBeNull()
   })
 
+  it('shows negative amounts and negative totals with their sign', async () => {
+    mockApi(answer([storno], -595000, -500000))
+    renderView()
+
+    const table = await screen.findByRole('table', { name: 'List of expenses' })
+    const rows = within(table).getAllByRole('row')
+    expect(within(rows[1]).getByText('-5,950.00 EUR')).toBeVisible()
+    expect(within(rows[1]).getByText('-5,000.00 EUR')).toBeVisible()
+    const footer = rows[rows.length - 1]
+    expect(within(footer).getByText('-5,950.00 EUR')).toBeVisible()
+    expect(within(footer).getByText('-5,000.00 EUR')).toBeVisible()
+  })
+
+  it('ignores an older answer that arrives after a newer one', async () => {
+    const pending: Record<string, (value: unknown) => void> = {}
+    vi.mocked(apiClient.get).mockImplementation(
+      (
+        path: string,
+        options?: { query?: Record<string, string | number | boolean | null | undefined> },
+      ) => {
+        if (path === '/categories') {
+          return Promise.resolve({ categories })
+        }
+        const key = String(options?.query?.state ?? 'all')
+        if (key === 'all') {
+          return Promise.resolve(answer([expense]))
+        }
+        return new Promise((resolve) => {
+          pending[key] = resolve
+        })
+      },
+    )
+    renderView()
+    await screen.findByRole('rowheader', { name: 'Office Supplies Inc' })
+
+    await choose('State', 'Draft')
+    await vi.waitFor(() => expect(pending.draft).toBeDefined())
+    await choose('State', 'Booked')
+    await vi.waitFor(() => expect(pending.booked).toBeDefined())
+
+    pending.booked?.(answer([{ ...expense, supplier: 'Booked Shop' }]))
+    expect(await screen.findByRole('rowheader', { name: 'Booked Shop' })).toBeVisible()
+    pending.draft?.(answer([draft]))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(screen.getByRole('rowheader', { name: 'Booked Shop' })).toBeVisible()
+    expect(screen.queryByRole('rowheader', { name: 'Draft Shop' })).toBeNull()
+  })
+
   it('shows the empty state', async () => {
     mockApi(answer([], 0, 0))
     renderView()
