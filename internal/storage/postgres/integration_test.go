@@ -1472,17 +1472,39 @@ WHERE a.attrelid = 'public.files'::regclass
 	}
 
 	// TRUNCATE skips row triggers, so files_block_truncate must refuse it
-	// even for the admin role. Run inside a transaction that is rolled
-	// back, so a missing trigger empties nothing for the other tests.
-	tx, err := adminPool.Begin(ctx)
-	if err != nil {
-		t.Fatalf("begin: %v", err)
+	// even for the admin role. Each statement runs inside its own
+	// transaction that is rolled back, so a missing refusal empties nothing
+	// for the other tests, and an aborted transaction is never reused.
+	//
+	// A plain TRUNCATE is refused by Postgres itself while another table
+	// (expenses, other_income) references files by foreign key (0A000),
+	// before any trigger fires. Either refusal is fine for it.
+	//
+	// TRUNCATE ... CASCADE passes that check, so it reaches the BEFORE
+	// TRUNCATE triggers. files is named first, so its trigger fires first
+	// and must refuse with insufficient_privilege (42501).
+	truncateErr := func(stmt string) error {
+		t.Helper()
+
+		tx, err := adminPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		_, err = tx.Exec(ctx, stmt)
+
+		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	_, err = tx.Exec(ctx, `TRUNCATE files`)
+
+	err = truncateErr(`TRUNCATE files`)
 	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || (pgErr.Code != "0A000" && pgErr.Code != "42501") {
+		t.Errorf("TRUNCATE files as the admin role error = %v, want a refusal (0A000 or 42501)", err)
+	}
+
+	err = truncateErr(`TRUNCATE files CASCADE`)
 	if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
-		t.Errorf("TRUNCATE files as the admin role error = %v, want the files_block_truncate refusal (42501)", err)
+		t.Errorf("TRUNCATE files CASCADE as the admin role error = %v, want the files_block_truncate refusal (42501)", err)
 	}
 }
 
