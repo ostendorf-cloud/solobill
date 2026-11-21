@@ -70,6 +70,14 @@ BEGIN
         RETURN OLD;
     END IF;
 
+    -- other_income_check_storno below validates a storno row on INSERT
+    -- only. So only an INSERT may set storno_of_id: see
+    -- 20261121160000_create_expenses.sql.
+    IF NEW.storno_of_id IS DISTINCT FROM OLD.storno_of_id THEN
+        RAISE EXCEPTION 'other income % cannot change storno_of_id; a storno row is inserted, never updated into', OLD.id
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+
     RETURN NEW;
 END;
 $$;
@@ -94,6 +102,9 @@ CREATE TRIGGER other_income_block_truncate
     FOR EACH STATEMENT
     EXECUTE FUNCTION other_income_block_truncate();
 
+-- Fires on INSERT only: other_income_block_booked_mutation refuses every
+-- UPDATE that changes storno_of_id, so a storno row can only come into
+-- being through an INSERT.
 CREATE FUNCTION other_income_check_storno() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path = pg_catalog, public

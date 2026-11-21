@@ -106,6 +106,15 @@ BEGIN
         RETURN OLD;
     END IF;
 
+    -- expenses_check_storno below validates a storno row on INSERT only.
+    -- So only an INSERT may set storno_of_id: an UPDATE of a draft that
+    -- set it would forge a storno row and take the original's slot in
+    -- expenses_reversed_once.
+    IF NEW.storno_of_id IS DISTINCT FROM OLD.storno_of_id THEN
+        RAISE EXCEPTION 'expense % cannot change storno_of_id; a storno row is inserted, never updated into', OLD.id
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+
     RETURN NEW;
 END;
 $$;
@@ -135,7 +144,10 @@ CREATE TRIGGER expenses_block_truncate
 -- A storno row must reverse exactly one booked original that is not a
 -- storno itself, with the negated amounts and the same rate, category and
 -- asset flag. The application builds the row that way; this keeps a
--- direct INSERT from booking anything else under the storno label. The
+-- direct INSERT from booking anything else under the storno label. It
+-- fires on INSERT only, because expenses_block_booked_mutation refuses
+-- every UPDATE that changes storno_of_id: a storno row can only come into
+-- being through an INSERT. The
 -- lookup runs under the inserting session's row level security, so it
 -- only ever sees the tenant's own rows.
 CREATE FUNCTION expenses_check_storno() RETURNS trigger

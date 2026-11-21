@@ -139,6 +139,52 @@ func TestOtherIncomeLifecycle(t *testing.T) {
 	masterDataWantStatus(t, rec, http.StatusNoContent)
 }
 
+// TestOtherIncomeBookingRechecksTheBookedRow: see
+// TestExpenseBookingRechecksTheBookedRow.
+func TestOtherIncomeBookingRechecksTheBookedRow(t *testing.T) {
+	t.Parallel()
+
+	app := buildTestApp(t, 1000)
+	tenant := newBookingTenant(t, app, "income-rebook")
+	addRegime(t, app, "2026-01-01", storage.VATRegimeKleinunternehmer)
+
+	draft := createOtherIncome(t, app, tenant.member, vatRefund("2026-11-18"))
+	otherIncomeRepo(t, app).changeOnBook(func(o storage.OtherIncome) storage.OtherIncome {
+		o.GrossCents, o.NetCents = o.GrossCents+100, o.NetCents+100
+
+		return o
+	})
+
+	rec := tenant.owner.do(t, app, http.MethodPost, "/api/v1/other-income/"+draft.ID.String()+"/book", nil)
+	masterDataWantStatus(t, rec, http.StatusConflict)
+}
+
+// TestOtherIncomeHandlerRefusesChangesToBookedRowsItself: with a
+// repository that lost its draft guard and trigger, the handler still
+// refuses to change or delete booked other income. See
+// TestExpenseHandlerRefusesChangesToBookedRowsItself.
+func TestOtherIncomeHandlerRefusesChangesToBookedRowsItself(t *testing.T) {
+	t.Parallel()
+
+	app := buildTestApp(t, 1000)
+	tenant := newBookingTenant(t, app, "income-unguarded")
+	addRegime(t, app, "2026-01-01", storage.VATRegimeKleinunternehmer)
+
+	booked := createOtherIncome(t, app, tenant.member, vatRefund("2026-11-18"))
+	bookOtherIncome(t, app, tenant.owner, booked.ID)
+	otherIncomeRepo(t, app).unguard()
+
+	rec := tenant.owner.do(t, app, http.MethodPut, "/api/v1/other-income/"+booked.ID.String(), withField(vatRefund("2026-11-18"), "description", "tampered"))
+	masterDataWantStatus(t, rec, http.StatusConflict)
+	rec = tenant.owner.do(t, app, http.MethodDelete, "/api/v1/other-income/"+booked.ID.String(), nil)
+	masterDataWantStatus(t, rec, http.StatusConflict)
+
+	row, ok := otherIncomeRepo(t, app).row(booked.ID)
+	if !ok || row.State != storage.BookingStateBooked || row.Description != "USt-Erstattung Q3" {
+		t.Errorf("booked row = %+v, %v, want it unchanged", row, ok)
+	}
+}
+
 func TestOtherIncomeValidation(t *testing.T) {
 	t.Parallel()
 

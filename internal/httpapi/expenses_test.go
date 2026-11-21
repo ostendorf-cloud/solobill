@@ -401,6 +401,12 @@ func TestExpenseStandardRegimeVAT(t *testing.T) {
 		// 103 gross at 19 percent contains 16.45 cents VAT; 87 net times
 		// 19 percent is 16.53. A receipt may print either.
 		{"extracted from gross", amounts(103, 87, 1900, 16), ""},
+		// 47 gross at 19 percent contains exactly 7.50 cents VAT. Half away
+		// from zero extracts 8 (39 net plus 8; 39 net alone gives 7.41, so
+		// only the extraction accepts it). A truncation extracts 7.
+		{"extracted from gross, half rounds up", amounts(47, 39, 1900, 8), ""},
+		// 40 net gives 7.60, extraction gives 8: 7 matches neither.
+		{"half rounded down is refused", amounts(47, 40, 1900, 7), "vat_cents"},
 		{"no VAT at 0 percent", amounts(5000, 5000, 0, 0), ""},
 		{"VAT does not match the rate", amounts(11800, 10000, 1900, 1800), "vat_cents"},
 		{"VAT at 0 percent", amounts(5100, 5000, 0, 100), "vat_cents"},
@@ -692,6 +698,27 @@ func TestExpenseHandlerRefusesChangesToBookedRowsItself(t *testing.T) {
 	if !ok || row.State != storage.BookingStateBooked || row.Description != "Paper and toner" {
 		t.Errorf("booked row = %+v, %v, want it unchanged", row, ok)
 	}
+}
+
+// TestExpenseBookingRechecksTheBookedRow: a change that slips in between
+// the handler's read and the booking answers 409 instead of booking a row
+// that was not checked.
+func TestExpenseBookingRechecksTheBookedRow(t *testing.T) {
+	t.Parallel()
+
+	app := buildTestApp(t, 1000)
+	tenant := newBookingTenant(t, app, "rebook")
+	addRegime(t, app, "2026-01-01", storage.VATRegimeKleinunternehmer)
+
+	draft := createExpense(t, app, tenant.member, kleinExpense("2026-11-18"))
+	expenseRepo(t, app).changeOnBook(func(e storage.Expense) storage.Expense {
+		e.GrossCents, e.NetCents = e.GrossCents+100, e.NetCents+100
+
+		return e
+	})
+
+	rec := tenant.owner.do(t, app, http.MethodPost, "/api/v1/expenses/"+draft.ID.String()+"/book", nil)
+	masterDataWantStatus(t, rec, http.StatusConflict)
 }
 
 // TestExpenseListYearBoundaryAndFilters: the year comes from paid_on, so

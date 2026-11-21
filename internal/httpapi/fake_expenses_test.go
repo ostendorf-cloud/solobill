@@ -30,6 +30,16 @@ type fakeExpenseRepository struct {
 	clock     int
 	leaky     bool
 	unguarded bool
+	bookHook  func(storage.Expense) storage.Expense
+}
+
+// changeOnBook makes Book apply fn to the stored row first, as a
+// concurrent update between the handler's read and the booking would.
+func (r *fakeExpenseRepository) changeOnBook(fn func(storage.Expense) storage.Expense) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.bookHook = fn
 }
 
 // leak switches the tenant filter of reads off.
@@ -223,6 +233,10 @@ func (r *fakeExpenseRepository) Book(ctx context.Context, id uuid.UUID, bookedAt
 	}
 	if e.State != storage.BookingStateDraft || e.PaidOn == nil || e.Category == "" {
 		return storage.Expense{}, storage.ErrConflict
+	}
+	if r.bookHook != nil {
+		// A change that slips in between the handler's read and the booking.
+		e = r.bookHook(e)
 	}
 	e.State = storage.BookingStateBooked
 	e.BookedAt = &bookedAt

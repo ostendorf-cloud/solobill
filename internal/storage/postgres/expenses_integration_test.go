@@ -434,6 +434,36 @@ func TestExpenseRepository(t *testing.T) {
 			VALUES ($1, 'booked', '2026-11-30', -100, -100, 0, 0, 'euer.z51', $2, now())`, env.tenantA.ID, other.ID)
 		_ = tx.Rollback(ctx)
 		requireSQLState(t, err, pgIntegrityConstraintViolationClass, "raw storno with other amounts")
+
+		// An UPDATE of a draft must not turn it into a forged storno row,
+		// not even one that mirrors the original exactly: the check trigger
+		// fires on INSERT only, so expenses_block_booked_mutation refuses
+		// any change of storno_of_id.
+		var forged storage.Expense
+		env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
+			var err error
+			forged, err = repo.Create(ctx, testExpense(env.tenantA.ID, "2026-11-18"))
+
+			return err
+		})
+		tx = beginScoped(ctx, t, env.restrictedPool, env.tenantA.ID)
+		_, err = tx.Exec(ctx, `UPDATE expenses SET storno_of_id = $1, state = 'booked', booked_at = now(),
+			gross_cents = -11900, net_cents = -10000, vat_cents = -1900 WHERE id = $2`, other.ID, forged.ID)
+		_ = tx.Rollback(ctx)
+		requireSQLState(t, err, pgIntegrityConstraintViolationClass, "raw UPDATE of a draft into a storno row")
+
+		// The normal booking of the same draft still works.
+		env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
+			got, err := repo.Book(ctx, forged.ID, time.Now())
+			if err != nil {
+				return err
+			}
+			if got.State != storage.BookingStateBooked || got.StornoOfID != nil {
+				t.Errorf("Book() after the refused forgery = %+v", got)
+			}
+
+			return nil
+		})
 	})
 
 	t.Run("the year comes from paid_on", func(t *testing.T) {
@@ -648,4 +678,38 @@ func TestOtherIncomeRepository(t *testing.T) {
 	_, err = tx.Exec(ctx, `UPDATE other_income SET gross_cents = 1, net_cents = 1 WHERE id = $1`, booked.ID)
 	_ = tx.Rollback(ctx)
 	requireSQLState(t, err, pgIntegrityConstraintViolationClass, "raw UPDATE of booked other income")
+
+	// An UPDATE of a draft must not turn it into a forged storno row; see
+	// TestExpenseRepository. The original here already has its storno, so
+	// use a second booked row.
+	var second, forged storage.OtherIncome
+	env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
+		created, err := repo.Create(ctx, refund(env.tenantA.ID, "2026-12-30"))
+		if err != nil {
+			return err
+		}
+		if second, err = repo.Book(ctx, created.ID, time.Now()); err != nil {
+			return err
+		}
+		forged, err = repo.Create(ctx, refund(env.tenantA.ID, "2026-12-30"))
+
+		return err
+	})
+	tx = beginScoped(ctx, t, env.restrictedPool, env.tenantA.ID)
+	_, err = tx.Exec(ctx, `UPDATE other_income SET storno_of_id = $1, state = 'booked', booked_at = now(),
+		gross_cents = -12345, net_cents = -12345, vat_cents = 0 WHERE id = $2`, second.ID, forged.ID)
+	_ = tx.Rollback(ctx)
+	requireSQLState(t, err, pgIntegrityConstraintViolationClass, "raw UPDATE of a draft into a storno row")
+
+	env.inTenant(ctx, t, env.tenantA.ID, func(ctx context.Context) error {
+		got, err := repo.Book(ctx, forged.ID, time.Now())
+		if err != nil {
+			return err
+		}
+		if got.State != storage.BookingStateBooked || got.StornoOfID != nil {
+			t.Errorf("Book() after the refused forgery = %+v", got)
+		}
+
+		return nil
+	})
 }

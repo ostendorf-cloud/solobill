@@ -16,9 +16,30 @@ import (
 // fakeOtherIncomeRepository is fakeExpenseRepository for other income,
 // with the same tenant filter, immutability and storno rule.
 type fakeOtherIncomeRepository struct {
-	mu    sync.Mutex
-	rows  map[uuid.UUID]storage.OtherIncome
-	clock int
+	mu       sync.Mutex
+	rows     map[uuid.UUID]storage.OtherIncome
+	clock    int
+	bookHook func(storage.OtherIncome) storage.OtherIncome
+	// unguarded models a repository whose draft guard and trigger are
+	// missing, see fakeExpenseRepository.
+	unguarded bool
+}
+
+// changeOnBook makes Book apply fn to the stored row first, as a
+// concurrent update between the handler's read and the booking would.
+func (r *fakeOtherIncomeRepository) changeOnBook(fn func(storage.OtherIncome) storage.OtherIncome) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.bookHook = fn
+}
+
+// unguard switches the draft guard of UpdateDraft and DeleteDraft off.
+func (r *fakeOtherIncomeRepository) unguard() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.unguarded = true
 }
 
 func init() {
@@ -126,7 +147,7 @@ func (r *fakeOtherIncomeRepository) UpdateDraft(ctx context.Context, o storage.O
 	if err != nil {
 		return storage.OtherIncome{}, err
 	}
-	if existing.State != storage.BookingStateDraft {
+	if existing.State != storage.BookingStateDraft && !r.unguarded {
 		return storage.OtherIncome{}, storage.ErrConflict
 	}
 	o.TenantID = existing.TenantID
@@ -149,7 +170,7 @@ func (r *fakeOtherIncomeRepository) DeleteDraft(ctx context.Context, id uuid.UUI
 	if err != nil {
 		return err
 	}
-	if existing.State != storage.BookingStateDraft {
+	if existing.State != storage.BookingStateDraft && !r.unguarded {
 		return storage.ErrConflict
 	}
 	delete(r.rows, id)
@@ -167,6 +188,10 @@ func (r *fakeOtherIncomeRepository) Book(ctx context.Context, id uuid.UUID, book
 	}
 	if o.State != storage.BookingStateDraft || o.ReceivedOn == nil || o.Category == "" {
 		return storage.OtherIncome{}, storage.ErrConflict
+	}
+	if r.bookHook != nil {
+		// A change that slips in between the handler's read and the booking.
+		o = r.bookHook(o)
 	}
 	o.State = storage.BookingStateBooked
 	o.BookedAt = &bookedAt
