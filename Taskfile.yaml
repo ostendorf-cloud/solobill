@@ -121,9 +121,9 @@ tasks:
       - go build -o bin/solobill ./cmd/solobill
 
   build:image:
-    desc: Build the container image, without pushing it anywhere (PLATFORM defaults to linux/amd64)
+    desc: Build the container image, without pushing it anywhere (PLATFORM, for example linux/arm64, defaults to the host platform)
     cmds:
-      - docker build --platform {{default "linux/amd64" .PLATFORM}} .
+      - docker build {{if .PLATFORM}}--platform {{.PLATFORM}} {{end}}.
 
   test:go:
     desc: Go test
