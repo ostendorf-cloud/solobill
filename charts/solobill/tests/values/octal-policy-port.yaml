@@ -1,0 +1,5 @@
+# An unquoted leading zero in a values file is read as an octal number by YAML 1.1: 05432 is 2842.
+networkPolicy:
+  egress:
+    postgres:
+      port: 05432

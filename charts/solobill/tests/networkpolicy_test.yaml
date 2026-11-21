@@ -547,6 +547,20 @@ tests:
           path: spec.egress[2].ports[0].port
           value: 8080
 
+  # Pins a documented limit rather than a feature: a policy port written with
+  # a leading zero in a values file is read as octal by YAML 1.1, so 05432 is
+  # 2842, and the schema accepts it as an integer. Operators write 5432.
+  - it: reads an unquoted leading-zero networkPolicy.egress.postgres.port from a values file as octal
+    values:
+      - values/octal-policy-port.yaml
+    set:
+      config:
+        databaseUrl: "postgres://postgres.example.svc:2842/solobill?sslmode=require"
+    asserts:
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 2842
+
   # A real mismatch still fails, and the message names the numbers, not the
   # URL's spelling: "set the policy port to 06432" is the impossible advice
   # this issue is about.
