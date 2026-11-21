@@ -1,0 +1,153 @@
+{
+  "template_version": "document-v1",
+  "lang": "de",
+  "draft": true,
+  "watermark": "Entwurf",
+  "document_title": "Angebot (Entwurf)",
+  "title": "Angebot",
+  "sender_line": "Example GmbH · Musterstraße 1 · 12345 Musterstadt",
+  "seller_name": "Example GmbH",
+  "recipient_lines": [
+    "Mustermann Consulting GmbH",
+    "Beispielweg 7",
+    "z. Hd. Max Mustermann",
+    "54321 Beispielstadt"
+  ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.line2",
+    "customer.address.city"
+  ],
+  "meta": [
+    {
+      "label": "Datum",
+      "value": "20.11.2026",
+      "path": "issue_date"
+    },
+    {
+      "label": "Kundennummer",
+      "value": "K-1001",
+      "path": "customer.number"
+    },
+    {
+      "label": "Gültig bis",
+      "value": "31.12.2026",
+      "path": "valid_until"
+    }
+  ],
+  "corrects_line": "",
+  "show_vat": true,
+  "columns": {
+    "position": "Pos.",
+    "description": "Beschreibung",
+    "quantity": "Menge",
+    "unit": "Einheit",
+    "unit_price": "Einzelpreis",
+    "vat_rate": "USt.",
+    "amount": "Betrag"
+  },
+  "lines": [
+    {
+      "position": "1",
+      "description": [
+        "Einrichtung Monitoring",
+        "Prometheus, Alertmanager und Grafana"
+      ],
+      "discount": "",
+      "quantity": "1",
+      "unit": "pauschal",
+      "unit_price": "2.400,00 EUR",
+      "vat_rate": "19 %",
+      "amount": "2.400,00 EUR"
+    },
+    {
+      "position": "2",
+      "description": [
+        "Betreuung pro Monat"
+      ],
+      "discount": "",
+      "quantity": "12",
+      "unit": "Monat",
+      "unit_price": "350,00 EUR",
+      "vat_rate": "19 %",
+      "amount": "4.200,00 EUR"
+    }
+  ],
+  "totals": [
+    {
+      "label": "Summe netto",
+      "value": "6.600,00 EUR",
+      "strong": false,
+      "path": "totals.net_total_cents"
+    },
+    {
+      "label": "Umsatzsteuer 19 % auf 6.600,00 EUR",
+      "value": "1.254,00 EUR",
+      "strong": false,
+      "path": "totals.vat[0]"
+    },
+    {
+      "label": "Angebotssumme",
+      "value": "7.854,00 EUR",
+      "strong": true,
+      "path": "totals.grand_total_cents"
+    }
+  ],
+  "sections": [
+    {
+      "title": "Hinweise",
+      "lines": [
+        "Wir freuen uns auf Ihre Rückmeldung."
+      ],
+      "path": "notes"
+    }
+  ],
+  "footer": [
+    [
+      "Example GmbH",
+      "Musterstraße 1",
+      "12345 Musterstadt"
+    ],
+    [
+      "Tel. +49 000 0000000",
+      "E-Mail rechnung@example.com",
+      "Web www.example.com"
+    ],
+    [
+      "Steuernummer 12/345/67890",
+      "USt-IdNr. DE000000000"
+    ],
+    [
+      "Bank Musterbank",
+      "IBAN DE00 0000 0000 0000 0000 00",
+      "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number",
+      "seller.vat_id"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
+    ]
+  ],
+  "footer_text": [
+    "Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000"
+  ],
+  "page_label": "Seite",
+  "page_of_label": "von"
+}

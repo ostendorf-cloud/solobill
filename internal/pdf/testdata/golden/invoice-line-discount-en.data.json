@@ -1,0 +1,203 @@
+{
+  "template_version": "document-v1",
+  "lang": "en",
+  "draft": false,
+  "watermark": "Draft",
+  "document_title": "Invoice RE-20260043",
+  "title": "Invoice",
+  "sender_line": "Example GmbH · Musterstraße 1 · 12345 Musterstadt",
+  "seller_name": "Example GmbH",
+  "recipient_lines": [
+    "Beispiel Handels GmbH",
+    "Musterplatz 3",
+    "1010 Wien",
+    "AUSTRIA"
+  ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.city",
+    "customer.address.country_code"
+  ],
+  "meta": [
+    {
+      "label": "Invoice number",
+      "value": "RE-20260043",
+      "path": "number"
+    },
+    {
+      "label": "Date",
+      "value": "7 December 2026",
+      "path": "issue_date"
+    },
+    {
+      "label": "Service period",
+      "value": "1 November 2026 to 30 November 2026",
+      "path": "service_period"
+    },
+    {
+      "label": "Customer number",
+      "value": "K-2002",
+      "path": "customer.number"
+    },
+    {
+      "label": "Your reference",
+      "value": "PO 2026-118",
+      "path": "customer_reference"
+    },
+    {
+      "label": "Your VAT ID",
+      "value": "ATU00000000",
+      "path": "customer.vat_id"
+    },
+    {
+      "label": "Due date",
+      "value": "21 December 2026",
+      "path": "due_date"
+    }
+  ],
+  "corrects_line": "",
+  "show_vat": true,
+  "columns": {
+    "position": "No.",
+    "description": "Description",
+    "quantity": "Qty",
+    "unit": "Unit",
+    "unit_price": "Unit price",
+    "vat_rate": "VAT",
+    "amount": "Amount"
+  },
+  "lines": [
+    {
+      "position": "1",
+      "description": [
+        "Cloud architecture review"
+      ],
+      "discount": "Discount 10%",
+      "quantity": "12.5",
+      "unit": "hours",
+      "unit_price": "110.00 EUR",
+      "vat_rate": "0%",
+      "amount": "1,237.50 EUR"
+    },
+    {
+      "position": "2",
+      "description": [
+        "Platform migration, fixed price"
+      ],
+      "discount": "Discount 250.00 EUR",
+      "quantity": "1",
+      "unit": "flat",
+      "unit_price": "4,500.00 EUR",
+      "vat_rate": "0%",
+      "amount": "4,250.00 EUR"
+    },
+    {
+      "position": "3",
+      "description": [
+        "Operations handbook"
+      ],
+      "discount": "",
+      "quantity": "1",
+      "unit": "flat",
+      "unit_price": "800.00 EUR",
+      "vat_rate": "0%",
+      "amount": "800.00 EUR"
+    }
+  ],
+  "totals": [
+    {
+      "label": "Net total",
+      "value": "6,287.50 EUR",
+      "strong": false,
+      "path": "totals.net_total_cents"
+    },
+    {
+      "label": "Discount 3%",
+      "value": "-188.63 EUR",
+      "strong": false,
+      "path": "totals.document_discount_cents"
+    },
+    {
+      "label": "Net total after discount",
+      "value": "6,098.87 EUR",
+      "strong": false,
+      "path": "totals.net_after_document_discount_cents"
+    },
+    {
+      "label": "VAT 0% on 6,098.87 EUR",
+      "value": "0.00 EUR",
+      "strong": false,
+      "path": "totals.vat[0]"
+    },
+    {
+      "label": "Total",
+      "value": "6,098.87 EUR",
+      "strong": true,
+      "path": "totals.grand_total_cents"
+    }
+  ],
+  "sections": [
+    {
+      "title": "",
+      "lines": [
+        "Reverse charge: the recipient is liable for VAT (Article 196 Council Directive 2006/112/EC)."
+      ],
+      "path": "tax_note"
+    },
+    {
+      "title": "Payment terms",
+      "lines": [
+        "Payable within 14 days without deduction."
+      ],
+      "path": "payment_terms"
+    }
+  ],
+  "footer": [
+    [
+      "Example GmbH",
+      "Musterstraße 1",
+      "12345 Musterstadt"
+    ],
+    [
+      "Phone +49 000 0000000",
+      "Email rechnung@example.com",
+      "Web www.example.com"
+    ],
+    [
+      "Tax number 12/345/67890",
+      "VAT ID DE000000000"
+    ],
+    [
+      "Bank Musterbank",
+      "IBAN DE00 0000 0000 0000 0000 00",
+      "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number",
+      "seller.vat_id"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
+    ]
+  ],
+  "footer_text": [
+    "Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000"
+  ],
+  "page_label": "Page",
+  "page_of_label": "of"
+}

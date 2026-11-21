@@ -1,0 +1,184 @@
+{
+  "version": 1,
+  "type": "invoice",
+  "language": "en",
+  "vat_regime": "kleinunternehmer",
+  "template_version": "document-v1",
+  "currency": "EUR",
+  "number": "RE-20260007",
+  "number_value": 7,
+  "number_year": 2026,
+  "issue_date": "2026-11-20",
+  "service_period": {
+    "from": "2026-11-18",
+    "to": "2026-11-18"
+  },
+  "due_date": "2026-12-04",
+  "seller": {
+    "legal_name": "Max Mustermann IT-Beratung",
+    "address": {
+      "street": "Musterstraße 1",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "bank_name": "Musterbank",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "? „iiiiiiiiiiiiiiiiiWWWWWWWWiiiiiiiii 9876543210987654321098765432  01234567899WWWWWWWWWW  WWWWWWW",
+    "name": "MMu2sg",
+    "address": {
+      "street": "Beispielweg 7",
+      "line2": "WWWWWWWWWWWMMMMMMMMM  9.876.543.210.987.654.321.098.765   genehmigungsübertngsGrundstücks01 iiiiiiiiiiiiiiiiiiiiiiiiiiMMMMMMMMMMlll https:",
+      "postal_code": "54321",
+      "city": "Beispielstadt",
+      "country_code": "DE"
+    }
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "98765432109876543215432109876543210987 M3tmcM5m1gypoyyg8ziM@2s0qq17im",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 2,
+      "description": "1cWje8m6M1WW9@xkwic6mpfschiffkapitäns , WWWWWWWWWWWWWWWWW ?   ,  \t  « W0fbwi0cjm01o3nyawrf0Whglw7q2669gj.de iiiiiiiiiiiiiiiiiiiii",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 3,
+      "description": " ?https://re86vjmf.exaek91jogpy_v-o9Ws.42-o  iiiiiiiiiiiiiiiiiiillllllllllll  iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiMMMMMMMMMMMMMM",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 4,
+      "description": " ogdjzx41M34owM9hhfv61yutulmlmsuu.de  , »  WWWWWWWWWWWWWWWWWWiiiiiiiiiiiiiii  \r\n 9876543210987654321098765432109876543  „ 0123  MMllllllllllllllllllliiiiiiiiiiiiiiiiiiii",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 5,
+      "description": "\r\n 9876543210987654  [  !   MMMMMMMMMMMMMMMMMMMMM 01234567890123 ?  . ,  entwicklungsversicherungs WWWWWWWWWWWWMMMMMMMMMMM  - 987 654 321 098 765 43987 654 321 098 765“» [ MMMMMMMMMMMMMMMMMMMMMMM  ! \n\n https://zwje6v8y.ex",
+      "quantity_thousandths": 5433643,
+      "unit": "day",
+      "unit_price_cents": 14367131,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 1495487758,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 6,
+      "description": "MMMMMMMMMMiiiiWWWWWWWWWWWW\t @   . ] anwaltsgesell",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 7,
+      "description": "98765432109876543213210987654321098765 9,876,543,210,987,654,321,098,765,432,",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 8,
+      "description": "iiiiiiiilllllllllll ",
+      "quantity_thousandths": 72484190,
+      "unit": "day",
+      "unit_price_cents": 62548439,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 3383503498,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 9,
+      "description": "WWWWllllllllll llllllllllllllllllllllllllWWWWWWWWWWWiiiiiiiiiiiiii iiiiiiiiiiiiiiiiiiiiiiiiW https://0cc4yMWl.examptbos6/f7ubl5-uxpo.a4f ht",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 10,
+      "description": "\nMMMMMMMMiiiiiiiiiWWWWW",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    }
+  ],
+  "document_discount": {},
+  "totals": {
+    "net_total_cents": 128550,
+    "document_discount_cents": 0,
+    "net_after_document_discount_cents": 128550,
+    "vat": [
+      {
+        "rate_permyriad": 0,
+        "net_cents": 128550,
+        "vat_cents": 0
+      }
+    ],
+    "vat_total_cents": 0,
+    "grand_total_cents": 128550
+  },
+  "tax_note": "No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung).",
+  "payment_terms": "Payable within 14 days without deduction."
+}

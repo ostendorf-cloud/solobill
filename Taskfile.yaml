@@ -125,11 +125,21 @@ tasks:
     cmds:
       - docker build {{if .PLATFORM}}--platform {{.PLATFORM}} {{end}}.
 
+  # -short skips the slow renderer tests of internal/pdf (fuzz runs, the
+  # worst case renders, the differential and boundary tests); test:pdf
+  # runs them. No other package checks testing.Short().
   test:go:
-    desc: Go test
+    desc: Go test, without the slow renderer tests
     deps: [web:build]
     cmds:
-      - go test -race -count=1 ./...
+      - go test -race -count=1 -short ./...
+
+  # The full internal/pdf suite with typst and pdftotext, about five
+  # minutes; its own CI job, test-pdf.
+  test:pdf:
+    desc: Go test of the PDF renderer, including the slow tests
+    cmds:
+      - go test -race -count=1 -timeout 25m ./internal/pdf/...
 
   check:govue-version:
     desc: Verify go.mod and web/package.json pin the same govue version
