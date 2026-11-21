@@ -129,6 +129,8 @@ describe('uploadReceipt', () => {
   afterEach(() => {
     csrfToken.value = undefined
     vi.unstubAllGlobals()
+    // The AbortSignal.timeout spy of one test must not reach the next.
+    vi.restoreAllMocks()
   })
 
   const pdf = () => new File(['%PDF-1.7'], 'receipt.pdf', { type: 'application/pdf' })
@@ -178,21 +180,24 @@ describe('uploadReceipt', () => {
     const error = await uploadReceipt(pdf()).catch((e: unknown) => e)
 
     expect(error).toMatchObject({ code: 'timeout' })
-    vi.restoreAllMocks()
   })
 
   it('passes the caller signal on and reports its abort as a network failure', async () => {
     const controller = new AbortController()
+    const seen: boolean[] = []
     const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
-      expect(init.signal?.aborted).toBe(false)
+      seen.push(init.signal?.aborted ?? false)
       controller.abort()
-      expect(init.signal?.aborted).toBe(true)
+      seen.push(init.signal?.aborted ?? false)
       return Promise.reject(new DOMException('x', 'AbortError'))
     })
     vi.stubGlobal('fetch', fetchMock)
 
     const error = await uploadReceipt(pdf(), controller.signal).catch((e: unknown) => e)
 
+    // Asserted out here: an expect inside the mock would throw into fetch,
+    // which uploadReceipt catches as a network failure, and still pass.
+    expect(seen).toEqual([false, true])
     expect(error).toMatchObject({ code: 'network' })
   })
 

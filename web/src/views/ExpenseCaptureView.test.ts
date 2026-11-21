@@ -331,13 +331,20 @@ describe('ExpenseCaptureView', () => {
       expect(signal).toBeInstanceOf(AbortSignal)
       expect(signal?.aborted).toBe(false)
 
+      const push = vi.spyOn(router, 'push')
+      const replace = vi.spyOn(router, 'replace')
       unmount()
+      // vue-router resets currentRoute to START_LOCATION when its last app
+      // unmounts, so the route name alone cannot show "nothing happened".
+      expect(router.currentRoute.value.matched).toHaveLength(0)
       expect(signal?.aborted).toBe(true)
       reject(apiError(401, ErrorCode.unauthenticated))
       await new Promise((resolve) => setTimeout(resolve, 20))
 
       expect(me.value).not.toBeNull()
-      expect(router.currentRoute.value.name).not.toBe('login')
+      expect(push).not.toHaveBeenCalled()
+      expect(replace).not.toHaveBeenCalled()
+      expect(router.currentRoute.value.matched).toHaveLength(0)
     })
 
     it('keeps the upload disabled without a session', async () => {
@@ -756,6 +763,26 @@ describe('ExpenseCaptureView', () => {
       expect(await screen.findByText('This field is required for booking.')).toBeVisible()
     })
 
+    it('moves the focus to the first invalid field after a refused booking', async () => {
+      mockApi({ expense: draft })
+      vi.mocked(apiClient.post).mockRejectedValue(
+        apiError(400, ErrorCode.invalidArgument, { category: 'required for booking' }),
+      )
+      const user = userEvent.setup()
+      await renderView('/expenses/capture/e-2')
+
+      await user.click(await screen.findByRole('button', { name: 'Book' }))
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', { name: 'Book permanently' }),
+      )
+
+      // The dialog hands the focus back to its opener while it closes, and
+      // the call runs after that: the category field ends up focused.
+      await vi.waitFor(() =>
+        expect(screen.getByRole('combobox', { name: /^Category/ })).toHaveFocus(),
+      )
+    })
+
     it('offers no Book and disables Save and Delete without a session', async () => {
       me.value = null
       mockApi({ expense: draft })
@@ -850,6 +877,9 @@ describe('ExpenseCaptureView', () => {
       expect(screen.getByLabelText('VAT amount')).toHaveValue('-19.00')
       expect(screen.getByLabelText('Net amount')).toHaveValue('-100.00')
       expect(screen.getByLabelText('VAT rate in percent')).toHaveValue('19.00')
+      expect(screen.getByLabelText(/^Gross amount/)).toBeDisabled()
+      expect(screen.getByLabelText('VAT amount')).toBeDisabled()
+      expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull()
     })
 
     it('show a negated Kleinunternehmer storno amount with its sign', async () => {
@@ -865,6 +895,9 @@ describe('ExpenseCaptureView', () => {
       await renderView('/expenses/capture/e-5')
 
       expect(await screen.findByLabelText(/^Gross amount/)).toHaveValue('-59.50')
+      expect(screen.getByLabelText(/^Gross amount/)).toBeDisabled()
+      expect(screen.getByLabelText('Supplier')).toBeDisabled()
+      expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull()
     })
 
     it('move the focus to the storno date when it is refused', async () => {

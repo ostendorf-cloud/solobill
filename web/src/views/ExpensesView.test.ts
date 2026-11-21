@@ -180,6 +180,83 @@ describe('ExpensesView', () => {
     expect(within(footer).getByText('-5,000.00 EUR')).toBeVisible()
   })
 
+  /** deferredApi answers every /expenses call with a promise the test settles
+   *  itself, in the order the calls were made. */
+  function deferredApi() {
+    const calls: { resolve: (value: unknown) => void; reject: (error: unknown) => void }[] = []
+    vi.mocked(apiClient.get).mockImplementation((path: string) => {
+      if (path === '/categories') {
+        return Promise.resolve({ categories })
+      }
+      return new Promise((resolve, reject) => {
+        calls.push({ resolve, reject })
+      })
+    })
+    return calls
+  }
+
+  it.each([
+    ['a failing', apiError(500, ErrorCode.internal)],
+    ['an unauthenticated', apiError(401, ErrorCode.unauthenticated)],
+  ])('ignores %s answer of an older request that arrives late', async (_name, lateError) => {
+    const calls = deferredApi()
+    const { router } = renderView()
+    const push = vi.spyOn(router, 'push')
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    calls[0]?.resolve(answer([expense], 111, 222))
+    await screen.findByRole('rowheader', { name: 'Office Supplies Inc' })
+
+    await choose('State', 'Draft')
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    await choose('State', 'Booked')
+    await vi.waitFor(() => expect(calls).toHaveLength(3))
+    calls[2]?.resolve(answer([{ ...expense, supplier: 'Booked Shop' }], 700000, 650000))
+    expect(await screen.findByRole('rowheader', { name: 'Booked Shop' })).toBeVisible()
+
+    calls[1]?.reject(lateError)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('rowheader', { name: 'Booked Shop' })).toBeVisible()
+    const rows = screen.getAllByRole('row')
+    const footer = rows[rows.length - 1]
+    expect(within(footer).getByText('7,000.00 EUR')).toBeVisible()
+    expect(within(footer).getByText('6,500.00 EUR')).toBeVisible()
+    expect(me.value).not.toBeNull()
+    expect(push).not.toHaveBeenCalled()
+  })
+
+  it('keeps the skeleton of the newest load when an older load finishes first', async () => {
+    const calls = deferredApi()
+    renderView()
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    expect(screen.getByText('Loading the expenses.')).toBeInTheDocument()
+
+    // A filter reload fails, the owner retries: that load shows the skeleton.
+    await choose('State', 'Draft')
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls[1]?.reject(apiError(500, ErrorCode.internal))
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Try again' }))
+    await vi.waitFor(() => expect(calls).toHaveLength(3))
+    expect(screen.getByText('Loading the expenses.')).toBeInTheDocument()
+
+    // The first, long forgotten load finishes now.
+    calls[0]?.resolve(answer([expense], 111, 222))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(screen.getByText('Loading the expenses.')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.queryByText('No expenses')).toBeNull()
+
+    calls[2]?.resolve(answer([draft], 333, 444))
+    expect(await screen.findByRole('rowheader', { name: 'Draft Shop' })).toBeVisible()
+    const rows = screen.getAllByRole('row')
+    const footer = rows[rows.length - 1]
+    expect(within(footer).getByText('3.33 EUR')).toBeVisible()
+    expect(within(footer).getByText('4.44 EUR')).toBeVisible()
+    expect(screen.queryByText('1.11 EUR')).toBeNull()
+  })
+
   it('ignores an older answer that arrives after a newer one', async () => {
     const pending: Record<string, (value: unknown) => void> = {}
     vi.mocked(apiClient.get).mockImplementation(
