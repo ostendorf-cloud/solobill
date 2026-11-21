@@ -7,8 +7,12 @@ import {
   emptyLine,
   fieldOfPath,
   formToBody,
+  pathLabel,
+  reasonKey,
+  reasonText,
 } from './documentForm'
 import type { Doc } from './documents'
+import { de, en } from './i18n/locales'
 
 const t = (key: string) => `[${key}]`
 
@@ -208,11 +212,16 @@ describe('documentFieldErrors', () => {
         'seller.tax_number': 'a Steuernummer or USt-IdNr is required',
       },
       t,
+      () => true,
     )
 
     expect(fields['line.1.vatRate']).toBe('[documents.reasons.exemptLine]')
     expect(general).toEqual([
-      { path: 'seller.tax_number', text: '[documents.reasons.taxNumberRequired]' },
+      {
+        path: 'seller.tax_number',
+        label: '[documents.paths.seller_tax_number]',
+        text: '[documents.reasons.taxNumberRequired]',
+      },
     ])
   })
 
@@ -220,5 +229,138 @@ describe('documentFieldErrors', () => {
     const { fields } = documentFieldErrors({ notes: 'something new the server says' }, t)
 
     expect(fields.notes).toBe('[documents.reasons.invalid]')
+  })
+})
+
+// Every reason the server can emit for a draft or an issue, read from
+// routes_documents.go, docissue/ and docpayload/ (validate.go, printable.go).
+const REASON_CASES: [string, string, string][] = [
+  ['at most 5000 characters can be printed', 'notes', 'tooManyChars'],
+  ['at most 100 lines can be printed', 'notes', 'tooManyLines'],
+  ['at most 100 lines can be printed', 'lines', 'tooManyLines'],
+  ['at most 100 lines', 'lines', 'tooManyLines'],
+  ['control character U+0007 is not allowed', 'notes', 'controlChar'],
+  ['bidirectional control character U+202E is not allowed', 'notes', 'bidiChar'],
+  ["character '€' (U+20AC) cannot be printed with the bundled font", 'notes', 'unprintableChar'],
+  ['invalid UTF-8 or replacement character U+FFFD is not allowed', 'payment_terms', 'invalidUtf8'],
+  ['the document is too large to print: at most 1000 bytes of data', 'lines', 'tooLarge'],
+  ['the type of a draft never changes', 'type', 'typeFixed'],
+  ['must be invoice or offer', 'type', 'invoiceOrOffer'],
+  ['required when a line is tax exempt', 'tax_note', 'taxNoteRequired'],
+  ['from must not be after to', 'service_period', 'periodOrder'],
+  ['must be empty for an offer', 'service_period', 'offerNoPeriod'],
+  ['required for an invoice', 'service_period', 'servicePeriodRequired'],
+  ['must be a date in the form YYYY-MM-DD', 'service_period.from', 'invalidDate'],
+  [
+    'must be an assigned ISO 3166-1 alpha-2 code such as DE',
+    'customer.address.country_code',
+    'countryCode',
+  ],
+  ['must be one of [piece hour day]', 'lines[0].unit', 'oneOf'],
+  ['must be 1900 as internal/money computes it', 'totals.grand_total_cents', 'figuresMismatch'],
+  ['must be 42', 'totals.vat[0].vat_cents', 'figuresMismatch'],
+  ['must have 2 buckets, one per rate', 'totals.vat', 'figuresMismatch'],
+  [
+    'must be net_total_cents minus document_discount_cents',
+    'totals.net_after_document_discount_cents',
+    'figuresMismatch',
+  ],
+  [
+    'the bucket nets must add up to net_after_document_discount_cents',
+    'totals.vat',
+    'figuresMismatch',
+  ],
+  ['must be the sum of the bucket VAT', 'totals.vat_total_cents', 'figuresMismatch'],
+  ['one bucket per VAT rate is required', 'totals.vat', 'figuresMismatch'],
+  ['must be positive', 'number_value', 'numbering'],
+  ['must be 1 or higher for a correction', 'correction_seq', 'numbering'],
+  ['required for a correction', 'corrects', 'numbering'],
+  ['some numbering error', 'number', 'numbering'],
+  ['some template error', 'seller.number_formats.invoice', 'numbering'],
+  [
+    'the customer is deleted: a document for a deleted customer cannot be issued',
+    'customer_id',
+    'customerDeleted',
+  ],
+  ['a Steuernummer or USt-IdNr is required', 'seller.tax_number', 'taxNumberRequired'],
+  ['must be at most 12 characters', 'seller.iban', 'sellerInvalid'],
+  ['something the customer lacks', 'customer.address.city', 'customerInvalid'],
+  ['something new', 'notes', 'invalid'],
+]
+
+describe('every reason of the server', () => {
+  it.each(REASON_CASES)('maps %s at %s to %s', (reason, path, key) => {
+    expect(reasonKey(reason, path)).toBe(key)
+  })
+
+  it('has a German and an English text for every key it maps to', () => {
+    for (const [, , key] of REASON_CASES) {
+      expect(en.documents.reasons, key).toHaveProperty(key)
+      expect(de.documents.reasons, key).toHaveProperty(key)
+    }
+  })
+
+  it('names the offending character as text, with its code point', () => {
+    const text = reasonText(
+      "character '<' (U+003C) cannot be printed with the bundled font",
+      'notes',
+      (key, params) => [key, String(params?.char), String(params?.code)].join('|'),
+    )
+
+    expect(text).toBe('documents.reasons.unprintableChar|<|U+003C')
+  })
+
+  it('does not echo an escaped character as raw escape text', () => {
+    const text = reasonText(
+      "character '\\u200b' (U+200B) cannot be printed with the bundled font",
+      'notes',
+      (key, params) => [key, String(params?.char), String(params?.code)].join('|'),
+    )
+
+    expect(text).toBe('documents.reasons.unprintableChar||U+200B')
+  })
+
+  it.each([
+    'service_period',
+    'service_period.from',
+    'service_period.to',
+    'tax_note',
+    'issue_date',
+    'number',
+    'correction_seq',
+    'corrects',
+    'seller.tax_number',
+    'seller.address.city',
+    'seller.number_formats.correction',
+    'customer.address.postal_code',
+    'lines[2].description',
+    'totals.vat[0].vat_cents',
+  ])('labels the path %s in words, never by the raw path', (path) => {
+    const te = (key: string) =>
+      key.replace('documents.paths.', '') in (en.documents.paths as Record<string, string>)
+    const label = pathLabel(
+      path,
+      (key, params) => `${key}${params ? JSON.stringify(params) : ''}`,
+      te,
+    )
+
+    expect(label).not.toContain('unknown')
+    expect(label).toContain('documents.paths.')
+  })
+
+  it('has a label in both languages for every path it labels', () => {
+    for (const key of Object.keys(en.documents.paths)) {
+      expect(de.documents.paths, key).toHaveProperty(key)
+    }
+  })
+
+  it('falls back to a generic label for a path it does not know', () => {
+    const label = pathLabel(
+      'something.else',
+      (key) => key,
+      () => false,
+    )
+
+    expect(label).toBe('documents.paths.unknown')
   })
 })

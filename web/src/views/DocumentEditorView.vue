@@ -8,6 +8,7 @@
 // field.
 import {
   GovueButton,
+  GovueConfirmDialog,
   GovueErrorState,
   GovueField,
   GovueInput,
@@ -20,7 +21,7 @@ import {
 } from '@ostendorf-cloud/govue'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink, onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import { apiClient } from '../api'
 import DocumentIssue from '../components/documents/DocumentIssue.vue'
@@ -37,6 +38,7 @@ import {
 } from '../documentForm'
 import {
   LINE_UNITS,
+  anySignal,
   berlinToday,
   createDocument,
   formatPermyriad,
@@ -294,12 +296,18 @@ let previewTimer: ReturnType<typeof setTimeout> | undefined
 let previewRequest = 0
 let previewAbort: AbortController | undefined
 
+// True from an edit until the preview request for it starts: the totals on
+// screen are then older than the form.
+const previewPending = ref(false)
+
 function schedulePreview(delay = PREVIEW_DEBOUNCE_MS): void {
   clearTimeout(previewTimer)
+  previewPending.value = true
   previewTimer = setTimeout(() => void runPreview(), delay)
 }
 
 async function runPreview(): Promise<void> {
+  previewPending.value = false
   const request = ++previewRequest
   previewAbort?.abort()
   const { body } = formToBody(form, t, false)
@@ -315,7 +323,7 @@ async function runPreview(): Promise<void> {
   const stale = (): boolean => request !== previewRequest || unmounted.signal.aborted
   try {
     const answer = await previewDocument(body, {
-      signal: AbortSignal.any([unmounted.signal, controller.signal]),
+      signal: anySignal([unmounted.signal, controller.signal]),
     })
     if (stale()) {
       return
@@ -501,12 +509,91 @@ async function save(): Promise<boolean> {
 
 /** saveForIssue makes sure the stored draft is the one on screen before the
  *  confirmation opens. */
-async function saveForIssue(): Promise<boolean> {
+async function saveForIssue(): Promise<Doc | null> {
   if (doc.value && !dirty.value) {
+    return doc.value
+  }
+  // The answer of the save carries the totals the server stored: the
+  // confirmation shows those, not the ones of the preview.
+  return (await save()) ? doc.value : null
+}
+
+/** issueBlockedHint says why Issue is off: it waits for settled totals. */
+const issueBlockedHint = computed(() => {
+  let reason: string | null = null
+  if (
+    previewPending.value ||
+    previewState.value === 'calculating' ||
+    previewState.value === 'idle'
+  ) {
+    reason = 'calculating'
+  } else if (previewState.value !== 'ok') {
+    reason = previewState.value
+  }
+  return reason ? t(`documents.issue.blocked.${reason}`) : ''
+})
+
+// What a screen reader hears: only the settled grand total or the failure,
+// never every step of a preview cycle.
+const liveSummary = computed(() => {
+  if (previewPending.value) {
+    return ''
+  }
+  if (previewState.value === 'ok' && preview.value) {
+    return t('documents.editor.liveTotal', {
+      total: formatCents(preview.value.totals.grand_total_cents, locale.value),
+    })
+  }
+  if (previewState.value === 'failed') {
+    return t('documents.editor.previewFailed')
+  }
+  if (previewState.value === 'invalid') {
+    return t('documents.editor.previewInvalid')
+  }
+  return ''
+})
+
+// ---- leaving with unsaved changes ----
+
+const leaveOpen = ref(false)
+let leaveTarget: string | null = null
+let leaveConfirmed = false
+
+onBeforeRouteLeave((to) => {
+  if (leaveConfirmed || !dirty.value || step.value !== 'form') {
     return true
   }
-  return save()
+  leaveTarget = to.fullPath
+  leaveOpen.value = true
+  return false
+})
+
+function confirmLeave(): void {
+  leaveConfirmed = true
+  leaveOpen.value = false
+  if (leaveTarget) {
+    void router.push(leaveTarget)
+  }
 }
+
+// A reload or a closed tab with unsaved changes asks the browser to confirm.
+function warnBeforeUnload(event: BeforeUnloadEvent): void {
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+watch(
+  dirty,
+  (isDirty) => {
+    if (isDirty) {
+      window.addEventListener('beforeunload', warnBeforeUnload)
+    } else {
+      window.removeEventListener('beforeunload', warnBeforeUnload)
+    }
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnload))
 
 function onIssueFields(mapped: MappedErrors): void {
   errors.value = mapped.fields
@@ -741,7 +828,7 @@ const regimeModel = computed({
             <div class="grid gap-4 sm:grid-cols-2">
               <GovueField
                 :label="`${t('documents.editor.lineDiscount')} (${i + 1})`"
-                :error="shown[`line.${i}.discount`]"
+                :error="line.discountMode === 'none' ? shown[`line.${i}.discount`] : undefined"
               >
                 <GovueSelect
                   :model-value="line.discountMode"
@@ -752,6 +839,7 @@ const regimeModel = computed({
               <GovueField
                 v-if="line.discountMode !== 'none'"
                 :label="`${t(`documents.editor.discountValue.${line.discountMode}`)} (${i + 1})`"
+                :error="shown[`line.${i}.discount`]"
               >
                 <GovueInput v-model="line.discountValue" inputmode="decimal" autocomplete="off" />
               </GovueField>
@@ -784,7 +872,10 @@ const regimeModel = computed({
             {{ t('documents.editor.discountTitle') }}
           </legend>
           <div class="grid gap-4 sm:grid-cols-2">
-            <GovueField :label="t('documents.editor.documentDiscount')" :error="shown.discount">
+            <GovueField
+              :label="t('documents.editor.documentDiscount')"
+              :error="form.discountMode === 'none' ? shown.discount : undefined"
+            >
               <GovueSelect
                 :model-value="form.discountMode"
                 :options="discountOptions"
@@ -794,6 +885,7 @@ const regimeModel = computed({
             <GovueField
               v-if="form.discountMode !== 'none'"
               :label="t(`documents.editor.discountValue.${form.discountMode}`)"
+              :error="shown.discount"
             >
               <GovueInput v-model="form.discountValue" inputmode="decimal" autocomplete="off" />
             </GovueField>
@@ -819,7 +911,12 @@ const regimeModel = computed({
           <h2 id="preview-heading" class="text-xl font-semibold text-text">
             {{ t('documents.editor.totals') }}
           </h2>
-          <div aria-live="polite" data-testid="preview">
+          <!-- The settled total or the failure is announced once; the steps of
+               a preview cycle are not. -->
+          <p class="sr-only" role="status" aria-live="polite" data-testid="live-summary">
+            {{ liveSummary }}
+          </p>
+          <div data-testid="preview">
             <p v-if="previewState === 'calculating'" class="text-text-muted">
               {{ t('documents.editor.calculating') }}
             </p>
@@ -913,11 +1010,23 @@ const regimeModel = computed({
           :subject="issueSubject"
           :is-owner="isOwner"
           :before-issue="saveForIssue"
+          :blocked-hint="issueBlockedHint"
           @fields="onIssueFields"
           @issued="onIssued"
           @new-correction="openNewCorrection"
+          @discarded="router.push({ name: 'documents' })"
         />
       </section>
     </template>
+
+    <GovueConfirmDialog
+      v-model:open="leaveOpen"
+      :title="t('documents.editor.leave.title')"
+      :message="t('documents.editor.leave.message')"
+      :subject="title"
+      :confirm-label="t('documents.editor.leave.confirm')"
+      :cancel-label="t('documents.editor.leave.cancel')"
+      @confirm="confirmLeave"
+    />
   </GovuePage>
 </template>

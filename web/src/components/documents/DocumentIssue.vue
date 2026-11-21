@@ -19,11 +19,14 @@ import {
 import {
   classifyIssueError,
   createCorrection,
+  deleteDocument,
   issueDocument,
   type Doc,
   type DocumentType,
   type IssueFailure,
+  type Totals,
 } from '../../documents'
+import { formatCents } from '../../money'
 import { clearSession, loadSession, sessionFailed, sessionReady } from '../../session'
 
 const props = defineProps<{
@@ -36,8 +39,13 @@ const props = defineProps<{
   /** Only the owner issues (docs/api.md). */
   isOwner: boolean
   /** Runs before the confirmation opens. The editor saves its draft here and
-   *  answers false when it could not. */
-  beforeIssue?: () => Promise<boolean>
+   *  answers the saved draft, or null when it could not save. The totals the
+   *  server stored with it are what the confirmation shows. */
+  beforeIssue?: () => Promise<Doc | null>
+  /** The totals of the stored draft, for a view that does not save first. */
+  totals?: Totals | null
+  /** Why issuing is not possible right now, as text. Empty means it is. */
+  blockedHint?: string
   /** True in the detail view, which has no fields: every problem is listed. */
   listAllProblems?: boolean
 }>()
@@ -46,9 +54,12 @@ const emit = defineEmits<{
   issued: [doc: Doc]
   fields: [mapped: MappedErrors]
   newCorrection: [id: string]
+  discarded: []
 }>()
 
-const { t } = useI18n()
+const i18n = useI18n()
+const { t, locale } = i18n
+const te = (key: string): boolean => i18n.te(key)
 const router = useRouter()
 const { notify } = useToasts()
 
@@ -58,6 +69,13 @@ const preparing = ref(false)
 const failure = ref<IssueFailure | null>(null)
 const problems = ref<GeneralProblem[]>([])
 const recreating = ref(false)
+// Which call the failure belongs to: the 503 of a correction says something
+// else than the 503 of an issue (no draft is saved then).
+const context = ref<'issue' | 'correction'>('issue')
+// The totals of the stored draft the confirmation shows.
+const confirmTotals = ref<Totals | null>(null)
+const discardOpen = ref(false)
+const discarding = ref(false)
 
 const unmounted = new AbortController()
 onBeforeUnmount(() => unmounted.abort())
@@ -77,32 +95,57 @@ function reset(): void {
 
 async function ask(): Promise<void> {
   reset()
+  if (props.blockedHint) {
+    // The totals on screen are not the settled ones of the draft.
+    return
+  }
   if (!sessionReady.value) {
     // The CSRF token comes from /me: try the session once more.
     void loadSession()
     return
   }
+  confirmTotals.value = props.totals ?? null
   if (props.beforeIssue) {
     preparing.value = true
-    const ok = await props.beforeIssue()
+    const saved = await props.beforeIssue()
     if (unmounted.signal.aborted) {
       return
     }
     preparing.value = false
-    if (!ok) {
+    if (!saved) {
       return
     }
+    confirmTotals.value = saved.totals
   }
   confirmOpen.value = true
 }
 
-function showFailure(error: unknown): void {
+/** confirmSubject names the document and the total the server stored for it,
+ *  so the owner confirms the figure that will be frozen. */
+const confirmSubject = computed(() => {
+  const totals = confirmTotals.value
+  if (!totals) {
+    return props.subject
+  }
+  const money = (cents: number): string => formatCents(cents, locale.value)
+  const line = t('documents.issue.confirmTotals', {
+    gross: money(totals.grand_total_cents),
+    net: money(totals.net_after_document_discount_cents),
+    vat: money(totals.vat_total_cents),
+  })
+  return `${props.subject}: ${line}`
+})
+
+function showFailure(error: unknown, from: 'issue' | 'correction' = 'issue'): void {
   const result = classifyIssueError(error)
+  context.value = from
   failure.value = result
   if (result.kind === 'fields') {
-    const mapped = documentFieldErrors(result.details, t)
+    const mapped = documentFieldErrors(result.details, t, te)
     emit('fields', mapped)
-    problems.value = props.listAllProblems ? documentProblemList(result.details, t) : mapped.general
+    problems.value = props.listAllProblems
+      ? documentProblemList(result.details, t, te)
+      : mapped.general
   }
 }
 
@@ -164,10 +207,43 @@ async function startNewCorrection(): Promise<void> {
       await toLogin()
       return
     }
-    showFailure(error)
+    showFailure(error, 'correction')
   } finally {
     if (!unmounted.signal.aborted) {
       recreating.value = false
+    }
+  }
+}
+
+/** confirmDiscard deletes the stale draft after a changed correction base. */
+async function confirmDiscard(): Promise<void> {
+  if (!sessionReady.value) {
+    notify({ kind: 'error', title: t('common.errors.session') })
+    void loadSession()
+    return
+  }
+  discarding.value = true
+  try {
+    await deleteDocument(props.documentId)
+    if (unmounted.signal.aborted) {
+      return
+    }
+    discardOpen.value = false
+    notify({ kind: 'success', title: t('documents.issue.discarded') })
+    emit('discarded')
+  } catch (error) {
+    if (unmounted.signal.aborted) {
+      return
+    }
+    discardOpen.value = false
+    if (isApiError(error) && error.isUnauthenticated) {
+      await toLogin()
+      return
+    }
+    notify({ kind: 'error', title: t('documents.issue.discardError') })
+  } finally {
+    if (!unmounted.signal.aborted) {
+      discarding.value = false
     }
   }
 }
@@ -186,6 +262,12 @@ const message = computed(() => {
       })
     case 'baseChanged':
       return t('documents.issue.errors.baseChanged', { seq: f.details.correction_base_seq ?? '' })
+    case 'renderer':
+      return t(
+        context.value === 'correction'
+          ? 'documents.issue.errors.rendererCorrection'
+          : 'documents.issue.errors.renderer',
+      )
     default:
       return t(`documents.issue.errors.${f.kind}`)
   }
@@ -201,13 +283,17 @@ const message = computed(() => {
       <div>
         <GovueButton
           variant="primary"
-          :disabled="!sessionReady"
+          :disabled="!sessionReady || !!blockedHint"
           :loading="preparing"
           :loading-label="t('documents.issue.preparing')"
+          :aria-describedby="blockedHint ? 'issue-blocked' : undefined"
           @click="ask"
         >
           {{ t('documents.issue.action') }}
         </GovueButton>
+        <p v-if="blockedHint" id="issue-blocked" class="mt-1 text-sm text-text-muted">
+          {{ blockedHint }}
+        </p>
       </div>
     </template>
     <p v-else class="text-sm text-text-muted">{{ t('documents.issue.ownerOnly') }}</p>
@@ -216,7 +302,7 @@ const message = computed(() => {
       <p data-testid="issue-error">{{ message }}</p>
       <ul v-if="problems.length > 0" class="list-disc pl-6">
         <li v-for="p in problems" :key="p.path">
-          <code class="font-mono text-sm">{{ p.path }}</code>: {{ p.text }}
+          <span class="font-medium">{{ p.label }}</span>: {{ p.text }}
         </li>
       </ul>
       <p
@@ -240,14 +326,28 @@ const message = computed(() => {
         >
           {{ t('documents.issue.newCorrection') }}
         </GovueButton>
+        <GovueButton variant="secondary" :disabled="!sessionReady" @click="discardOpen = true">
+          {{ t('documents.issue.discardOld') }}
+        </GovueButton>
       </div>
     </div>
+
+    <GovueConfirmDialog
+      v-model:open="discardOpen"
+      :title="t('documents.issue.discardTitle')"
+      :message="t('documents.issue.discardMessage')"
+      :subject="subject"
+      :confirm-label="t('documents.issue.discardConfirm')"
+      :cancel-label="t('documents.cancel')"
+      :loading="discarding"
+      @confirm="confirmDiscard"
+    />
 
     <GovueConfirmDialog
       v-model:open="confirmOpen"
       :title="t(`documents.issue.confirmTitle.${documentType}`)"
       :message="t('documents.issue.confirmMessage')"
-      :subject="subject"
+      :subject="confirmSubject"
       :confirm-label="t('documents.issue.confirm')"
       :cancel-label="t('documents.cancel')"
       :loading="issuing"

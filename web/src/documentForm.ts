@@ -18,7 +18,7 @@ import {
   type Regime,
 } from './documents'
 
-type Translate = (key: string) => string
+type Translate = (key: string, params?: Record<string, unknown>) => string
 
 export type DiscountMode = 'none' | 'percent' | 'amount'
 
@@ -332,33 +332,120 @@ const EXACT_REASONS: Record<string, string> = {
   'a Steuernummer or USt-IdNr is required': 'taxNumberRequired',
   'required for an invoice': 'servicePeriodRequired',
   'at least one line is required': 'noLines',
+  'the type of a draft never changes': 'typeFixed',
+  'must be invoice or offer': 'invoiceOrOffer',
+  'required when a line is tax exempt': 'taxNoteRequired',
+  'from must not be after to': 'periodOrder',
+  'must be empty for an offer': 'offerNoPeriod',
+  'invalid UTF-8 or replacement character U+FFFD is not allowed': 'invalidUtf8',
+  'must be 1 or higher for a correction': 'numbering',
 }
 
+// Every reason of internal/httpapi/routes_documents.go, internal/docissue and
+// internal/docpayload (validate.go, printable.go) that is not an exact text.
 const PATTERN_REASONS: [RegExp, string][] = [
   [/^must be a date/, 'invalidDate'],
-  [/^at most \d+ lines$/, 'tooManyLines'],
+  [/^at most \d+ lines( can be printed)?$/, 'tooManyLines'],
+  [/^at most \d+ characters can be printed$/, 'tooManyChars'],
+  [/^bidirectional control character /, 'bidiChar'],
+  [/^control character .* is not allowed$/, 'controlChar'],
+  [/^character .* cannot be printed with the bundled font$/, 'unprintableChar'],
+  [/^the document is too large to print/, 'tooLarge'],
+  [/^the customer is deleted/, 'customerDeleted'],
+  [/^must be an assigned ISO 3166-1 alpha-2 code/, 'countryCode'],
+  [/^must be one of \[/, 'oneOf'],
+  [/^must be -?\d+( as internal\/money computes it)?$/, 'figuresMismatch'],
+  [/^must have \d+ buckets/, 'figuresMismatch'],
+  [/^must be net_/, 'figuresMismatch'],
+  [/^the bucket nets must add up/, 'figuresMismatch'],
+  [/^must be the sum of the bucket VAT/, 'figuresMismatch'],
+  [/^one bucket per VAT rate/, 'figuresMismatch'],
   [/^required: no VAT regime period/, 'regimeUnknown'],
   [/^the lines cannot be calculated/, 'cannotCalculate'],
 ]
 
-export function reasonKey(reason: string): string {
-  return EXACT_REASONS[reason] ?? PATTERN_REASONS.find(([re]) => re.test(reason))?.[1] ?? 'invalid'
+// Paths whose reason is a numbering or frozen payload problem the owner
+// cannot fix in the draft itself.
+const NUMBERING_PATHS = new Set([
+  'number',
+  'number_value',
+  'number_year',
+  'correction_seq',
+  'corrects',
+  'original',
+  'version',
+  'currency',
+])
+
+export function reasonKey(reason: string, path = ''): string {
+  const known =
+    EXACT_REASONS[reason] ?? PATTERN_REASONS.find(([re]) => re.test(reason))?.[1] ?? null
+  if (NUMBERING_PATHS.has(path) || path.startsWith('seller.number_formats.')) {
+    return 'numbering'
+  }
+  if (known !== null) {
+    return known
+  }
+  if (path.startsWith('seller.')) {
+    return 'sellerInvalid'
+  }
+  if (path.startsWith('customer.')) {
+    return 'customerInvalid'
+  }
+  return 'invalid'
 }
 
-/** documentProblemList lists every reason of an answer as a path and a
- *  translated text, for a view that has no fields to mark. */
+/** reasonText translates a reason. The offending character of an
+ *  unprintable one is the owner's own text: it is named in the message as
+ *  text, together with its code point. */
+export function reasonText(reason: string, path: string, t: Translate): string {
+  const key = reasonKey(reason, path)
+  if (key === 'unprintableChar') {
+    const match = /^character '(.*)' \((U\+[0-9A-F]+)\) cannot/.exec(reason)
+    const shown = match?.[1] && !match[1].startsWith('\\') ? match[1] : ''
+    return t('documents.reasons.unprintableChar', { char: shown, code: match?.[2] ?? '' })
+  }
+  return t(`documents.reasons.${key}`)
+}
+
+/** pathLabel names the field of an API path in the visitor's language. A
+ *  path without a label gets the generic one: the raw path is never shown. */
+export function pathLabel(path: string, t: Translate, te: (key: string) => boolean): string {
+  const line = /^lines\[(\d+)\]\.(\w+)$/.exec(path)
+  if (line) {
+    const field = `documents.paths.lines_${line[2]}`
+    return t('documents.paths.linePrefix', {
+      n: parseInt(line[1] ?? '0', 10) + 1,
+      field: te(field) ? t(field) : t('documents.paths.unknown'),
+    })
+  }
+  const totals = /^totals\./.test(path)
+  if (totals) {
+    return t('documents.paths.totals')
+  }
+  // A flat key: "seller.address.city" is documents.paths.seller_address_city.
+  const key = `documents.paths.${path.replace(/\[\d+\]/g, '').replace(/\./g, '_')}`
+  return te(key) ? t(key) : t('documents.paths.unknown')
+}
+
+/** documentProblemList lists every reason of an answer with the label of its
+ *  field and a translated text, for a view that has no fields to mark. */
 export function documentProblemList(
   details: Record<string, string>,
   t: Translate,
+  te: (key: string) => boolean,
 ): GeneralProblem[] {
   return Object.entries(details).map(([path, reason]) => ({
     path,
-    text: t(`documents.reasons.${reasonKey(reason)}`),
+    label: pathLabel(path, t, te),
+    text: reasonText(reason, path, t),
   }))
 }
 
 export interface GeneralProblem {
   path: string
+  /** The field in the visitor's language. */
+  label: string
   text: string
 }
 
@@ -372,14 +459,18 @@ export interface MappedErrors {
 /** documentFieldErrors puts each reason of an answer's `details` at its field
  *  in the visitor's language. An unknown reason gets the generic text, never
  *  the server's English. */
-export function documentFieldErrors(details: Record<string, string>, t: Translate): MappedErrors {
+export function documentFieldErrors(
+  details: Record<string, string>,
+  t: Translate,
+  te: (key: string) => boolean = () => false,
+): MappedErrors {
   const fields: Record<string, string> = {}
   const general: GeneralProblem[] = []
   for (const [path, reason] of Object.entries(details)) {
-    const text = t(`documents.reasons.${reasonKey(reason)}`)
+    const text = reasonText(reason, path, t)
     const field = fieldOfPath(path)
     if (field === null) {
-      general.push({ path, text })
+      general.push({ path, label: pathLabel(path, t, te), text })
     } else if (!(field in fields)) {
       fields[field] = text
     }

@@ -216,6 +216,24 @@ export function recordPayment(id: string, body: PaymentBody): Promise<Payment> {
   return apiClient.post<Payment>(`/documents/${encodeURIComponent(id)}/payments`, body)
 }
 
+/** anySignal aborts when any of the signals aborts. It uses AbortSignal.any
+ *  where the browser has it (Safari 17.4, Firefox 124, Chrome 116) and links
+ *  the signals by hand otherwise. */
+export function anySignal(signals: readonly AbortSignal[]): AbortSignal {
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([...signals])
+  }
+  const controller = new AbortController()
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason)
+      break
+    }
+    signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true })
+  }
+  return controller.signal
+}
+
 /** berlinToday is today's date in Europe/Berlin as YYYY-MM-DD, the calendar
  *  the server checks a payment's received_on against. */
 export function berlinToday(now: Date = new Date()): string {
@@ -309,6 +327,7 @@ export type IssueFailureKind =
   | 'baseChanged'
   | 'regimeChanged'
   | 'conflict'
+  | 'draftChanged'
   | 'forbidden'
   | 'fields'
   | 'transport'
@@ -344,7 +363,10 @@ export function classifyIssueError(error: unknown): IssueFailure {
     return { kind: 'fields', details }
   }
   if (error.status === 409) {
-    return { kind: 'conflict', details }
+    // docissue.ErrDraftChanged answers a plain conflict whose message says
+    // the draft changed underneath the issue.
+    const changed = /^the draft changed/.test(error.message)
+    return { kind: changed ? 'draftChanged' : 'conflict', details }
   }
   if (error.status === 403) {
     return { kind: 'forbidden', details }

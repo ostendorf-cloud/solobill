@@ -220,7 +220,12 @@ describe('DocumentDetailView', () => {
 
       expect(within(dialog).getByText('Issue this invoice?')).toBeVisible()
       expect(within(dialog).getByText(/can never be changed or deleted again/)).toBeVisible()
-      expect(within(dialog).getByText('Invoice, Customer Ltd')).toBeVisible()
+      // The confirmation shows the total the server stored for this draft.
+      expect(
+        within(dialog).getByText(
+          'Invoice, Customer Ltd: Total 238.00 EUR (net 200.00 EUR, VAT 38.00 EUR)',
+        ),
+      ).toBeVisible()
       await new Promise((resolve) => setTimeout(resolve, 20))
       expect(posts).toHaveLength(0)
     })
@@ -312,7 +317,12 @@ describe('DocumentDetailView', () => {
       expect(alert).toHaveTextContent('The document is incomplete.')
       const list = within(alert.parentElement as HTMLElement).getAllByRole('listitem')
       expect(list).toHaveLength(3)
-      expect(screen.getByText('seller.tax_number')).toBeVisible()
+      // The field is named in words, never by its API path.
+      expect(screen.getByText('Seller tax number')).toBeVisible()
+      expect(screen.getByText('Line 1: VAT rate')).toBeVisible()
+      expect(screen.getByText('Customer city')).toBeVisible()
+      expect(screen.queryByText('seller.tax_number')).toBeNull()
+      expect(screen.queryByText('customer.address.city')).toBeNull()
       expect(
         screen.getByText(/A tax number or VAT ID is required in the seller profile/),
       ).toBeVisible()
@@ -455,9 +465,10 @@ describe('DocumentDetailView', () => {
 
       await user.click(await screen.findByRole('button', { name: 'Correct invoice' }))
 
-      expect(await screen.findByTestId('action-error')).toHaveTextContent(
-        'Issuing is not available yet.',
-      )
+      // No draft exists behind a correction: the text must not claim one is saved.
+      const text = await screen.findByTestId('action-error')
+      expect(text).toHaveTextContent('Correcting is not available yet.')
+      expect(text).not.toHaveTextContent('draft is saved')
     })
 
     it('marks a superseded document, offers no correction and links to the effective one', async () => {

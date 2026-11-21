@@ -205,9 +205,18 @@ const working = ref(false)
 const discardOpen = ref(false)
 const discarding = ref(false)
 
+const actionKind = ref<'correct' | 'toInvoice'>('correct')
+
 const actionErrorText = computed(() => {
   const f = actionError.value
-  return f ? t(`documents.issue.errors.${f.kind}`) : ''
+  if (!f) {
+    return ''
+  }
+  // The 503 of a correction has no saved draft behind it: it needs its own text.
+  if (f.kind === 'renderer' && actionKind.value === 'correct') {
+    return t('documents.issue.errors.rendererCorrection')
+  }
+  return t(`documents.issue.errors.${f.kind}`)
 })
 
 /** gate answers false and tells why when a write has no CSRF token yet. */
@@ -221,10 +230,11 @@ function gate(): boolean {
 }
 
 /** runAction starts a call that answers a new draft and opens its editor. */
-async function runAction(call: () => Promise<Doc>): Promise<void> {
+async function runAction(kind: 'correct' | 'toInvoice', call: () => Promise<Doc>): Promise<void> {
   if (!gate()) {
     return
   }
+  actionKind.value = kind
   working.value = true
   actionError.value = null
   try {
@@ -251,13 +261,13 @@ async function runAction(call: () => Promise<Doc>): Promise<void> {
 
 function correct(): void {
   if (doc.value) {
-    void runAction(() => createCorrection((doc.value as Doc).id))
+    void runAction('correct', () => createCorrection((doc.value as Doc).id))
   }
 }
 
 function toInvoice(): void {
   if (doc.value) {
-    void runAction(() => offerToInvoice((doc.value as Doc).id))
+    void runAction('toInvoice', () => offerToInvoice((doc.value as Doc).id))
   }
 }
 
@@ -308,7 +318,7 @@ function openNewCorrection(id: string): void {
 </script>
 
 <template>
-  <GovuePage width="shell" :title="title" :lead="t('documents.detail.lead')">
+  <GovuePage width="shell" :title="title" :lead="isDraft ? undefined : t('documents.detail.lead')">
     <div v-if="loading" role="status">
       <span class="sr-only">{{ t('documents.detail.loading') }}</span>
       <GovueSkeleton :lines="5" />
@@ -544,8 +554,10 @@ function openNewCorrection(id: string): void {
             :corrects-document-id="doc.corrects_document_id"
             :subject="subject"
             :is-owner="isOwner"
+            :totals="doc.totals"
             list-all-problems
             @issued="onIssued"
+            @discarded="router.push({ name: 'documents' })"
             @new-correction="openNewCorrection"
           />
         </template>

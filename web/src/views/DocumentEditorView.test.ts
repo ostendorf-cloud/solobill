@@ -3,7 +3,8 @@ import { fireEvent, render, screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { defineComponent } from 'vue'
+import { RouterView, createMemoryHistory, createRouter } from 'vue-router'
 
 import { apiClient } from '../api'
 import type { Doc, DocumentBody, PreviewAnswer } from '../documents'
@@ -170,7 +171,9 @@ async function renderView(path = '/documents/edit', locale: 'en' | 'de' = 'en') 
   await router.push(path)
   const i18n = createI18n({ legacy: false, locale, messages: { en, de } })
   const govueI18n = createGovueI18n({ i18n })
-  const view = render(DocumentEditorView, { global: { plugins: [router, i18n, govueI18n] } })
+  // Through a RouterView, like the app: the leave guard needs the route record.
+  const Root = defineComponent({ components: { RouterView }, template: '<RouterView />' })
+  const view = render(Root, { global: { plugins: [router, i18n, govueI18n] } })
   return { ...view, router }
 }
 
@@ -198,6 +201,12 @@ async function fillFirstLine(user: ReturnType<typeof userEvent.setup>) {
 /** ready waits for the form: the page title shows before the data arrived. */
 async function ready(): Promise<HTMLElement> {
   return screen.findByRole('button', { name: 'Save draft' })
+}
+
+/** clickIssue waits until the settled totals enable Issue, then clicks it. */
+async function clickIssue(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Issue' })).toBeEnabled())
+  await user.click(screen.getByRole('button', { name: 'Issue' }))
 }
 
 const wait = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -376,7 +385,9 @@ describe('DocumentEditorView', () => {
 
       expect(await screen.findByText(/A line without VAT needs an exemption reason/)).toBeVisible()
       expect(
-        screen.getByText('The server cannot calculate these lines. Check the marked fields.'),
+        within(screen.getByTestId('preview')).getByText(
+          'The server cannot calculate these lines. Check the marked fields.',
+        ),
       ).toBeVisible()
       expect(screen.queryByText(/a tax exempt line/)).toBeNull()
     })
@@ -453,7 +464,11 @@ describe('DocumentEditorView', () => {
       await ready()
       await fillFirstLine(user)
 
-      expect(await screen.findByText('The totals could not be calculated.')).toBeVisible()
+      expect(
+        await within(screen.getByTestId('preview')).findByText(
+          'The totals could not be calculated.',
+        ),
+      ).toBeVisible()
       fail = false
       await user.click(screen.getByRole('button', { name: 'Calculate again' }))
 
@@ -730,7 +745,7 @@ describe('DocumentEditorView', () => {
       await ready()
       await user.type(screen.getByLabelText(/^Description \(1\)/), ' work')
 
-      await user.click(screen.getByRole('button', { name: 'Issue' }))
+      await clickIssue(user)
       const dialog = await screen.findByRole('dialog')
 
       expect(rec.puts).toHaveLength(1)
@@ -748,7 +763,7 @@ describe('DocumentEditorView', () => {
       await renderView('/documents/edit/d-1')
       await ready()
 
-      await user.click(screen.getByRole('button', { name: 'Issue' }))
+      await clickIssue(user)
       await screen.findByRole('dialog')
 
       expect(rec.puts).toHaveLength(0)
@@ -761,7 +776,7 @@ describe('DocumentEditorView', () => {
       await ready()
       await user.type(screen.getByLabelText(/^Description \(1\)/), ' work')
 
-      await user.click(screen.getByRole('button', { name: 'Issue' }))
+      await clickIssue(user)
       await wait(50)
 
       expect(screen.queryByRole('dialog')).toBeNull()
@@ -782,7 +797,7 @@ describe('DocumentEditorView', () => {
       await renderView('/documents/edit/d-1')
       await ready()
 
-      await user.click(screen.getByRole('button', { name: 'Issue' }))
+      await clickIssue(user)
       await user.click(
         within(await screen.findByRole('dialog')).getByRole('button', {
           name: 'Issue permanently',
@@ -791,7 +806,8 @@ describe('DocumentEditorView', () => {
 
       expect(await screen.findByText('This field is required.')).toBeVisible()
       await vi.waitFor(() => expect(screen.getByLabelText(/^Description \(1\)/)).toHaveFocus())
-      expect(screen.getByText('seller.tax_number')).toBeVisible()
+      expect(screen.getByText('Seller tax number')).toBeVisible()
+      expect(screen.queryByText('seller.tax_number')).toBeNull()
       expect(
         screen.getByText(/A tax number or VAT ID is required in the seller profile/),
       ).toBeVisible()
@@ -803,7 +819,7 @@ describe('DocumentEditorView', () => {
       await renderView('/documents/edit/d-1')
       await ready()
 
-      await user.click(screen.getByRole('button', { name: 'Issue' }))
+      await clickIssue(user)
       await user.click(
         within(await screen.findByRole('dialog')).getByRole('button', {
           name: 'Issue permanently',
@@ -827,7 +843,7 @@ describe('DocumentEditorView', () => {
       const { router } = await renderView('/documents/edit/d-1')
       await ready()
 
-      await user.click(screen.getByRole('button', { name: 'Issue' }))
+      await clickIssue(user)
       await user.click(
         within(await screen.findByRole('dialog')).getByRole('button', {
           name: 'Issue permanently',
@@ -846,6 +862,359 @@ describe('DocumentEditorView', () => {
 
       expect(screen.queryByRole('button', { name: 'Issue' })).toBeNull()
       expect(screen.getByText('Only the owner issues documents.')).toBeVisible()
+    })
+  })
+
+  describe('issue waits for the settled totals', () => {
+    const issueButton = () => screen.getByRole('button', { name: 'Issue' })
+
+    it('is enabled once the totals are settled and says nothing then', async () => {
+      mockApi()
+      await renderView('/documents/edit/d-1')
+      await ready()
+
+      await vi.waitFor(() => expect(issueButton()).toBeEnabled())
+      expect(screen.queryByText(/Issuing waits/)).toBeNull()
+    })
+
+    it('is disabled during the debounce, while the old totals are still on screen', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await vi.waitFor(() => expect(issueButton()).toBeEnabled())
+      await screen.findByText('123.45 EUR')
+
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' x')
+
+      expect(issueButton()).toBeDisabled()
+      expect(screen.getByText('Issuing waits until the totals are calculated.')).toBeVisible()
+      expect(screen.getByText('123.45 EUR')).toBeVisible()
+      await vi.waitFor(() => expect(issueButton()).toBeEnabled())
+    })
+
+    it('is disabled while the preview request is in flight and enabled when it answers', async () => {
+      const calls: ((v: PreviewAnswer) => void)[] = []
+      mockApi({
+        preview: () =>
+          new Promise<PreviewAnswer>((resolve) => {
+            calls.push(resolve)
+          }),
+      })
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await vi.waitFor(() => expect(calls).toHaveLength(1))
+
+      expect(issueButton()).toBeDisabled()
+      expect(screen.getByText('Issuing waits until the totals are calculated.')).toBeVisible()
+      calls[0]?.(previewAnswer())
+
+      await vi.waitFor(() => expect(issueButton()).toBeEnabled())
+    })
+
+    it('is disabled after a failed preview', async () => {
+      mockApi({ preview: () => Promise.reject(apiError(500, ErrorCode.internal)) })
+      await renderView('/documents/edit/d-1')
+      await ready()
+
+      expect(
+        await screen.findByText('The totals could not be calculated. Calculate again to issue.'),
+      ).toBeVisible()
+      expect(issueButton()).toBeDisabled()
+    })
+
+    it('is disabled when the server cannot calculate the lines', async () => {
+      mockApi({
+        preview: () =>
+          Promise.reject(
+            apiError(400, ErrorCode.invalidArgument, {
+              'lines[0].vat_rate_permyriad': 'must be 0 under the Kleinunternehmer regime',
+            }),
+          ),
+      })
+      await renderView('/documents/edit/d-1')
+      await ready()
+
+      expect(await screen.findByText(/Fix the marked fields to issue/)).toBeVisible()
+      expect(issueButton()).toBeDisabled()
+    })
+
+    it('is disabled while the lines are incomplete', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await vi.waitFor(() => expect(issueButton()).toBeEnabled())
+
+      await user.clear(screen.getByLabelText(/^Description \(1\)/))
+
+      expect(await screen.findByText(/Complete the lines first/)).toBeVisible()
+      expect(issueButton()).toBeDisabled()
+    })
+
+    it('shows the totals the server stored for the saved draft, not the preview', async () => {
+      mockApi({ put: () => Promise.resolve(draftDoc({ totals: totalsOf(55555) })) })
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' work')
+
+      await clickIssue(user)
+      const dialog = await screen.findByRole('dialog')
+
+      expect(
+        within(dialog).getByText(
+          'Invoice, Customer Ltd: Total 555.55 EUR (net 111.11 EUR, VAT 2.22 EUR)',
+        ),
+      ).toBeVisible()
+      expect(within(dialog).queryByText(/123\.45/)).toBeNull()
+    })
+
+    it('saves first and opens the confirmation only after the save answered', async () => {
+      let answer: (doc: Doc) => void = () => {}
+      mockApi({
+        put: () =>
+          new Promise((resolve) => {
+            answer = resolve
+          }),
+      })
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' work')
+      await clickIssue(user)
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+
+      await wait(50)
+      expect(screen.queryByRole('dialog')).toBeNull()
+      answer(draftDoc({ totals: totalsOf(77777) }))
+
+      const dialog = await screen.findByRole('dialog')
+      expect(within(dialog).getByText(/Total 777\.77 EUR/)).toBeVisible()
+    })
+
+    it('shows the totals of the loaded draft when nothing was changed', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+
+      await clickIssue(user)
+      const dialog = await screen.findByRole('dialog')
+
+      expect(within(dialog).getByText(/Total 123\.45 EUR/)).toBeVisible()
+      expect(rec.puts).toHaveLength(0)
+    })
+  })
+
+  describe('discount errors', () => {
+    it('marks the line discount value, not the mode, and moves the focus there', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      await renderView()
+      await ready()
+      await choose(/^Customer/, 'Customer Ltd')
+      await fillFirstLine(user)
+      await choose('Line discount (1)', 'Percentage')
+      await user.type(screen.getByLabelText('Discount in percent (1)'), 'x')
+
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+      const value = screen.getByLabelText('Discount in percent (1)')
+      await vi.waitFor(() => expect(value).toHaveFocus())
+      expect(value).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByRole('combobox', { name: 'Line discount (1)' })).not.toHaveAttribute(
+        'aria-invalid',
+      )
+      expect(screen.getByText(/Enter a percentage from 0 to 100/)).toBeVisible()
+      expect(rec.posts).toHaveLength(0)
+    })
+
+    it('marks the document discount value and moves the focus there', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      await renderView()
+      await ready()
+      await choose(/^Customer/, 'Customer Ltd')
+      await fillFirstLine(user)
+      await choose('Document discount', 'Amount')
+      await user.type(screen.getByLabelText('Discount amount'), 'x')
+
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+
+      const value = screen.getByLabelText('Discount amount')
+      await vi.waitFor(() => expect(value).toHaveFocus())
+      expect(value).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByRole('combobox', { name: 'Document discount' })).not.toHaveAttribute(
+        'aria-invalid',
+      )
+    })
+  })
+
+  describe('the live region', () => {
+    it('announces only the settled grand total, not every step of a preview cycle', async () => {
+      const calls: ((v: PreviewAnswer) => void)[] = []
+      mockApi({
+        preview: () =>
+          new Promise<PreviewAnswer>((resolve) => {
+            calls.push(resolve)
+          }),
+      })
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await vi.waitFor(() => expect(calls).toHaveLength(1))
+
+      // While the request is in flight nothing is announced.
+      expect(screen.getByTestId('live-summary')).toBeEmptyDOMElement()
+      calls[0]?.(previewAnswer(33333))
+
+      await vi.waitFor(() =>
+        expect(screen.getByTestId('live-summary')).toHaveTextContent('Total 333.33 EUR.'),
+      )
+      // The list of totals itself is no live region.
+      expect(screen.getByTestId('preview')).not.toHaveAttribute('aria-live')
+      expect(screen.getByTestId('preview').closest('[aria-live]')).toBeNull()
+      expect(screen.getByTestId('live-summary')).toHaveAttribute('aria-live', 'polite')
+    })
+
+    it('announces a failed preview', async () => {
+      mockApi({ preview: () => Promise.reject(apiError(500, ErrorCode.internal)) })
+      await renderView('/documents/edit/d-1')
+      await ready()
+
+      await vi.waitFor(() =>
+        expect(screen.getByTestId('live-summary')).toHaveTextContent(
+          'The totals could not be calculated.',
+        ),
+      )
+    })
+  })
+
+  describe('unsaved changes', () => {
+    it('does not ask when nothing changed', async () => {
+      mockApi()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+
+      await router.push('/documents')
+
+      expect(router.currentRoute.value.name).toBe('documents')
+    })
+
+    it('asks before leaving with changes, stays on cancel and leaves on confirm', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' work')
+
+      void router.push('/documents')
+      const dialog = await screen.findByRole('dialog')
+      expect(within(dialog).getByText('Leave without saving?')).toBeVisible()
+      expect(router.currentRoute.value.name).toBe('document-edit')
+
+      await user.click(within(dialog).getByRole('button', { name: 'Keep editing' }))
+      await wait(30)
+      expect(router.currentRoute.value.name).toBe('document-edit')
+      expect(screen.getByLabelText(/^Description \(1\)/)).toHaveValue('Consulting work')
+
+      void router.push('/documents')
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', {
+          name: 'Leave without saving',
+        }),
+      )
+      await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('documents'))
+    })
+
+    it('does not ask after a save', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' work')
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+
+      await router.push('/documents')
+
+      expect(router.currentRoute.value.name).toBe('documents')
+    })
+
+    it('asks the browser to confirm a reload only while there are unsaved changes', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      const { unmount } = await renderView('/documents/edit/d-1')
+      await ready()
+      const unload = () => {
+        const event = new Event('beforeunload', { cancelable: true })
+        window.dispatchEvent(event)
+        return event.defaultPrevented
+      }
+      expect(unload()).toBe(false)
+
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' work')
+      expect(unload()).toBe(true)
+
+      unmount()
+      expect(unload()).toBe(false)
+    })
+  })
+
+  describe('after a changed correction base', () => {
+    function baseChanged() {
+      return mockApi({
+        stored: draftDoc({ type: 'correction', corrects_document_id: 'd-0' }),
+        post: (path) =>
+          path.endsWith('/issue')
+            ? Promise.reject(apiError(409, 'correction_base_changed', { correction_base_seq: '2' }))
+            : Promise.resolve(draftDoc({ id: 'd-9' })),
+      })
+    }
+
+    it('offers to discard the stale draft only after a confirmation', async () => {
+      baseChanged()
+      vi.mocked(apiClient.del).mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await clickIssue(user)
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', {
+          name: 'Issue permanently',
+        }),
+      )
+
+      await user.click(await screen.findByRole('button', { name: 'Discard the old draft' }))
+      const dialog = await screen.findByRole('dialog')
+      await wait(20)
+      expect(vi.mocked(apiClient.del)).not.toHaveBeenCalled()
+      await user.click(within(dialog).getByRole('button', { name: 'Discard draft' }))
+
+      await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('documents'))
+      expect(vi.mocked(apiClient.del).mock.calls.map(([path]) => path)).toEqual(['/documents/d-1'])
+    })
+
+    it('does not delete without a session', async () => {
+      baseChanged()
+      vi.mocked(apiClient.del).mockResolvedValue(undefined)
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await clickIssue(user)
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', {
+          name: 'Issue permanently',
+        }),
+      )
+      await user.click(await screen.findByRole('button', { name: 'Discard the old draft' }))
+      const dialog = await screen.findByRole('dialog')
+
+      me.value = null
+      await user.click(within(dialog).getByRole('button', { name: 'Discard draft' }))
+      await wait(30)
+
+      expect(vi.mocked(apiClient.del)).not.toHaveBeenCalled()
     })
   })
 
