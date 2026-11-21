@@ -48,6 +48,16 @@ type testApp struct {
 func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 	t.Helper()
 
+	return buildTestAppAt(t, rateLimitBurst, nil)
+}
+
+// buildTestAppAt is buildTestApp with the clock the login checks TOTP codes
+// against. A nil now is the wall clock. A test that derives its code from a
+// fixed instant passes that instant here, so the code stays valid however
+// long the request waits for a parallel slot.
+func buildTestAppAt(t *testing.T, rateLimitBurst int, now func() time.Time) testApp {
+	t.Helper()
+
 	store := newFakeStore()
 	csrfKey := fixedKey(t, 1)
 
@@ -80,7 +90,7 @@ func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 		Store:          store,
 		Sessions:       sessions,
 		CSRFKey:        csrfKey,
-		Login:          newTestLogin(t, store, sessions),
+		Login:          newTestLoginAt(t, store, sessions, now),
 		Invites:        newTestInvites(t, store),
 		HealthRegistry: healthRegistry,
 		RateLimitBurst: rateLimitBurst,
@@ -457,10 +467,15 @@ const (
 func TestLogin(t *testing.T) {
 	t.Parallel()
 
-	app := buildTestApp(t, 100)
+	// The parallel subtests wait for a free slot, which takes longer than
+	// a TOTP window when the whole package runs under the race detector.
+	// The server therefore checks the code against the same fixed instant
+	// it was made for, not against the wall clock.
+	codeTime := time.Now()
+	app := buildTestAppAt(t, 100, func() time.Time { return codeTime })
 	tenant, totpSecret := seedActiveAccount(t, app.store)
 
-	code := totpCode(t, totpSecret)
+	code := totpCodeAt(t, totpSecret, codeTime)
 
 	tests := []struct {
 		name       string
