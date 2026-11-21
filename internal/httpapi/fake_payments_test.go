@@ -178,7 +178,7 @@ func (r *fakePaymentRepository) Create(ctx context.Context, p storage.Payment) (
 		original, ok := r.rows[*p.ReversesPaymentID]
 		if !ok || original.TenantID != tenant || original.DocumentID != p.DocumentID ||
 			original.ReversesPaymentID != nil || p.AmountCents != -original.AmountCents ||
-			p.ReceivedOn.Before(original.ReceivedOn) {
+			!p.ReceivedOn.Equal(original.ReceivedOn) {
 			return storage.Payment{}, storage.ErrConflict
 		}
 		// payments_reversed_once.

@@ -16,12 +16,20 @@
 -- The open amount (the effective document's grand total minus the sum of
 -- the chain's payments) is derived when reading and never stored here.
 --
--- Two kinds of negative rows exist:
+-- Besides a payment received, two kinds of rows exist:
 --   - A reversal undoes a recording mistake. It names the reversed row in
---     reverses_payment_id and carries its negated amount.
+--     reverses_payment_id, carries its negated amount and the same
+--     received_on: no money moved, so there is no Zufluss in any year.
+--     A mistaken payment is reversed by a negative row, a mistaken refund
+--     by a positive one.
 --   - A refund is money paid back to the customer, for example after a
---     correction lowered the total. It has no reverses_payment_id and is
---     dated the day the money left.
+--     correction lowered the total. It is negative, has no
+--     reverses_payment_id and is dated the day the money left.
+--
+-- NOT VERIFIED: that a reversal carries the reversed row's own date and
+-- so cancels it within the same EÜR year is the owner's decision, not a
+-- verified reading of section 11 EStG. The owner confirms it with a
+-- Steuerberater.
 --
 -- Amounts are gross integer cents, never a float. The VAT share of a
 -- payment is not stored either: it is derived from the chain's effective
@@ -49,8 +57,6 @@ CREATE TABLE payments (
     -- payment of a sole trader, and far below where a sum of rows could
     -- overflow a bigint.
     CONSTRAINT payments_amount_bound CHECK (abs(amount_cents) <= 100000000000),
-    -- A reversal always takes money back out of the chain.
-    CONSTRAINT payments_reversal_negative CHECK (reverses_payment_id IS NULL OR amount_cents < 0),
     CONSTRAINT payments_note_length CHECK (note IS NULL OR char_length(note) <= 1000),
     CONSTRAINT payments_not_self_reversal CHECK (reverses_payment_id IS NULL OR reverses_payment_id <> id),
     -- Composite foreign key target, see 20261113150832_create_customers.sql
@@ -118,8 +124,9 @@ CREATE TRIGGER payments_block_truncate
 --   - document_id must be an issued invoice: the root of its chain. Never
 --     a draft, an offer or a correction.
 --   - A reversal must name a payment of the same chain that is not a
---     reversal itself, carry exactly its negated amount, and not be dated
---     before it. payments_reversed_once refuses a second reversal.
+--     reversal itself, carry exactly its negated amount (negative for a
+--     payment, positive for a refund) and the same received_on.
+--     payments_reversed_once refuses a second reversal.
 --
 -- Whether a refund exceeds what is due is a rule over the whole chain and
 -- the effective document's total, which lives in a frozen payload: the
@@ -155,7 +162,7 @@ BEGIN
             OR original.document_id <> NEW.document_id
             OR original.reverses_payment_id IS NOT NULL
             OR NEW.amount_cents <> -original.amount_cents
-            OR NEW.received_on < original.received_on
+            OR NEW.received_on <> original.received_on
         THEN
             RAISE EXCEPTION 'payment % does not reverse a payment of its own chain', NEW.id
                 USING ERRCODE = 'integrity_constraint_violation';

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ostendorf-cloud/solobill/internal/docpayload"
+	"github.com/ostendorf-cloud/solobill/internal/httpapi"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
@@ -123,7 +124,12 @@ func TestPartialPaymentsAndTheOpenAmount(t *testing.T) {
 	}
 	f.wantOpen(t, invoice, 10000, kuInvoiceTotal-10000)
 
+	// The write locks the chain root, once, before it reads the chain.
+	locksBefore := len(documentStore(t, f.app).Locked())
 	f.mustPay(t, invoice, payBody("2026-11-03", kuInvoiceTotal-10000))
+	if locked := documentStore(t, f.app).Locked(); len(locked) != locksBefore+1 || locked[len(locked)-1].String() != invoice {
+		t.Fatalf("locks after the payment = %v, had %d before, want one more lock of the root %s", locked, locksBefore, invoice)
+	}
 	got := f.wantOpen(t, invoice, kuInvoiceTotal, 0)
 	if len(got.Payments) != 2 || got.Payments[0].ID != first.ID || got.EffectiveDocumentID != invoice {
 		t.Fatalf("list = %+v", got)
@@ -144,9 +150,6 @@ func TestPartialPaymentsAndTheOpenAmount(t *testing.T) {
 		if p.DocumentID.String() != invoice || p.TenantID != f.tenant.ID {
 			t.Fatalf("stored payment = %+v", p)
 		}
-	}
-	if locked := documentStore(t, f.app).Locked(); len(locked) == 0 || locked[len(locked)-1].String() != invoice {
-		t.Fatalf("locked documents = %v, want the root %s locked by the write", locked, invoice)
 	}
 }
 
@@ -173,6 +176,16 @@ func TestOverpaymentIsAcceptedAndRefunded(t *testing.T) {
 	f.wantOpen(t, invoice, kuInvoiceTotal, 0)
 
 	masterDataWantField(t, f.pay(t, f.owner, invoice, payBody("2026-11-06", -1)), "amount_cents")
+
+	// A refund recorded by mistake is undone by a positive reversal on the
+	// refund's own day, once.
+	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-05", -1250, refund.ID)), "amount_cents")
+	undo := f.mustPay(t, invoice, reversalBody("2026-11-05", 1250, refund.ID))
+	if undo.AmountCents != 1250 || undo.ReversesPaymentID == nil || *undo.ReversesPaymentID != refund.ID {
+		t.Fatalf("reversal of the refund = %+v", undo)
+	}
+	f.wantOpen(t, invoice, kuInvoiceTotal+1250, -1250)
+	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-05", 1250, refund.ID)), http.StatusConflict, "conflict")
 }
 
 func TestPaymentReversal(t *testing.T) {
@@ -183,29 +196,30 @@ func TestPaymentReversal(t *testing.T) {
 	wrong := f.mustPay(t, invoice, payBody("2026-11-03", 10000))
 	f.mustPay(t, invoice, payBody("2026-11-04", 5000))
 
-	// The amount must be exactly the negated amount, the date not earlier,
-	// the sign negative.
-	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-05", -9999, wrong.ID)), "amount_cents")
+	// The amount must be exactly the negated amount and the date the
+	// reversed payment's own, neither earlier nor later.
+	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-03", -9999, wrong.ID)), "amount_cents")
+	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-03", 10000, wrong.ID)), "amount_cents")
 	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-02", -10000, wrong.ID)), "received_on")
-	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-05", 10000, wrong.ID)), "amount_cents")
-	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-05", -10000, "not-an-id")), "reverses_payment_id")
+	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-04", -10000, wrong.ID)), "received_on")
+	masterDataWantField(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-03", -10000, "not-an-id")), "reverses_payment_id")
 
-	reversal := f.mustPay(t, invoice, reversalBody("2026-11-05", -10000, wrong.ID))
-	if reversal.ReversesPaymentID == nil || *reversal.ReversesPaymentID != wrong.ID || reversal.DocumentID != invoice {
+	reversal := f.mustPay(t, invoice, reversalBody("2026-11-03", -10000, wrong.ID))
+	if reversal.ReversesPaymentID == nil || *reversal.ReversesPaymentID != wrong.ID || reversal.DocumentID != invoice ||
+		reversal.ReceivedOn != "2026-11-03" {
 		t.Fatalf("reversal = %+v", reversal)
 	}
 	f.wantOpen(t, invoice, 5000, kuInvoiceTotal-5000)
 
 	// Reversed once only, and a reversal is never reversed.
-	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-06", -10000, wrong.ID)), http.StatusConflict, "conflict")
-	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-06", 10000, reversal.ID)), http.StatusBadRequest, "invalid_argument")
-	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-06", -10000, reversal.ID)), http.StatusConflict, "conflict")
+	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-03", -10000, wrong.ID)), http.StatusConflict, "conflict")
+	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-03", 10000, reversal.ID)), http.StatusConflict, "conflict")
 
 	// A payment of another chain, or no payment at all, is refused.
 	other := f.issuedInvoice(t)
 	foreign := f.mustPay(t, other, payBody("2026-11-03", 700))
-	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-06", -700, foreign.ID)), http.StatusConflict, "conflict")
-	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-06", -700, uuid.NewString())), http.StatusConflict, "conflict")
+	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-03", -700, foreign.ID)), http.StatusConflict, "conflict")
+	wantErrorCode(t, f.pay(t, f.owner, invoice, reversalBody("2026-11-03", -700, uuid.NewString())), http.StatusConflict, "conflict")
 
 	f.wantOpen(t, invoice, 5000, kuInvoiceTotal-5000)
 	f.wantOpen(t, other, 700, kuInvoiceTotal-700)
@@ -255,9 +269,13 @@ func TestACorrectionIDResolvesToTheChainRoot(t *testing.T) {
 	wantErrorCode(t, f.pay(t, f.owner, correction, payBody("2026-11-02", 100)), http.StatusConflict, "conflict")
 
 	f.mustIssue(t, correction)
+	locksBefore := len(documentStore(t, f.app).Locked())
 	paid := f.mustPay(t, correction, payBody("2026-11-02", 5000))
 	if paid.DocumentID != original {
 		t.Fatalf("document_id = %s, want the root %s", paid.DocumentID, original)
+	}
+	if locked := documentStore(t, f.app).Locked(); len(locked) != locksBefore+1 || locked[len(locked)-1].String() != original {
+		t.Fatalf("locks = %v, had %d before, want one more lock of the root %s, not of the correction", locked, locksBefore, original)
 	}
 	for _, id := range []string{original, correction} {
 		got := f.wantOpen(t, id, 5000, kuInvoiceTotal-5000)
@@ -427,7 +445,10 @@ func TestPaymentBodyValidation(t *testing.T) {
 		"too much":        {with("amount_cents", int64(100_000_000_001)), "amount_cents"},
 		"no method":       {without("method"), "method"},
 		"unknown method":  {with("method", "wire"), "method"},
-		"note too long":   {with("note", strings.Repeat("x", 1001)), "note"},
+		"note too long":   {with("note", strings.Repeat("ä", 1001)), "note"},
+		"note with NUL":   {with("note", "paid\x00"), "note"},
+		"note with tab":   {with("note", "paid\tcash"), "note"},
+		"note with bidi":  {with("note", "paid"+string(rune(0x202e))+"cash"), "note"},
 		"wrong type":      {with("amount_cents", "100"), "amount_cents"},
 		"bad reversal id": {with("reverses_payment_id", "x"), "reverses_payment_id"},
 	} {
@@ -446,6 +467,39 @@ func TestPaymentBodyValidation(t *testing.T) {
 
 	// Today itself is accepted.
 	f.mustPay(t, invoice, with("received_on", time.Now().In(berlinForTest(t)).Format(time.DateOnly)))
+
+	// A note of exactly 1000 characters (runes, not bytes) and a line
+	// break are accepted.
+	long := f.mustPay(t, invoice, with("note", strings.Repeat("ä", 1000)))
+	if long.Note == nil || len([]rune(*long.Note)) != 1000 {
+		t.Fatalf("note = %v, want 1000 characters", long.Note)
+	}
+	multiline := f.mustPay(t, invoice, with("note", "first line\nsecond line"))
+	if multiline.Note == nil || *multiline.Note != "first line\nsecond line" {
+		t.Fatalf("note = %v, want both lines", multiline.Note)
+	}
+}
+
+// TestReceivedOnEndsAtMidnightInBerlin: at 23:30 UTC on 21 November it is
+// already 22 November in Berlin (UTC+1). The 22nd is today and accepted,
+// the 23rd is the future and refused. Not parallel: it sets the clock of
+// the payment routes, which is package state.
+func TestReceivedOnEndsAtMidnightInBerlin(t *testing.T) {
+	restore := httpapi.SetPaymentsNow(func() time.Time { return time.Date(2026, 11, 21, 23, 30, 0, 0, time.UTC) })
+	t.Cleanup(restore)
+
+	f := newDocFixture(t, "midnight")
+	invoice := f.issuedInvoice(t)
+	masterDataWantField(t, f.pay(t, f.owner, invoice, payBody("2026-11-23", 100)), "received_on")
+	if got := f.mustPay(t, invoice, payBody("2026-11-22", 100)); got.ReceivedOn != "2026-11-22" {
+		t.Fatalf("received_on = %s, want 2026-11-22", got.ReceivedOn)
+	}
+
+	// In summer Berlin is UTC+2: at 22:30 UTC on 30 June it is 1 July.
+	restoreSummer := httpapi.SetPaymentsNow(func() time.Time { return time.Date(2026, 6, 30, 22, 30, 0, 0, time.UTC) })
+	defer restoreSummer()
+	masterDataWantField(t, f.pay(t, f.owner, invoice, payBody("2026-07-02", 100)), "received_on")
+	f.mustPay(t, invoice, payBody("2026-07-01", 100))
 }
 
 func berlinForTest(t *testing.T) *time.Location {

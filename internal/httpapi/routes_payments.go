@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -34,15 +35,23 @@ import (
 //   - received_on is a calendar date from 2000-01-01 to today in
 //     Europe/Berlin. A payment is recorded after the money moved, so a
 //     future date is a typo, and it would put the entry into the wrong
-//     EÜR year.
+//     EÜR year. Deliberately stricter than expenses and other income,
+//     which accept up to one year ahead.
 //   - An overpayment is accepted (docs/api.md) and shows as a negative
 //     open_cents.
 //   - A refund (negative, no reverses_payment_id) may pay back at most
 //     the refund due: the negated open_cents. With nothing due it is
 //     refused. A recording mistake is a reversal, not a refund.
 //   - A reversal names a payment of the same chain that is no reversal
-//     and not reversed yet, carries exactly its negated amount, and is
-//     not dated before it. The table's trigger checks the same.
+//     and not reversed yet, carries exactly its negated amount (negative
+//     for a payment, positive for a refund) and the same received_on. A
+//     reversal undoes a recording mistake: no money moved, so there is no
+//     Zufluss in either year. Money that really left is a refund. The
+//     same date is the owner's decision, NOT VERIFIED against section 11
+//     EStG; a Steuerberater confirms it. The table's trigger checks the
+//     same.
+//   - A note is free text with line breaks, without other control or
+//     Unicode format characters.
 //
 // Both writes and the reads they decide on run under a lock on the root
 // document row, so two refunds or a refund and a correction cannot both
@@ -62,6 +71,11 @@ const (
 )
 
 var paymentEarliestDate = time.Date(paymentEarliestYear, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+// paymentsNow is the clock of the payment routes, replaced by tests only
+// (export_payments_test.go). httpapi has no shared clock; this one stays
+// local to this file.
+var paymentsNow = time.Now
 
 // paymentMethods is the value set of method, the same as the table's
 // payments_method_check.
@@ -159,9 +173,12 @@ func (r paymentRequest) payment(today time.Time) (storage.Payment, error) {
 	}
 
 	if r.Note != nil && *r.Note != "" {
-		if utf8.RuneCountInString(*r.Note) > maxPaymentNoteRunes {
+		switch {
+		case paymentNoteHasBadRune(*r.Note):
+			details["note"] = "must not contain control or formatting characters other than a line break"
+		case utf8.RuneCountInString(*r.Note) > maxPaymentNoteRunes:
 			details["note"] = fmt.Sprintf("must be at most %d characters", maxPaymentNoteRunes)
-		} else {
+		default:
 			note := *r.Note
 			p.Note = &note
 		}
@@ -173,9 +190,6 @@ func (r paymentRequest) payment(today time.Time) (storage.Payment, error) {
 			details["reverses_payment_id"] = "must be a payment id"
 		} else {
 			p.ReversesPaymentID = &id
-			if r.AmountCents != nil && *r.AmountCents > 0 {
-				details["amount_cents"] = "a reversal must be negative"
-			}
 		}
 	}
 
@@ -184,6 +198,23 @@ func (r paymentRequest) payment(today time.Time) (storage.Payment, error) {
 	}
 
 	return p, nil
+}
+
+// paymentNoteHasBadRune reports a control character (C0 including NUL,
+// DEL, C1) or a Unicode format character (Cf) other than a line break,
+// the rule of internal/sellerprofile's hasBadRune for a multi line text.
+// PostgreSQL refuses a NUL in text outright.
+func paymentNoteHasBadRune(s string) bool {
+	for _, r := range s {
+		if r == '\n' {
+			continue
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // paymentsWired reports whether every repository this file needs is
@@ -331,8 +362,9 @@ func checkPaymentInChain(pc paymentChain, p storage.Payment) error {
 		if p.AmountCents != -original.AmountCents {
 			details["amount_cents"] = fmt.Sprintf("must be %d, the negated amount of the reversed payment", -original.AmountCents)
 		}
-		if p.ReceivedOn.Before(original.ReceivedOn) {
-			details["received_on"] = "must not be before the received_on of the reversed payment"
+		if !p.ReceivedOn.Equal(original.ReceivedOn) {
+			details["received_on"] = fmt.Sprintf("must be %s, the received_on of the reversed payment",
+				original.ReceivedOn.UTC().Format(docpayload.DateLayout))
 		}
 		if len(details) > 0 {
 			return masterDataInvalid(details)
@@ -422,7 +454,7 @@ func (a *app) handleCreatePayment(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	// Today in Europe/Berlin, the calendar the owner books in.
-	p, err := req.payment(docissue.IssueDate(time.Now()))
+	p, err := req.payment(docissue.IssueDate(paymentsNow()))
 	if err != nil {
 		return err
 	}

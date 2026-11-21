@@ -210,38 +210,47 @@ func TestPaymentRepository(t *testing.T) {
 			return p
 		}
 
+		// Each refusal goes through the repository, which maps the
+		// trigger's class 23000 to a bare storage.ErrConflict: the SQLSTATE
+		// itself is asserted on raw statements below.
 		for name, p := range map[string]storage.Payment{
-			"another amount":       reversal(first, "2026-11-26", -9999),
-			"an earlier date":      reversal(first, "2026-11-24", -10000),
-			"a refund is reversed": reversal(refund, "2026-12-31", 1000),
+			"another amount":                 reversal(first, "2026-11-25", -9999),
+			"the same sign":                  reversal(first, "2026-11-25", 10000),
+			"an earlier date":                reversal(first, "2026-11-24", -10000),
+			"a later date":                   reversal(first, "2026-11-26", -10000),
+			"a refund reversed by a refund":  reversal(refund, "2026-12-31", -1000),
+			"a refund reversed another date": reversal(refund, "2027-01-02", 1000),
 		} {
-			_, err := e.create(e.tenant.ID, p)
-			if name == "a refund is reversed" {
-				// A positive reversal fails the CHECK before the trigger.
-				requireSQLState(t, err, sqlStatePaymentCheckViolation, name)
-
-				continue
-			}
-			if !errors.Is(err, storage.ErrConflict) {
+			if _, err := e.create(e.tenant.ID, p); !errors.Is(err, storage.ErrConflict) {
 				t.Errorf("%s: error = %v, want ErrConflict", name, err)
 			}
 		}
+		err := e.rawErr(t, e.restrictedPool, e.tenant.ID, `INSERT INTO payments (tenant_id, document_id, received_on,
+			amount_cents, method, reverses_payment_id) VALUES ($1, $2, '2026-11-26', -10000, 'cash', $3)`,
+			e.tenant.ID, e.root.ID, first.ID)
+		requireSQLState(t, err, pgIntegrityConstraintViolationClass, "raw reversal on another day")
 
-		reversed := e.mustCreate(t, reversal(first, "2026-11-26", -10000))
+		// A refund recorded by mistake is reversed by a positive row on
+		// the refund's own day.
+		undo := e.mustCreate(t, reversal(refund, "2026-12-31", 1000))
+		if undo.AmountCents != 1000 || undo.ReversesPaymentID == nil || *undo.ReversesPaymentID != refund.ID {
+			t.Fatalf("reversal of the refund = %+v", undo)
+		}
+
+		reversed := e.mustCreate(t, reversal(first, "2026-11-25", -10000))
 		if reversed.ReversesPaymentID == nil || *reversed.ReversesPaymentID != first.ID {
 			t.Fatalf("reversal = %+v", reversed)
 		}
-		if _, err := e.create(e.tenant.ID, reversal(first, "2026-11-27", -10000)); !errors.Is(err, storage.ErrConflict) {
+		if _, err := e.create(e.tenant.ID, reversal(first, "2026-11-25", -10000)); !errors.Is(err, storage.ErrConflict) {
 			t.Errorf("second reversal: error = %v, want ErrConflict", err)
 		}
-		// payments_check_insert fires before the CHECK constraints: the
-		// reversed row is a reversal itself.
-		if _, err := e.create(e.tenant.ID, reversal(reversed, "2026-11-27", 10000)); !errors.Is(err, storage.ErrConflict) {
+		if _, err := e.create(e.tenant.ID, reversal(reversed, "2026-11-25", 10000)); !errors.Is(err, storage.ErrConflict) {
 			t.Errorf("reversal of a reversal: error = %v, want ErrConflict", err)
 		}
-		// The raw statement reports the unique index of payments_reversed_once.
-		err := e.rawErr(t, e.restrictedPool, e.tenant.ID, `INSERT INTO payments (tenant_id, document_id, received_on,
-			amount_cents, method, reverses_payment_id) VALUES ($1, $2, '2026-11-27', -10000, 'cash', $3)`,
+		// The raw second reversal passes the trigger and meets the unique
+		// index of payments_reversed_once.
+		err = e.rawErr(t, e.restrictedPool, e.tenant.ID, `INSERT INTO payments (tenant_id, document_id, received_on,
+			amount_cents, method, reverses_payment_id) VALUES ($1, $2, '2026-11-25', -10000, 'cash', $3)`,
 			e.tenant.ID, e.root.ID, first.ID)
 		requireSQLState(t, err, "23505", "raw second reversal")
 	})
@@ -266,14 +275,22 @@ func TestPaymentRepository(t *testing.T) {
 			return nil
 		})
 
-		// A row of tenant A written in B's scope. payments_check_insert
-		// fires before the policy's WITH CHECK and looks the invoice up
-		// under B's row level security, so it finds none for any tenant id
-		// but B's own: the trigger refuses first, the policy stays the
-		// second layer (TestEveryTenantScopedTableEnforcesRowLevelSecurity
-		// checks it exists).
-		_, err := e.create(e.other.tenant.ID, e.payment(e.root.ID, "2026-11-25", 100))
-		requireSQLState(t, err, pgIntegrityConstraintViolationClass, "tenant B writing a payment of tenant A")
+		// A row of tenant A written in B's scope, raw, so the SQLSTATE is
+		// visible. payments_check_insert looks the invoice up under B's row
+		// level security and finds none; the policy's WITH CHECK refuses
+		// the row as well. Which of the two reports first depends on the
+		// order Postgres runs BEFORE ROW triggers and WITH CHECK in, which
+		// this test does not pin: either refusal is accepted.
+		err := e.rawErr(t, e.restrictedPool, e.other.tenant.ID, `INSERT INTO payments (tenant_id, document_id, received_on,
+			amount_cents, method) VALUES ($1, $2, '2026-11-25', 100, 'cash')`, e.tenant.ID, e.root.ID)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || (pgErr.Code != pgIntegrityConstraintViolationClass && pgErr.Code != sqlStateInsufficientPrivilege) {
+			t.Errorf("tenant B writing a payment of tenant A: error = %v, want 23000 or 42501", err)
+		}
+		// Through the repository the same write fails too.
+		if _, err := e.create(e.other.tenant.ID, e.payment(e.root.ID, "2026-11-25", 100)); err == nil {
+			t.Error("tenant B wrote a payment of tenant A through the repository")
+		}
 
 		// B's own row naming A's invoice: the trigger does not see it.
 		p := e.payment(e.root.ID, "2026-11-25", 100)

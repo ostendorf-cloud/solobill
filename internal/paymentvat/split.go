@@ -15,24 +15,32 @@
 // Steuerberater (issue #71). The code is not tax advice.
 //
 // Rounding. Each payment's exact share is a fraction. The shares are
-// rounded cumulatively, in the order of received_on, then creation, then
-// id: the share of payment i is the running exact sum of all shares up to
-// and including i, rounded half away from zero, minus the shares already
-// handed out. So
+// rounded cumulatively, in the order the payments were recorded
+// (CreatedAt, then id): the share of payment i is the running exact sum of
+// all shares up to and including i, rounded half away from zero, minus the
+// shares already handed out. So
 //   - no cent is lost or invented: the shares always sum to the rounded
 //     exact total, and a chain paid in full at one ratio sums to exactly
 //     the document's VAT total, however it was split;
-//   - a share depends only on the payments before it, so a later payment
-//     never changes an earlier share.
+//   - a share depends only on the payments recorded before it. The table
+//     is append-only, so a share never changes once its payment is
+//     recorded, also when a reversal or a late payment is recorded later
+//     with an earlier received_on. Ordering by received_on would let such
+//     a row move the rounding of every share after its date.
 //
-// A reversal carries exactly the negated share of the payment it reverses,
-// so a mistake and its reversal cancel to the cent. Its exact share is
-// removed from the running sum as well. The two rounded sums can then
-// differ by at most one cent until the next payment that is not a
-// reversal, whose share absorbs the difference.
+// A reversal follows the same rule: its exact share is the negated exact
+// share of the payment it reverses, and its rounded share is the rounded
+// running sum minus what was handed out. So a chain paid in full sums to
+// exactly the document's VAT total in every order, also when a reversal
+// comes last. The price: a reversal's share may differ by one cent from
+// the negated share of the payment it reverses. Example: gross 11900, VAT
+// 1900, payments 101, 3 (a mistake), 11799, then the reversal of the 3:
+// shares 16, 1, 1883, 0, sum 1900. Negating the 1 would give 1899.
 //
 // Pure: no database, no clock, no I/O. Issue #80 (the EÜR report) calls
-// Split with the payments of each chain it reports.
+// Split once per chain with the chain's whole payment history, never with
+// a ListReceivedBetween slice of one year, and reports the shares whose
+// received_on falls into the year.
 package paymentvat
 
 import (
@@ -40,7 +48,6 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -87,21 +94,30 @@ type Share struct {
 // not among the earlier payments of the chain.
 var ErrUnknownReversal = errors.New("paymentvat: a reversal names no earlier payment of the chain")
 
-// Split returns one Share per payment, in the order of received_on, then
-// CreatedAt, then id. figures must hold every member of chain a payment's
-// received_on can resolve to. Every payment must belong to the chain
-// (DocumentID is the chain's original).
-func Split(chain docchain.Chain, figures map[uuid.UUID]Figures, payments []storage.Payment) ([]Share, error) {
-	// EffectiveOn of the zero time is the original: no correction was
-	// issued before it.
-	rootID := chain.EffectiveOn(time.Time{}).ID
+// Split returns one Share per payment, in the order the payments were
+// recorded: CreatedAt, then id.
+//
+// members is the whole chain: the original (Seq 0) and every issued
+// correction, with IssuedOn set. figures must hold every member a
+// payment's received_on can resolve to. payments must be every payment of
+// the chain, from the first one on, never a slice of one year: a share
+// depends on all payments before it. Every payment must belong to the
+// chain (DocumentID is the original's id).
+func Split(members []docchain.Member, figures map[uuid.UUID]Figures, payments []storage.Payment) ([]Share, error) {
+	chain, err := docchain.New(members)
+	if err != nil {
+		return nil, fmt.Errorf("paymentvat: %w", err)
+	}
+	var rootID uuid.UUID
+	for _, m := range members {
+		if m.Seq == 0 {
+			rootID = m.ID
+		}
+	}
 
 	sorted := append([]storage.Payment(nil), payments...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		a, b := sorted[i], sorted[j]
-		if !a.ReceivedOn.Equal(b.ReceivedOn) {
-			return a.ReceivedOn.Before(b.ReceivedOn)
-		}
 		if !a.CreatedAt.Equal(b.CreatedAt) {
 			return a.CreatedAt.Before(b.CreatedAt)
 		}
@@ -117,6 +133,21 @@ func Split(chain docchain.Chain, figures map[uuid.UUID]Figures, payments []stora
 
 	exactSum := new(big.Rat)
 	var handedOut int64
+	// next adds exact to the running sum and hands out the rounded running
+	// sum minus what was handed out before.
+	next := func(p storage.Payment, ratioID uuid.UUID, exact *big.Rat) Share {
+		exactSum.Add(exactSum, exact)
+		vat := roundHalfAwayFromZero(exactSum) - handedOut
+		handedOut += vat
+
+		return Share{
+			PaymentID:       p.ID,
+			RatioDocumentID: ratioID,
+			GrossCents:      p.AmountCents,
+			VATCents:        vat,
+			NetCents:        p.AmountCents - vat,
+		}
+	}
 	out := make([]Share, 0, len(sorted))
 	for _, p := range sorted {
 		if p.DocumentID != rootID {
@@ -128,16 +159,11 @@ func Split(chain docchain.Chain, figures map[uuid.UUID]Figures, payments []stora
 			if !ok {
 				return nil, fmt.Errorf("%w: payment %s", ErrUnknownReversal, p.ID)
 			}
-			exactSum.Sub(exactSum, original.exact)
-			share := Share{
-				PaymentID:       p.ID,
-				RatioDocumentID: original.share.RatioDocumentID,
-				GrossCents:      p.AmountCents,
-				VATCents:        -original.share.VATCents,
-			}
-			share.NetCents = share.GrossCents - share.VATCents
-			handedOut += share.VATCents
-			byID[p.ID] = done{share: share, exact: new(big.Rat).Neg(original.exact)}
+			// The reversal removes exactly the reversed exact share and is
+			// rounded cumulatively like every other row.
+			exact := new(big.Rat).Neg(original.exact)
+			share := next(p, original.share.RatioDocumentID, exact)
+			byID[p.ID] = done{share: share, exact: exact}
 			out = append(out, share)
 
 			continue
@@ -149,17 +175,7 @@ func Split(chain docchain.Chain, figures map[uuid.UUID]Figures, payments []stora
 			return nil, fmt.Errorf("paymentvat: no figures for document %s", member.ID)
 		}
 		exact := exactShare(p.AmountCents, f)
-		exactSum.Add(exactSum, exact)
-		vat := roundHalfAwayFromZero(exactSum) - handedOut
-		handedOut += vat
-
-		share := Share{
-			PaymentID:       p.ID,
-			RatioDocumentID: member.ID,
-			GrossCents:      p.AmountCents,
-			VATCents:        vat,
-			NetCents:        p.AmountCents - vat,
-		}
+		share := next(p, member.ID, exact)
 		byID[p.ID] = done{share: share, exact: exact}
 		out = append(out, share)
 	}
