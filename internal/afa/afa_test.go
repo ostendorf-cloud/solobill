@@ -80,10 +80,13 @@ func TestSchedule(t *testing.T) {
 			},
 		},
 		{
-			// The docs/api.md example. March to December is 10 months:
-			// 149900 * 10/36 = 41638.89 -> 41639. A full year is
-			// 149900 * 12/36 = 49966.67 -> 49967. 2029 holds January and
-			// February and takes the rest: 149900 - 41639 - 2*49967 = 8327.
+			// The docs/api.md example, rounded cumulatively. Handed out
+			// by the end of each year, of 149900 over 36 months:
+			// 2026, 10 months: 41638.89 -> 41639.
+			// 2027, 22 months: 91605.56 -> 91606, so 91606 - 41639 = 49967.
+			// 2028, 34 months: 141572.22 -> 141572, so 49966.
+			// 2029, 36 months: 149900, so 8328.
+			// The first year, the one docs/api.md shows, is 41639.
 			name: "linear, pro rata from March",
 			asset: func(t *testing.T) afa.Asset {
 				return afa.Asset{AcquiredOn: day(t, "2026-03-10"), CostBasisCents: 149900, Method: afa.Linear, Group: afa.OfficeEquipment, UsefulLifeMonths: 36}
@@ -91,30 +94,27 @@ func TestSchedule(t *testing.T) {
 			want: []afa.Year{
 				y(2026, 149900, 41639, 108261, z33),
 				y(2027, 108261, 49967, 58294, z33),
-				y(2028, 58294, 49967, 8327, z33),
-				y(2029, 8327, 8327, 0, z33),
+				y(2028, 58294, 49966, 8328, z33),
+				y(2029, 8328, 8328, 0, z33),
 			},
 		},
 		{
-			// 1.00 over three full years: 100/3 = 33.33 -> 33 twice, and
-			// the last year takes the rest, 34. Rounding each year on its
-			// own would lose a cent (33 + 33 + 33 = 99).
-			name: "linear, rounding remainder goes to the last year",
+			// 1.00 over three full years, cumulative: 33.33 -> 33, then
+			// 66.67 -> 67 (34 in 2027), then 100 (33 in 2028). Rounding
+			// each year on its own would lose a cent (33 + 33 + 33 = 99).
+			name: "linear, nothing lost to rounding",
 			asset: func(t *testing.T) afa.Asset {
 				return afa.Asset{AcquiredOn: day(t, "2026-01-01"), CostBasisCents: 100, Method: afa.Linear, Group: afa.OfficeEquipment, UsefulLifeMonths: 36}
 			},
 			want: []afa.Year{
 				y(2026, 100, 33, 67, z33),
-				y(2027, 67, 33, 34, z33),
-				y(2028, 34, 34, 0, z33),
+				y(2027, 67, 34, 33, z33),
+				y(2028, 33, 33, 0, z33),
 			},
 		},
 		{
-			// 0.30 over 50 years from January: 12/600 of 30 = 0.6 -> 1 a
-			// year would exceed the base after 30 years. The book value
-			// never goes below 0: once it is used up, the years show 0.
-			// Checked by the sum and floor invariants below, the first and
-			// last year here.
+			// 0.30 over 50 years from January: 0.6 cents a year. Checked
+			// by the invariants below and TestScheduleTinyBaseEndsAtZero.
 			name: "linear, a tiny base never depreciates below 0",
 			asset: func(t *testing.T) afa.Asset {
 				return afa.Asset{AcquiredOn: day(t, "2026-01-01"), CostBasisCents: 30, Method: afa.Linear, Group: afa.OfficeEquipment, UsefulLifeMonths: 600}
@@ -257,9 +257,10 @@ func TestSchedule(t *testing.T) {
 			want: []afa.Year{y(2026, 25000, 25000, 0, z36)},
 		},
 		{
-			// Sammelposten at 250.01: 25001/5 = 5000.2 -> 5000 for four
-			// years, the fifth takes 25001 - 20000 = 5001. Bought in
-			// December, still a full fifth in the first year.
+			// Sammelposten at 250.01, cumulative fifths of 25001:
+			// 5000.2 -> 5000, 10000.4 -> 10000, 15000.6 -> 15001,
+			// 20000.8 -> 20001, 25001. So 5000, 5000, 5001, 5000, 5000.
+			// Bought in December, still a full fifth in the first year.
 			name: "sammelposten at 250.01 in December",
 			asset: func(t *testing.T) afa.Asset {
 				return afa.Asset{AcquiredOn: day(t, "2026-12-31"), CostBasisCents: 25001, Method: afa.Pool, Group: afa.OfficeEquipment}
@@ -267,9 +268,9 @@ func TestSchedule(t *testing.T) {
 			want: []afa.Year{
 				y(2026, 25001, 5000, 20001, z37),
 				y(2027, 20001, 5000, 15001, z37),
-				y(2028, 15001, 5000, 10001, z37),
-				y(2029, 10001, 5000, 5001, z37),
-				y(2030, 5001, 5001, 0, z37),
+				y(2028, 15001, 5001, 10000, z37),
+				y(2029, 10000, 5000, 5000, z37),
+				y(2030, 5000, 5000, 0, z37),
 			},
 		},
 		{
@@ -367,9 +368,47 @@ func TestScheduleTinyBaseEndsAtZero(t *testing.T) {
 	if len(got) != 50 {
 		t.Fatalf("years = %d, want 50", len(got))
 	}
-	// 12/600 of 30 = 0.6 -> 1 a year until the 30 cents are used up.
-	if got[0].DepreciationCents != 1 || got[29].ClosingBookValueCents != 0 || got[49].DepreciationCents != 0 {
-		t.Errorf("first = %+v, year 30 = %+v, last = %+v", got[0], got[29], got[49])
+	// Exactly 0.6 cents a year. Cumulative rounding hands out
+	// round(0.6 * n) by the end of year n: 1, 1, 2, 2, 3, ... so the
+	// years alternate 1, 0, 1, 0, 1 and reach 30 in year 50, not in year
+	// 30 as rounding 0.6 up every year would. No year is more than half a
+	// cent from its exact share, cumulated.
+	var handedOut int64
+	for n, yr := range got {
+		handedOut += yr.DepreciationCents
+		// |handedOut - 0.6 (n+1)| <= 0.5, times 10 to stay in integers.
+		if diff := handedOut*10 - 6*int64(n+1); diff > 5 || diff < -5 {
+			t.Errorf("year %d: handed out %d, exact %d/10", yr.Year, handedOut, 6*(n+1))
+		}
+	}
+	if got[0].DepreciationCents != 1 || got[1].DepreciationCents != 0 || got[49].ClosingBookValueCents != 0 || handedOut != 30 {
+		t.Errorf("first = %+v, second = %+v, last = %+v, sum %d", got[0], got[1], got[49], handedOut)
+	}
+}
+
+// TestScheduleStaysWithinHalfACent checks cumulative rounding over many
+// bases: by the end of every year of a linear schedule from January, the
+// amount handed out is within half a cent of base * months / life.
+func TestScheduleStaysWithinHalfACent(t *testing.T) {
+	t.Parallel()
+
+	for _, base := range []int64{1, 7, 100, 149900, 999999} {
+		for _, life := range []int{7, 36, 61} {
+			got, err := afa.Schedule(afa.Asset{AcquiredOn: day(t, "2026-01-01"), CostBasisCents: base, Method: afa.Linear, Group: afa.OfficeEquipment, UsefulLifeMonths: life})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var handedOut int64
+			for n, yr := range got {
+				handedOut += yr.DepreciationCents
+				months := int64(min(12*(n+1), life))
+				// 2 * |handedOut * life - base * months| <= life
+				diff := 2 * (handedOut*int64(life) - base*months)
+				if diff > int64(life) || diff < -int64(life) {
+					t.Errorf("base %d, life %d, year %d: handed out %d, exact %d*%d/%d", base, life, yr.Year, handedOut, base, months, life)
+				}
+			}
+		}
 	}
 }
 

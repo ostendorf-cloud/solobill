@@ -7,10 +7,12 @@
 //
 // Pure calculation, no database, no clock, no I/O. Every amount is an
 // integer cent and every share is computed in exact rational arithmetic
-// (math/big), never a float, rounded once per year half away from zero.
-// The last year of a schedule takes the rest of the book value, so the
-// years always add up to the depreciation base: nothing is lost to
-// rounding and nothing is invented.
+// (math/big), never a float. Rounding is cumulative, half away from
+// zero: the total handed out up to the end of each year is rounded once,
+// and a year gets the difference to the year before. Every year is then
+// within half a cent of its exact share, and the years always add up to
+// the depreciation base: nothing is lost to rounding and nothing is
+// invented.
 //
 // Like internal/money, this package imports nothing from internal/storage:
 // its Method, Group and Regime mirror the values of storage.Asset and
@@ -423,8 +425,11 @@ func poolYearsLeft(a Asset) int {
 }
 
 // linearSchedule spreads base over months months from the month with
-// index start. Each year gets its months' share, rounded once; the year
-// holding the last month of the useful life takes the rest. A disposal
+// index start. Rounding is cumulative: the depreciation handed out up to
+// the end of a year is base * months so far / months, rounded once, and
+// the year gets that minus what earlier years already got. So every
+// year is within half a cent of its exact share, and the year holding
+// the last month of the useful life ends at exactly base. A disposal
 // ends the schedule in its month, which counts in full, and leaves the
 // rest as the closing book value (not verified: R 7.4 Abs. 8 EStR is
 // read as counting the disposal month in full).
@@ -448,34 +453,26 @@ func linearSchedule(a Asset, key category.Key) []Year {
 	}
 
 	years := []Year{}
-	remaining := base
+	var handedOut int64
 	for y := start / 12; y <= stop/12; y++ {
-		first := max(start, y*12)
 		last := min(stop, y*12+11)
-
-		var dep int64
-		if last == end {
-			dep = remaining
-		} else {
-			dep = min(share(base, int64(last-first+1), int64(months)), remaining)
-		}
-
+		cumulative := share(base, int64(last-start+1), int64(months))
 		years = append(years, Year{
 			Year:                  y,
-			OpeningBookValueCents: remaining,
-			DepreciationCents:     dep,
-			ClosingBookValueCents: remaining - dep,
+			OpeningBookValueCents: base - handedOut,
+			DepreciationCents:     cumulative - handedOut,
+			ClosingBookValueCents: base - cumulative,
 			Key:                   key,
 		})
-		remaining -= dep
+		handedOut = cumulative
 	}
 
 	return years
 }
 
-// poolSchedule spreads base evenly over the pool years left, the last
-// year taking the rest. A disposal does not change it (section 6 Abs.
-// 2a Satz 3 EStG).
+// poolSchedule spreads base evenly over the pool years left, rounded
+// cumulatively like linearSchedule, so the last year ends at exactly
+// base. A disposal does not change it (section 6 Abs. 2a Satz 3 EStG).
 func poolSchedule(a Asset, key category.Key) []Year {
 	base := a.CostBasisCents
 	first := a.AcquiredOn.Year()
@@ -489,22 +486,18 @@ func poolSchedule(a Asset, key category.Key) []Year {
 		return []Year{}
 	}
 
-	yearly := share(base, 1, int64(count))
 	years := make([]Year, 0, count)
-	remaining := base
+	var handedOut int64
 	for i := range count {
-		dep := min(yearly, remaining)
-		if i == count-1 {
-			dep = remaining
-		}
+		cumulative := share(base, int64(i+1), int64(count))
 		years = append(years, Year{
 			Year:                  first + i,
-			OpeningBookValueCents: remaining,
-			DepreciationCents:     dep,
-			ClosingBookValueCents: remaining - dep,
+			OpeningBookValueCents: base - handedOut,
+			DepreciationCents:     cumulative - handedOut,
+			ClosingBookValueCents: base - cumulative,
 			Key:                   key,
 		})
-		remaining -= dep
+		handedOut = cumulative
 	}
 
 	return years

@@ -12,6 +12,7 @@ import (
 	"github.com/ostendorf-cloud/govue/api"
 
 	"github.com/ostendorf-cloud/solobill/internal/afa"
+	"github.com/ostendorf-cloud/solobill/internal/docissue"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
@@ -268,7 +269,50 @@ func (a *app) checkAssetExpense(ctx context.Context, asset storage.Asset) error 
 		})
 	}
 
+	// One expense becomes at most one asset. The unique index
+	// assets_expense_once is the guard; this check only gives the 409 its
+	// own message, also on PUT, whose repository conflict means a closed
+	// year or a disposal.
+	others, err := a.repos.Assets.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, other := range others {
+		if other.ID != asset.ID && other.ExpenseID != nil && *other.ExpenseID == *asset.ExpenseID {
+			return api.Conflict(msgExpenseAlreadyAsset)
+		}
+	}
+
 	return nil
+}
+
+// msgExpenseAlreadyAsset is the 409 of an expense another asset already
+// came from.
+const msgExpenseAlreadyAsset = "the expense is already an asset"
+
+// assetToday is the calendar date of now in Germany, as midnight UTC.
+// Every date rule of the register uses it: the year an EÜR is filed for
+// is a German calendar year, so at 00:30 on 1 January in Berlin the old
+// year has ended, although it is still 31 December in UTC.
+func assetToday(now time.Time) time.Time {
+	return docissue.IssueDate(now)
+}
+
+// disposalDateRule checks a disposal date at now. problem is a 400
+// reason for a date in the future. yearEnded is the owner's rule: a
+// disposal dated in a calendar year that has ended is refused with 409
+// like a PUT, because that year's figures may already be in a filed EÜR.
+// A disposal in the current year stays possible.
+func disposalDateRule(disposedOn, now time.Time) (problem string, yearEnded bool) {
+	today := assetToday(now)
+	switch {
+	case disposedOn.After(today):
+		return "must not be in the future", false
+	case disposedOn.Year() < today.Year():
+		return "", true
+	default:
+		return "", false
+	}
 }
 
 func (a *app) handleListAssets(w http.ResponseWriter, r *http.Request) error {
@@ -306,7 +350,7 @@ func (a *app) handleCreateAsset(w http.ResponseWriter, r *http.Request) error {
 	if err := api.Decode(r, &req); err != nil {
 		return err
 	}
-	asset, err := req.asset(time.Now().UTC())
+	asset, err := req.asset(assetToday(time.Now()))
 	if err != nil {
 		return err
 	}
@@ -323,7 +367,7 @@ func (a *app) handleCreateAsset(w http.ResponseWriter, r *http.Request) error {
 		return err
 	})
 	if err != nil {
-		return assetError(err, "the expense is already an asset")
+		return assetError(err, msgExpenseAlreadyAsset)
 	}
 
 	return api.Write(w, http.StatusCreated, toAssetJSON(created))
@@ -361,7 +405,8 @@ func (a *app) findAsset(ctx context.Context, c caller, id uuid.UUID) (storage.As
 
 // handleUpdateAsset answers PUT /api/v1/assets/{id}. The repository
 // refuses with 409 once the first schedule year of the stored asset, or
-// of the replacement, has ended, and for a disposed asset.
+// of the replacement, has ended in Germany at now, and for a disposed
+// asset. An expense another asset came from is a 409 of its own.
 func (a *app) handleUpdateAsset(w http.ResponseWriter, r *http.Request) error {
 	c, ok, err := a.assetsReady(w, r, true)
 	if !ok {
@@ -376,8 +421,8 @@ func (a *app) handleUpdateAsset(w http.ResponseWriter, r *http.Request) error {
 	if err := api.Decode(r, &req); err != nil {
 		return err
 	}
-	now := time.Now().UTC()
-	asset, err := req.asset(now)
+	now := time.Now()
+	asset, err := req.asset(assetToday(now))
 	if err != nil {
 		return err
 	}
@@ -423,11 +468,15 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 	}
 
 	p := map[string]string{}
+	yearEnded := false
 	disposedOn, err := time.Parse(assetDateLayout, req.DisposedOn)
 	if err != nil {
 		p["disposed_on"] = "must be a date such as 2026-12-01"
-	} else if disposedOn.After(time.Now().UTC()) {
-		p["disposed_on"] = "must not be in the future"
+	} else {
+		var problem string
+		if problem, yearEnded = disposalDateRule(disposedOn, time.Now()); problem != "" {
+			p["disposed_on"] = problem
+		}
 	}
 	if req.ProceedsCents != nil && *req.ProceedsCents < 0 {
 		p["proceeds_cents"] = "must not be negative"
@@ -444,6 +493,9 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 		}
 		if current.DisposedOn != nil {
 			return storage.ErrConflict
+		}
+		if yearEnded {
+			return api.Conflict("the disposal date lies in a year that has ended, whose figures may already be filed")
 		}
 		current.DisposedOn = &disposedOn
 		if invalid := afa.Validate(toAFAAsset(current)); invalid != nil {

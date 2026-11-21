@@ -82,6 +82,17 @@ func (f *fakeAssets) List(context.Context) ([]storage.Asset, error) {
 	return out, nil
 }
 
+// fakeBerlin is loaded here, not taken from internal/docissue, so the fake
+// checks the year rule independently of the code under test.
+var fakeBerlin = func() *time.Location {
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		panic(err)
+	}
+
+	return loc
+}()
+
 func fakeFirstScheduleYear(a storage.Asset) int {
 	if a.OpeningBookValueYear != nil {
 		return int(*a.OpeningBookValueYear)
@@ -98,8 +109,12 @@ func (f *fakeAssets) Update(_ context.Context, a storage.Asset, now time.Time) (
 	if i < 0 {
 		return storage.Asset{}, storage.ErrNotFound
 	}
+	// The same rule as the repository, written out on its own: the German
+	// calendar year of now, checked for the stored row and for the
+	// replacement.
+	openYear := now.In(fakeBerlin).Year()
 	stored := f.assets[i]
-	if stored.DisposedOn != nil || fakeFirstScheduleYear(stored) < now.Year() || fakeFirstScheduleYear(a) < now.Year() {
+	if stored.DisposedOn != nil || fakeFirstScheduleYear(stored) < openYear || fakeFirstScheduleYear(a) < openYear {
 		return storage.Asset{}, storage.ErrConflict
 	}
 	if f.expenseTaken(a) {

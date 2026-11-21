@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/ostendorf-cloud/solobill/internal/docissue"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 	"github.com/ostendorf-cloud/solobill/internal/storage/postgres/sqlcgen"
 )
@@ -86,6 +87,10 @@ func (r *assetRepository) List(ctx context.Context) ([]storage.Asset, error) {
 // moving an open asset into a closed year would change a figure of a
 // year that may already be filed. A disposed asset is not edited either.
 // Every refusal is storage.ErrConflict, a missing row storage.ErrNotFound.
+//
+// The year is the German calendar year of now (docissue.IssueDate), the
+// year an EÜR is filed for. The replacement is checked here, before the
+// UPDATE is sent; the stored row is checked by the UPDATE's own WHERE.
 func (r *assetRepository) Update(ctx context.Context, a storage.Asset, now time.Time) (storage.Asset, error) {
 	tx, err := txFromContext(ctx)
 	if err != nil {
@@ -93,7 +98,7 @@ func (r *assetRepository) Update(ctx context.Context, a storage.Asset, now time.
 	}
 
 	q := sqlcgen.New(tx)
-	openYear := now.Year()
+	openYear := docissue.IssueDate(now).Year()
 
 	if firstScheduleYear(a) < openYear {
 		if _, err := q.GetAsset(ctx, a.ID); err != nil {

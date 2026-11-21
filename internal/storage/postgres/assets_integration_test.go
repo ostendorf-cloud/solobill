@@ -173,6 +173,22 @@ func TestAssetRepository(t *testing.T) {
 		}
 	})
 
+	// The replacement's year 2027 is open in June 2027, so the Go check
+	// lets it through: only the UPDATE's WHERE on the stored row (2026,
+	// ended) refuses it.
+	t.Run("the stored row's ended year is refused by the UPDATE itself", func(t *testing.T) {
+		err := inA(func(ctx context.Context) error {
+			a := created
+			a.AcquiredOn = assetDate(t, "2027-01-05")
+			_, err := repo.Update(ctx, a, assetDate(t, "2027-06-01"))
+
+			return err
+		})
+		if !errors.Is(err, storage.ErrConflict) {
+			t.Errorf("Update() of a 2026 asset to 2027 in 2027 error = %v, want ErrConflict", err)
+		}
+	})
+
 	t.Run("update of a missing asset", func(t *testing.T) {
 		err := inA(func(ctx context.Context) error {
 			a := created
