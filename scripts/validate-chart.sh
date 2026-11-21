@@ -173,6 +173,8 @@ if [ "$mode" = "lint" ]; then
     "httpRoute.enabled true, config.trustedProxies empty"
     "config.passkey.rpId set, config.passkey.origins empty"
     "config.sessionAllowPlainHttp true behind an ingress"
+    "config.databaseUrl port outside 1 to 65535"
+    "config.oidc.issuerUrl port outside 1 to 65535"
   )
 
   guard_sets=(
@@ -197,6 +199,8 @@ if [ "$mode" = "lint" ]; then
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,httpRoute.enabled=true,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.passkey.rpId=solobill.example.org"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx,config.sessionAllowPlainHttp=true"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:65536/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.oidc.issuerUrl=https://idp.example.com:0/realms/solobill"
   )
 
   # The distinctive lead sentence of each guard's own fail message (see
@@ -205,7 +209,8 @@ if [ "$mode" = "lint" ]; then
   # apart and to prove this specific guard fired, short enough to survive a
   # reworded explanation. The two port-comparison guards below are matched on
   # the text before the port numbers they interpolate, not the numbers
-  # themselves.
+  # themselves. The two port-range guards (a URL port outside 1 to 65535) name
+  # their key only and interpolate nothing.
   guard_messages=(
     "ingress.enabled and httpRoute.enabled cannot both be true"
     "config.databaseUrl is required"
@@ -228,6 +233,8 @@ if [ "$mode" = "lint" ]; then
     "httpRoute.enabled is true but config.trustedProxies is empty"
     "config.passkey.rpId is set but config.passkey.origins is empty"
     "config.sessionAllowPlainHttp is true with an ingress or a gateway in front"
+    "config.databaseUrl names a port outside 1 to 65535"
+    "config.oidc.issuerUrl names a port outside 1 to 65535"
   )
 
   for i in "${!guard_names[@]}"; do
