@@ -167,11 +167,14 @@ closely enough for the URLs this chart actually takes (an optional
 parameter case is checked the same way, after the safe call to urlParse that
 reads the rest of the URL.
 
-No error prints the URL, any part of it or the bad port value: the URL may
-carry userinfo, a database password included, and an error text reaches CI and
-"helm upgrade" logs. A URL whose password holds an unencoded "/" or "@" is not
-a valid URL, and this helper makes no promise for it: the text after such a
-character is read as part of the host or the port.
+The two errors this helper raises itself print neither the URL, any part of
+it nor the bad port value: the URL may carry userinfo, a database password
+included, and an error text reaches CI and "helm upgrade" logs. A URL that
+net/url rejects outright (a bad percent escape, a space in the host) aborts
+the render in sprig's urlParse, and that error does print the whole URL; this
+helper does not catch it. A URL whose password holds an unencoded "/" or "@"
+is not a valid URL either, and this helper makes no promise for it: the text
+after such a character is read as part of the host or the port.
 */}}
 {{- define "solobill.urlPort" -}}
 {{- $url := . -}}
