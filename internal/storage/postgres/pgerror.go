@@ -44,3 +44,23 @@ func mapWriteError(err error) error {
 
 	return fmt.Errorf("postgres: %w", err)
 }
+
+// mapLedgerWriteError is the write mapping of the expense and other income
+// tables: a unique violation and the class 23000 refusal of a booked row
+// (see mapDocumentWriteError) are storage.ErrConflict. A foreign key
+// violation is not. A receipt of another tenant or a missing file is a
+// refused reference, and the caller needs its SQLSTATE 23503, so it passes
+// through wrapped. mapDocumentWriteError turns it into storage.ErrConflict
+// because for a document it means a row lost to the state of another row.
+func mapLedgerWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgIntegrityConstraintViolationClass {
+		return storage.ErrConflict
+	}
+
+	return mapWriteError(err)
+}

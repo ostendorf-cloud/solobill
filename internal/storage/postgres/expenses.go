@@ -49,7 +49,7 @@ func (r *expenseRepository) Create(ctx context.Context, expense storage.Expense)
 		Imported:         expense.Imported,
 	})
 	if err != nil {
-		return storage.Expense{}, mapDocumentWriteError(err)
+		return storage.Expense{}, mapLedgerWriteError(err)
 	}
 
 	return expenseFromRow(row), nil
@@ -128,7 +128,7 @@ func (r *expenseRepository) UpdateDraft(ctx context.Context, expense storage.Exp
 		return storage.Expense{}, existingExpenseConflict(ctx, q, expense.ID)
 	}
 	if err != nil {
-		return storage.Expense{}, mapDocumentWriteError(err)
+		return storage.Expense{}, mapLedgerWriteError(err)
 	}
 
 	return expenseFromRow(row), nil
@@ -144,7 +144,7 @@ func (r *expenseRepository) DeleteDraft(ctx context.Context, id uuid.UUID) error
 	q := sqlcgen.New(tx)
 	affected, err := q.DeleteDraftExpense(ctx, id)
 	if err != nil {
-		return mapDocumentWriteError(err)
+		return mapLedgerWriteError(err)
 	}
 	if affected == 0 {
 		return existingExpenseConflict(ctx, q, id)
@@ -166,7 +166,7 @@ func (r *expenseRepository) Book(ctx context.Context, id uuid.UUID, bookedAt tim
 		return storage.Expense{}, existingExpenseConflict(ctx, q, id)
 	}
 	if err != nil {
-		return storage.Expense{}, mapDocumentWriteError(err)
+		return storage.Expense{}, mapLedgerWriteError(err)
 	}
 
 	return expenseFromRow(row), nil
@@ -191,7 +191,7 @@ func (r *expenseRepository) Storno(ctx context.Context, id uuid.UUID, paidOn, bo
 		return storage.Expense{}, existingExpenseConflict(ctx, q, id)
 	}
 	if err != nil {
-		return storage.Expense{}, mapDocumentWriteError(err)
+		return storage.Expense{}, mapLedgerWriteError(err)
 	}
 
 	return expenseFromRow(row), nil

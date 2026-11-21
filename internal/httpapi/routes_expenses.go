@@ -47,10 +47,6 @@ const (
 	bookingLatestYear          = 9999
 )
 
-// codeVATRegimeMissing is the 400 code of docs/api.md when no VAT regime
-// period covers the date an entry counts on.
-const codeVATRegimeMissing = "vat_regime_missing"
-
 // bookingEarliestDate is the earliest payment or receipt date accepted. A
 // date more than one year after today is refused too: a typo in the year
 // would otherwise put an entry into a far away EÜR.

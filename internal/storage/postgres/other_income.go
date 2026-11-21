@@ -39,7 +39,7 @@ func (r *otherIncomeRepository) Create(ctx context.Context, income storage.Other
 		Imported:         income.Imported,
 	})
 	if err != nil {
-		return storage.OtherIncome{}, mapDocumentWriteError(err)
+		return storage.OtherIncome{}, mapLedgerWriteError(err)
 	}
 
 	return otherIncomeFromRow(row), nil
@@ -115,7 +115,7 @@ func (r *otherIncomeRepository) UpdateDraft(ctx context.Context, income storage.
 		return storage.OtherIncome{}, existingOtherIncomeConflict(ctx, q, income.ID)
 	}
 	if err != nil {
-		return storage.OtherIncome{}, mapDocumentWriteError(err)
+		return storage.OtherIncome{}, mapLedgerWriteError(err)
 	}
 
 	return otherIncomeFromRow(row), nil
@@ -131,7 +131,7 @@ func (r *otherIncomeRepository) DeleteDraft(ctx context.Context, id uuid.UUID) e
 	q := sqlcgen.New(tx)
 	affected, err := q.DeleteDraftOtherIncome(ctx, id)
 	if err != nil {
-		return mapDocumentWriteError(err)
+		return mapLedgerWriteError(err)
 	}
 	if affected == 0 {
 		return existingOtherIncomeConflict(ctx, q, id)
@@ -153,7 +153,7 @@ func (r *otherIncomeRepository) Book(ctx context.Context, id uuid.UUID, bookedAt
 		return storage.OtherIncome{}, existingOtherIncomeConflict(ctx, q, id)
 	}
 	if err != nil {
-		return storage.OtherIncome{}, mapDocumentWriteError(err)
+		return storage.OtherIncome{}, mapLedgerWriteError(err)
 	}
 
 	return otherIncomeFromRow(row), nil
@@ -176,7 +176,7 @@ func (r *otherIncomeRepository) Storno(ctx context.Context, id uuid.UUID, receiv
 		return storage.OtherIncome{}, existingOtherIncomeConflict(ctx, q, id)
 	}
 	if err != nil {
-		return storage.OtherIncome{}, mapDocumentWriteError(err)
+		return storage.OtherIncome{}, mapLedgerWriteError(err)
 	}
 
 	return otherIncomeFromRow(row), nil
