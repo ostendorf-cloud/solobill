@@ -29,11 +29,20 @@ func testHasher(t *testing.T) *account.Hasher {
 func newTestLogin(t *testing.T, store auth.Store, sessions *session.Manager) *auth.Login {
 	t.Helper()
 
+	return newTestLoginAt(t, store, sessions, nil)
+}
+
+// newTestLoginAt is newTestLogin with the clock TOTP codes are checked
+// against. A nil now is the wall clock.
+func newTestLoginAt(t *testing.T, store auth.Store, sessions *session.Manager, now func() time.Time) *auth.Login {
+	t.Helper()
+
 	login, err := auth.NewLogin(auth.LoginConfig{
 		Store:    store,
 		Sessions: sessions,
 		Hasher:   testHasher(t),
 		Logger:   slog.New(slog.DiscardHandler),
+		Now:      now,
 	})
 	if err != nil {
 		t.Fatalf("auth.NewLogin: %v", err)
@@ -76,7 +85,14 @@ func totpSecret(t *testing.T) string {
 func totpCode(t *testing.T, secret string) string {
 	t.Helper()
 
-	code, err := account.TOTPCode(secret, time.Now())
+	return totpCodeAt(t, secret, time.Now())
+}
+
+// totpCodeAt is the code of secret at the instant at.
+func totpCodeAt(t *testing.T, secret string, at time.Time) string {
+	t.Helper()
+
+	code, err := account.TOTPCode(secret, at)
 	if err != nil {
 		t.Fatalf("TOTPCode: %v", err)
 	}
