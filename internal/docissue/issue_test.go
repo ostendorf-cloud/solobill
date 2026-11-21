@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -819,6 +820,27 @@ func TestIssueDateAcrossDaylightSavingTime(t *testing.T) {
 				t.Errorf("IssuedAt(%s).Year() = %d, want the number year %d", tt.now, docissue.IssuedAt(tt.now).Year(), got.Year())
 			}
 		})
+	}
+}
+
+// lostDraft is the memory store whose Issue finds no draft any more, as
+// the repository answers when its UPDATE matches no row.
+type lostDraft struct{ *docissuetest.Store }
+
+func (lostDraft) Issue(context.Context, uuid.UUID, storage.DocumentIssue) (storage.Document, error) {
+	return storage.Document{}, fmt.Errorf("%w: %w", storage.ErrConflict, storage.ErrNotADraft)
+}
+
+func TestIssueReportsALostDraftAsChangedNotAsATakenNumber(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, storage.VATRegimeKleinunternehmer)
+	draft := f.draft(t, storage.Document{})
+	f.issuer.Documents = lostDraft{f.store}
+
+	_, err := f.issuer.Issue(f.ctx, draft.ID, now)
+	if !errors.Is(err, docissue.ErrDraftChanged) || errors.Is(err, docissue.ErrNumberTaken) {
+		t.Fatalf("Issue() error = %v, want ErrDraftChanged and not ErrNumberTaken", err)
 	}
 }
 

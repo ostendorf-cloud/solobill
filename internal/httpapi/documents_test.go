@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ostendorf-cloud/govue/api"
 
 	"github.com/ostendorf-cloud/solobill/internal/docissue"
 	"github.com/ostendorf-cloud/solobill/internal/docpayload"
+	"github.com/ostendorf-cloud/solobill/internal/httpapi"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
@@ -805,5 +807,53 @@ func TestACorrectionAcrossARegimeChangeIsRefused(t *testing.T) {
 	}
 	if stored, _ := documentStore(t, f.app).Get(uuid.MustParse(correction)); stored.State != storage.DocumentStateDraft {
 		t.Errorf("state = %q, want the draft to stay", stored.State)
+	}
+}
+
+func TestALostDraftAnswersConflictWithTheDraftChangedText(t *testing.T) {
+	t.Parallel()
+
+	var apiErr *api.Error
+	err := httpapi.DocumentsError(fmt.Errorf("issue: %w", docissue.ErrDraftChanged))
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("DocumentsError() = %v, want an *api.Error", err)
+	}
+	if apiErr.Status != http.StatusConflict || apiErr.Code != "conflict" || !strings.Contains(apiErr.Message, "the draft changed") {
+		t.Fatalf("DocumentsError() = %d %s %q, want 409 conflict naming the changed draft", apiErr.Status, apiErr.Code, apiErr.Message)
+	}
+	if strings.Contains(apiErr.Message, "number") {
+		t.Errorf("message = %q, want no word of a taken number", apiErr.Message)
+	}
+}
+
+// nilCheckingRenderer is a renderer with a payload check, used as a nil
+// pointer.
+type nilCheckingRenderer struct{}
+
+func (*nilCheckingRenderer) Render(context.Context, []byte, bool) ([]byte, error) { return nil, nil }
+
+func (*nilCheckingRenderer) CheckPayload(context.Context, docpayload.FrozenPayloadV1) (map[string]string, error) {
+	return nil, nil
+}
+
+func TestATypedNilRendererIsNotWired(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *nilCheckingRenderer
+	tests := []struct {
+		name     string
+		renderer httpapi.DocumentRenderer
+		want     bool
+	}{
+		{"no renderer", nil, false},
+		{"a renderer without a payload check", sentinelRenderer{}, false},
+		{"a typed nil renderer with a payload check", typedNil, false},
+		{"a renderer with a payload check", checkingRenderer{}, true},
+		{"a pointer renderer with a payload check", &nilCheckingRenderer{}, true},
+	}
+	for _, tt := range tests {
+		if got := httpapi.PayloadCheckerWired(tt.renderer); got != tt.want {
+			t.Errorf("%s: wired = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

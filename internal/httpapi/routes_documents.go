@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -29,6 +30,13 @@ import (
 // immutable: every write to it answers 409, and the database triggers
 // refuse it below this layer too.
 func registerDocuments(mux *http.ServeMux, route routeFunc, a *app) {
+	// Every feature's wiring has run by now, so the renderer is final.
+	// Issuing fails closed without its payload check; one line at startup
+	// says so, instead of only a 503 on the first issue.
+	if _, ok := a.payloadChecker(); !ok && a.logger != nil {
+		a.logger.Warn("issuing documents is disabled: no renderer payload checker is configured")
+	}
+
 	mux.Handle("GET /api/v1/documents", route(api.Handle(a.handleListDocuments)))
 	mux.Handle("POST /api/v1/documents", route(api.Handle(a.handleCreateDocument)))
 	mux.Handle("POST /api/v1/documents/preview", route(api.Handle(a.handlePreviewDocument)))
@@ -976,9 +984,27 @@ func rendererUnavailable() *api.Error {
 // correction routes answer 503 before they lock or number anything.
 // Drafts and the preview keep working.
 func (a *app) payloadChecker() (docissue.PayloadChecker, bool) {
-	checker, ok := a.repos.Renderer.(docissue.PayloadChecker)
+	return payloadCheckerOf(a.repos.Renderer)
+}
 
-	return checker, ok && checker != nil
+// payloadCheckerOf returns r's payload check. A renderer that does not
+// implement docissue.PayloadChecker, a nil renderer and a typed nil
+// (a nil pointer, map or func stored in the interface) are not wired:
+// calling a typed nil would panic or check nothing.
+func payloadCheckerOf(r DocumentRenderer) (docissue.PayloadChecker, bool) {
+	checker, ok := r.(docissue.PayloadChecker)
+	if !ok || checker == nil {
+		return nil, false
+	}
+	switch v := reflect.ValueOf(checker); v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Func, reflect.Chan, reflect.Slice, reflect.Interface:
+		if v.IsNil() {
+			return nil, false
+		}
+	default:
+	}
+
+	return checker, true
 }
 
 // issuer is the docissue.Issuer over the wired repositories and the
