@@ -124,8 +124,15 @@ func (r assetRequest) asset(today time.Time) (storage.Asset, error) {
 		}
 	}
 
-	if (r.OpeningBookValueCents == nil) != (r.OpeningBookValueYear == nil) {
+	switch {
+	case (r.OpeningBookValueCents == nil) != (r.OpeningBookValueYear == nil):
 		p["opening_book_value_year"] = "opening_book_value_cents and opening_book_value_year go together"
+	case r.OpeningBookValueYear != nil && int(*r.OpeningBookValueYear) > today.Year():
+		// A book value at 1 January of a later year would leave the years
+		// in between without depreciation and keep the asset editable
+		// until that year ends. internal/afa has no clock, so the bound
+		// lives here, in the German year of today.
+		p["opening_book_value_year"] = "must not be after the current year"
 	}
 
 	a := storage.Asset{
@@ -494,9 +501,9 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 		if current.DisposedOn != nil {
 			return storage.ErrConflict
 		}
-		if yearEnded {
-			return api.Conflict("the disposal date lies in a year that has ended, whose figures may already be filed")
-		}
+		// A date the asset itself refuses (before acquired_on or the
+		// opening year) is a 400 first, also when its year has ended: the
+		// request is wrong whatever the year.
 		current.DisposedOn = &disposedOn
 		if invalid := afa.Validate(toAFAAsset(current)); invalid != nil {
 			if reason, found := invalid.Problems["disposed_on"]; found {
@@ -504,6 +511,9 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 			}
 
 			return fmt.Errorf("stored asset %s is invalid: %w", id, invalid)
+		}
+		if yearEnded {
+			return api.Conflict("the disposal date lies in a year that has ended, whose figures may already be filed")
 		}
 
 		disposed, err = a.repos.Assets.RecordDisposal(ctx, id, disposedOn, req.ProceedsCents)

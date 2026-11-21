@@ -386,10 +386,12 @@ func TestScheduleTinyBaseEndsAtZero(t *testing.T) {
 	}
 }
 
-// TestScheduleStaysWithinHalfACent checks cumulative rounding over many
-// bases: by the end of every year of a linear schedule from January, the
-// amount handed out is within half a cent of base * months / life.
-func TestScheduleStaysWithinHalfACent(t *testing.T) {
+// TestScheduleRunningTotalStaysWithinHalfACent checks cumulative rounding
+// over many bases: by the end of every year of a linear schedule from
+// January, the running total handed out is within half a cent of
+// base * months / life. A single year is only within one cent: in the
+// docs/api.md example 2028 is exactly 49966.67 and gets 49966.
+func TestScheduleRunningTotalStaysWithinHalfACent(t *testing.T) {
 	t.Parallel()
 
 	for _, base := range []int64{1, 7, 100, 149900, 999999} {

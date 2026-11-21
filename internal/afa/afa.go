@@ -9,10 +9,11 @@
 // integer cent and every share is computed in exact rational arithmetic
 // (math/big), never a float. Rounding is cumulative, half away from
 // zero: the total handed out up to the end of each year is rounded once,
-// and a year gets the difference to the year before. Every year is then
-// within half a cent of its exact share, and the years always add up to
-// the depreciation base: nothing is lost to rounding and nothing is
-// invented.
+// and a year gets the difference to the year before. The running total
+// is then within half a cent of its exact value at the end of every
+// year, a single year within one cent of its exact share, and the years
+// always add up to the depreciation base: nothing is lost to rounding
+// and nothing is invented.
 //
 // Like internal/money, this package imports nothing from internal/storage:
 // its Method, Group and Regime mirror the values of storage.Asset and
@@ -20,7 +21,18 @@
 //
 // Every figure is a computation over the owner's own entries, not tax
 // advice. The points marked "not verified" below are listed in
-// docs/concepts/solobill.md, "Unverified tax points".
+// docs/concepts/solobill.md, "Unverified tax points", except these,
+// which that list does not name yet and which are not verified either:
+//
+//   - The Sammelposten election per year (section 6 Abs. 2a Satz 5 EStG):
+//     once chosen, every item from 250.01 to 1,000 EUR of that year goes
+//     to the pool. Validate sees one asset and does not enforce it.
+//   - GWG and Sammelposten for the intangible group: section 6 Abs. 2 and
+//     2a EStG concern movable goods. Validate accepts both (see Key).
+//   - The disposal month counts in full in a linear schedule, read from
+//     R 7.4 Abs. 8 EStR (see linearSchedule).
+//   - For a Kleinunternehmer the thresholds apply to the gross price (see
+//     CostBasis).
 package afa
 
 import (
@@ -427,9 +439,11 @@ func poolYearsLeft(a Asset) int {
 // linearSchedule spreads base over months months from the month with
 // index start. Rounding is cumulative: the depreciation handed out up to
 // the end of a year is base * months so far / months, rounded once, and
-// the year gets that minus what earlier years already got. So every
-// year is within half a cent of its exact share, and the year holding
-// the last month of the useful life ends at exactly base. A disposal
+// the year gets that minus what earlier years already got. So the
+// running total is within half a cent of its exact value at the end of
+// every year, a single year within one cent of its exact share (two
+// roundings meet in it), and the year holding the last month of the
+// useful life ends at exactly base. A disposal
 // ends the schedule in its month, which counts in full, and leaves the
 // rest as the closing book value (not verified: R 7.4 Abs. 8 EStR is
 // read as counting the disposal month in full).

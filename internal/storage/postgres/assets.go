@@ -142,6 +142,12 @@ func firstScheduleYear(a storage.Asset) int {
 }
 
 // RecordDisposal implements storage.AssetRepository.
+//
+// Known limit: the owner's rule that a disposal dated in an ended year is
+// refused lives in the handler only. Unlike Update, this method takes no
+// now: its signature is the contract of issue #67
+// (internal/storage/asset_repository.go), which this issue does not
+// change. A guard here would need that parameter.
 func (r *assetRepository) RecordDisposal(ctx context.Context, id uuid.UUID, disposedOn time.Time, proceedsCents *int64) (storage.Asset, error) {
 	tx, err := txFromContext(ctx)
 	if err != nil {

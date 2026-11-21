@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"net/http"
 	"testing"
 	"time"
+
+	"github.com/ostendorf-cloud/govue/api"
 )
 
 // TestAssetDateRulesUseTheGermanCalendar pins the clock of the asset
@@ -78,5 +81,43 @@ func TestAssetRequestRefusesAFutureAcquisitionInBerlinTime(t *testing.T) {
 	}
 	if _, err := req.asset(assetToday(time.Date(2026, 12, 31, 22, 30, 0, 0, time.UTC))); err == nil {
 		t.Error("at 23:30 Berlin on 31 December: accepted an acquisition tomorrow")
+	}
+}
+
+// TestAssetRequestBoundsTheOpeningYear: an imported asset's opening year
+// may be the current German year or earlier, never a later one.
+func TestAssetRequestBoundsTheOpeningYear(t *testing.T) {
+	t.Parallel()
+
+	life := int32(120)
+	value := int64(100000)
+	withYear := func(year int32) assetRequest {
+		return assetRequest{
+			Name: "Desk", AcquiredOn: "2025-03-01", CostBasisCents: 149900, Method: "linear",
+			Group: "office_equipment", UsefulLifeMonths: &life,
+			OpeningBookValueCents: &value, OpeningBookValueYear: &year,
+		}
+	}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	if _, err := withYear(2026).asset(assetToday(now)); err != nil {
+		t.Errorf("opening year 2026 in 2026: %v", err)
+	}
+	for _, year := range []int32{2027, 2030} {
+		_, err := withYear(year).asset(assetToday(now))
+		if err == nil {
+			t.Errorf("opening year %d in 2026 accepted", year)
+
+			continue
+		}
+		apiErr := api.AsError(err)
+		if _, ok := apiErr.Details["opening_book_value_year"]; apiErr.Status != http.StatusBadRequest || !ok {
+			t.Errorf("opening year %d: error = %v (details %v), want a 400 on opening_book_value_year", year, err, apiErr.Details)
+		}
+	}
+
+	// At 00:30 on 1 January 2027 in Berlin, 2027 is the current year.
+	if _, err := withYear(2027).asset(assetToday(time.Date(2026, 12, 31, 23, 30, 0, 0, time.UTC))); err != nil {
+		t.Errorf("opening year 2027 at 00:30 Berlin on 1 January 2027: %v", err)
 	}
 }

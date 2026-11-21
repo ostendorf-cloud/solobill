@@ -68,7 +68,7 @@ func fakeAssetsOf(t *testing.T, f profileFixture) *fakeAssets {
 	return assets
 }
 
-// assetToday is today in Germany, the calendar the asset rules use.
+// assetTestToday is today in Germany, the calendar the asset rules use.
 func assetTestToday() time.Time {
 	return docissue.IssueDate(time.Now())
 }
@@ -464,7 +464,7 @@ func TestAssetsDisposal(t *testing.T) {
 
 	// The owner's rule: a disposal dated in an ended year is a 409, like
 	// a PUT. Last year's figures may already be filed.
-	for _, date := range []string{fmt.Sprintf("%d-12-31", year-1), fmt.Sprintf("%d-06-30", year-2)} {
+	for _, date := range []string{fmt.Sprintf("%d-12-31", year-1), fmt.Sprintf("%d-06-30", year-1)} {
 		if rec := f.do(t, f.owner, http.MethodPost, path, map[string]any{"disposed_on": date}); rec.Code != http.StatusConflict {
 			t.Errorf("disposal on %s: status = %d, want 409, body = %s", date, rec.Code, rec.Body.String())
 		}
@@ -494,6 +494,53 @@ func TestAssetsDisposal(t *testing.T) {
 	if last["depreciation_cents"] != float64(3333) || last["closing_book_value_cents"] != float64(76667) {
 		t.Errorf("disposal year = %v", last)
 	}
+}
+
+// TestAssetsDisposalBeforeAcquisitionIs400InAnEndedYear: a disposal
+// dated before the acquisition is a wrong request (400), even when its
+// year has also ended (409). Validation goes first.
+func TestAssetsDisposalBeforeAcquisitionIs400InAnEndedYear(t *testing.T) {
+	t.Parallel()
+
+	f := newAssetFixture(t)
+	body := laptopBody()
+	body["acquired_on"] = assetThisYear()
+	created := createAsset(t, f, body)
+	id, _ := created["id"].(string)
+
+	disposedOn := fmt.Sprintf("%d-05-01", assetTestToday().Year()-1)
+	rec := f.do(t, f.owner, http.MethodPost, assetsPath+"/"+id+"/disposal", map[string]any{"disposed_on": disposedOn})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := profileErrorDetails(t, rec)["disposed_on"]; !ok {
+		t.Errorf("details = %v, want disposed_on", profileErrorDetails(t, rec))
+	}
+}
+
+// TestAssetsOpeningYearAfterTheCurrentYearIs400 posts an imported asset
+// with next year's opening value: refused. This year's is accepted.
+func TestAssetsOpeningYearAfterTheCurrentYearIs400(t *testing.T) {
+	t.Parallel()
+
+	year := assetTestToday().Year()
+	f := newAssetFixture(t)
+	body := laptopBody()
+	body["acquired_on"] = fmt.Sprintf("%d-03-01", year-1)
+	body["useful_life_months"] = 120
+	body["opening_book_value_cents"] = 100000
+
+	body["opening_book_value_year"] = year + 1
+	rec := f.do(t, f.owner, http.MethodPost, assetsPath, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("next year: status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := profileErrorDetails(t, rec)["opening_book_value_year"]; !ok {
+		t.Errorf("details = %v, want opening_book_value_year", profileErrorDetails(t, rec))
+	}
+
+	body["opening_book_value_year"] = year
+	createAsset(t, f, body)
 }
 
 // TestAssetsDisposedAssetIsNotEdited uses an asset of the current year,
