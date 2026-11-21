@@ -16,6 +16,33 @@ set:
   migrationJob:
     databaseUser: solobill_migrator
 tests:
+  - it: fails the render when config.databaseUrl is left empty
+    template: templates/deployment.yaml
+    set:
+      config:
+        databaseUrl: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: config.databaseUrl is required
+
+  - it: fails the render when config.databaseUser is left empty
+    template: templates/deployment.yaml
+    set:
+      config:
+        databaseUser: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: config.databaseUser is required
+
+  - it: fails the render when existingSecret.name is left empty
+    template: templates/deployment.yaml
+    set:
+      existingSecret:
+        name: ""
+    asserts:
+      - failedTemplate:
+          errorMessage: existingSecret.name is required
+
   - it: renders exactly one replica
     template: templates/deployment.yaml
     asserts:

@@ -406,7 +406,7 @@ by the ingress rules themselves.
   scoped by destination as well as by port.
 - **PostgreSQL**, on `networkPolicy.egress.postgres.port` (default `5432`). The port is an
   explicit value rather than read out of `config.databaseUrl`, and a guard fails the render
-  when the two disagree; see "Three guards" below. The destination is left to that block's own
+  when the two disagree; see "Four guards" below. The destination is left to that block's own
   selectors, which **default to nothing, so this rule admits any destination on its port**. No
   default could do better: `config.databaseUrl` may name a managed PostgreSQL instance outside
   this cluster entirely, which no namespace or pod selector can describe, and a guessed
@@ -444,7 +444,7 @@ SMTP setting and no package builds a mail client. Mail is part of a later milest
 (`docs/concepts/solobill.md`'s document delivery), and the rule lands with it rather than now,
 as a guess at a port and a destination that nothing dials.
 
-### Three guards turn a runtime failure, or a silent inversion, into a render failure
+### Four guards turn a runtime failure, a silent inversion, or a raw template crash, into a render failure
 
 A default-deny egress policy whose allowed port does not match the port the application
 actually dials does not fail at render. It fails later, as a connection that times out, with
@@ -464,7 +464,16 @@ actually does with one: `postgres://pg.svc/db?port=5433` connects on `5433`, not
 though the host carries no port of its own. A URL whose scheme names no default and carries
 neither yields no port, and the render goes ahead rather than guessing.
 
-A third guard is not about a URL at all: `service.port` and `adminPort` select two different
+A URL whose port cannot be read as a number at all, a `?port=abc` query parameter or a
+non-numeric host-embedded port such as `host:abc`, fails on its own guard instead, naming the
+values key, where the bad port was found (the query parameter or the host part) and that a
+URL's port must be digits only. The message prints neither the URL nor the bad value, since the
+URL may carry a password. Left to the two guards above, a non-numeric query parameter still failed the
+render, but with a message built for a numeric mismatch ("set `networkPolicy.egress.postgres.port`
+to `abc`"); a non-numeric host-embedded port crashed inside `urlParse` itself, aborting the whole
+render with a raw Go template error instead of a message this chart authored.
+
+A fourth guard is not about a URL at all: `service.port` and `adminPort` select two different
 listeners, and the public ingress rule above, unscoped by default, renders on whichever port
 number `service.port` names. Equal, that same rule now also covers `adminPort`, admitting it
 from any source regardless of `networkPolicy.ingress.admin` and inverting, silently, the
@@ -605,12 +614,14 @@ above.
 `networkPolicy.egress.postgres.port` and `networkPolicy.egress.oidc.port` are required while
 `networkPolicy.egress.enabled` is true, enforced by a `required` call in
 `templates/networkpolicy.yaml`, which also holds the two port-mismatch guards and the
-`service.port`/`adminPort` collision guard; see "NetworkPolicy" above.
+`service.port`/`adminPort` collision guard. The non-numeric port guard itself lives in
+`templates/_helpers.tpl`'s `solobill.urlPort` helper, invoked from `templates/networkpolicy.yaml`;
+see "NetworkPolicy" above.
 
 `config.listenAddr` and `config.adminListenAddr` are not: nothing fails the render when either
 disagrees with `service.port` or `adminPort`, only the comment on each in `values.yaml` and the
 "Keep in sync with" notes in the values table above. A mismatch there does not invert a boundary
-the way the three guards above do, but it still breaks the pod: the `Service`, the probes and
+the way the four guards above do, but it still breaks the pod: the `Service`, the probes and
 this policy's own ingress rules all read `service.port` and `adminPort`, while `cmd/solobill`
 listens on whatever `config.listenAddr` and `config.adminListenAddr` actually say, so a mismatch
 means the probes and the `Service` reach a port nothing is listening on. Keep the two pairs in
