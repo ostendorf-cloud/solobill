@@ -62,6 +62,7 @@
       "offer": "New offer"
     },
     "titleEdit": "Edit {kind}",
+    "formLabel": "Document data",
     "leave": {
       "title": "Leave without saving?",
       "message": "You have unsaved changes. If you leave now, they will be lost.",
@@ -274,6 +275,7 @@
     "toProfile": "Open the seller profile",
     "changedDuringSave": "The draft changed while it was being saved. Save it again, then issue.",
     "blocked": {
+      "saving": "Issuing waits until the draft is saved.",
       "calculating": "Issuing waits until the totals are calculated.",
       "incomplete": "Complete the lines first. Issuing needs calculated totals.",
       "invalid": "The server cannot calculate these lines. Fix the marked fields to issue.",
@@ -336,7 +338,7 @@
     "regimeUnknown": "No VAT regime applies today. Choose one.",
     "cannotCalculate": "The lines cannot be calculated.",
     "typeFixed": "The type of a draft never changes.",
-    "typeInvalid": "Choose invoice, correction or offer.",
+    "typeInvalid": "The document type is not valid.",
     "sellerIdRequired": "The seller profile needs a tax number, a VAT ID or a Kleinunternehmer ID. Add one in the settings.",
     "unknownRegime": "The default VAT regime of the seller profile is not known. Choose one in the settings.",
     "invoiceOrOffer": "Choose invoice or offer.",

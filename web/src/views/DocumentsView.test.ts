@@ -367,6 +367,64 @@ describe('DocumentsView', () => {
       await vi.waitFor(() => expect(signal.aborted).toBe(true))
     })
 
+    describe('late answers of reads that a newer list load cancelled', () => {
+      /** reads answers every single read by hand, in the order they were made,
+       *  and ignores the abort signal like a slow network would. */
+      function lateReads(listFor: (state: string | undefined) => unknown[]) {
+        const reads: { resolve: (v: unknown) => void; reject: (e: unknown) => void }[] = []
+        vi.mocked(apiClient.get).mockImplementation(
+          (path: string, options?: { query?: { state?: string } }) => {
+            if (path === '/customers') {
+              return Promise.resolve({ customers: [{ id: 'c-1', name: 'Customer Ltd' }] })
+            }
+            if (path.startsWith('/customers/')) {
+              return new Promise((resolve, reject) => {
+                reads.push({ resolve, reject })
+              })
+            }
+            return Promise.resolve({ documents: listFor(options?.query?.state) })
+          },
+        )
+        return reads
+      }
+
+      it('does not write a late name into the newer list', async () => {
+        const reads = lateReads(() => [gone(1)])
+        renderView()
+        await vi.waitFor(() => expect(reads).toHaveLength(1))
+
+        await choose('State', 'Issued')
+        await vi.waitFor(() => expect(reads).toHaveLength(2))
+        reads[1]?.reject(apiError(404, ErrorCode.notFound))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        reads[0]?.resolve({ id: 'c-gone-1', name: 'Old GmbH' })
+        await new Promise((resolve) => setTimeout(resolve, 30))
+
+        expect(screen.queryByText('Old GmbH')).toBeNull()
+        const rows = screen.getAllByRole('row')
+        expect(within(rows[1]).getByText('–')).toBeVisible()
+      })
+
+      it('does not remember a late failure of a cancelled read as a failed id', async () => {
+        const reads = lateReads((state) => (state === 'issued' ? [original] : [gone(1)]))
+        renderView()
+        await vi.waitFor(() => expect(reads).toHaveLength(1))
+
+        // The newer list has no deleted customer: the first read is cancelled.
+        await choose('State', 'Issued')
+        await screen.findByText('RE-20260009')
+        reads[0]?.reject(new DOMException('aborted', 'AbortError'))
+        await new Promise((resolve) => setTimeout(resolve, 30))
+
+        // The next list names the customer again: it must be read again.
+        await choose('State', 'Draft')
+        await vi.waitFor(() => expect(reads).toHaveLength(2))
+        reads[1]?.resolve({ id: 'c-gone-1', name: 'Gone GmbH' })
+
+        expect(await screen.findByText('Gone GmbH')).toBeVisible()
+      })
+    })
+
     it('sends a 401 of a single read to the login', async () => {
       vi.mocked(apiClient.get).mockImplementation((path: string) => {
         if (path === '/customers') {

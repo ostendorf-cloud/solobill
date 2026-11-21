@@ -62,6 +62,7 @@
       "offer": "Neues Angebot"
     },
     "titleEdit": "{kind} bearbeiten",
+    "formLabel": "Belegdaten",
     "leave": {
       "title": "Ohne Speichern verlassen?",
       "message": "Du hast ungespeicherte Änderungen. Wenn du jetzt gehst, gehen sie verloren.",
@@ -274,6 +275,7 @@
     "toProfile": "Das Verkäuferprofil öffnen",
     "changedDuringSave": "Der Entwurf hat sich beim Speichern geändert. Speichere ihn erneut und stelle dann aus.",
     "blocked": {
+      "saving": "Das Ausstellen wartet, bis der Entwurf gespeichert ist.",
       "calculating": "Das Ausstellen wartet, bis die Summen berechnet sind.",
       "incomplete": "Vervollständige zuerst die Positionen. Zum Ausstellen braucht es berechnete Summen.",
       "invalid": "Der Server kann diese Positionen nicht berechnen. Korrigiere die markierten Felder, um auszustellen.",
@@ -336,7 +338,7 @@
     "regimeUnknown": "Heute gilt keine Umsatzsteuerregelung. Wähle eine aus.",
     "cannotCalculate": "Die Positionen können nicht berechnet werden.",
     "typeFixed": "Die Art eines Entwurfs ändert sich nie.",
-    "typeInvalid": "Wähle Rechnung, Korrektur oder Angebot.",
+    "typeInvalid": "Die Art des Belegs ist ungültig.",
     "sellerIdRequired": "Im Verkäuferprofil fehlt die Steuernummer, die USt-IdNr oder die Kleinunternehmer-Identifikationsnummer. Trage eine in den Einstellungen ein.",
     "unknownRegime": "Die Standard-Umsatzsteuerregelung des Verkäuferprofils ist unbekannt. Wähle in den Einstellungen eine aus.",
     "invoiceOrOffer": "Wähle Rechnung oder Angebot.",

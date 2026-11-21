@@ -26,6 +26,7 @@ import {
   type IssueFailure,
   type Totals,
 } from '../../documents'
+import { goWithoutPrompt } from '../../leaveGuard'
 import { formatCents } from '../../money'
 import { clearSession, loadSession, sessionFailed, sessionReady } from '../../session'
 
@@ -84,7 +85,8 @@ onBeforeUnmount(() => unmounted.abort())
 
 async function toLogin(): Promise<void> {
   clearSession()
-  await router.push({ name: 'login' })
+  // A dirty editor must not ask to leave when the session is gone.
+  await goWithoutPrompt(router, { name: 'login' })
 }
 
 const profileLink = computed(() => router.hasRoute('settings'))

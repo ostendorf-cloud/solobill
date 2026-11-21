@@ -50,6 +50,7 @@ import {
 } from '../documents'
 import { regimeOn, type VatPeriod } from '../expenses'
 import { saveErrorText } from '../fieldErrors'
+import { goWithoutPrompt, leaveBypassed } from '../leaveGuard'
 import { centsToInput, formatCents } from '../money'
 import { clearSession, loadSession, me, sessionFailed, sessionReady } from '../session'
 
@@ -115,22 +116,9 @@ onBeforeUnmount(() => {
   clearTimeout(previewTimer)
 })
 
-// The leave guard asks before the editor is left with unsaved changes. A move
-// the owner confirmed, a lost session or a discarded draft needs no question.
-let leaveConfirmed = false
-
-async function goWithoutPrompt(to: Parameters<typeof router.push>[0]): Promise<void> {
-  leaveConfirmed = true
-  try {
-    await router.push(to)
-  } finally {
-    leaveConfirmed = false
-  }
-}
-
 async function toLogin(): Promise<void> {
   clearSession()
-  await goWithoutPrompt({ name: 'login' })
+  await goWithoutPrompt(router, { name: 'login' })
 }
 
 function takeSnapshot(): void {
@@ -526,6 +514,10 @@ async function save(): Promise<boolean> {
 /** saveForIssue makes sure the stored draft is the one on screen before the
  *  confirmation opens. */
 async function saveForIssue(): Promise<Doc | null> {
+  if (saving.value) {
+    // A save is running already: a second PUT would race the first.
+    return null
+  }
   if (doc.value && !dirty.value) {
     return doc.value
   }
@@ -551,7 +543,9 @@ const locked = computed(() => saving.value || issuePreparing.value)
 /** issueBlockedHint says why Issue is off: it waits for settled totals. */
 const issueBlockedHint = computed(() => {
   let reason: string | null = null
-  if (
+  if (saving.value) {
+    reason = 'saving'
+  } else if (
     previewPending.value ||
     previewState.value === 'calculating' ||
     previewState.value === 'idle'
@@ -589,7 +583,7 @@ const leaveOpen = ref(false)
 let leaveTarget: string | null = null
 
 onBeforeRouteLeave((to) => {
-  if (leaveConfirmed || !dirty.value || step.value !== 'form') {
+  if (leaveBypassed() || !dirty.value || step.value !== 'form') {
     return true
   }
   leaveTarget = to.fullPath
@@ -600,7 +594,7 @@ onBeforeRouteLeave((to) => {
 function confirmLeave(): void {
   leaveOpen.value = false
   if (leaveTarget) {
-    void goWithoutPrompt(leaveTarget)
+    void goWithoutPrompt(router, leaveTarget)
   }
 }
 
@@ -697,6 +691,7 @@ const regimeModel = computed({
 
       <form id="document-form" novalidate :aria-busy="locked" @submit.prevent="save">
         <fieldset :disabled="locked" class="flex min-w-0 flex-col gap-6 border-0 p-0">
+          <legend class="sr-only">{{ t('documents.editor.formLabel') }}</legend>
           <fieldset class="flex flex-col gap-4">
             <legend class="mb-2 text-xl font-semibold text-text">
               {{ t('documents.editor.header') }}
@@ -706,7 +701,7 @@ const regimeModel = computed({
               :label="t('documents.fields.customer')"
               :error="shown.customer"
               required
-              :disabled="headerLocked"
+              :disabled="headerLocked || locked"
             >
               <GovueSelect
                 v-model="form.customerId"
@@ -719,7 +714,7 @@ const regimeModel = computed({
               <GovueField
                 :label="t('documents.fields.regime')"
                 :error="shown.regime"
-                :disabled="headerLocked"
+                :disabled="headerLocked || locked"
               >
                 <GovueSelect
                   v-model="regimeModel"
@@ -730,7 +725,7 @@ const regimeModel = computed({
               <GovueField
                 :label="t('documents.fields.language')"
                 :error="shown.language"
-                :disabled="headerLocked"
+                :disabled="headerLocked || locked"
               >
                 <GovueSelect v-model="form.language" :options="languageOptions" />
               </GovueField>
@@ -797,6 +792,7 @@ const regimeModel = computed({
               <GovueField
                 :label="`${t('documents.editor.catalogue')} (${i + 1})`"
                 :error="shown[`line.${i}.catalogue`]"
+                :disabled="locked"
               >
                 <GovueSelect
                   :model-value="line.catalogueItemId ?? ADHOC"
@@ -824,6 +820,7 @@ const regimeModel = computed({
                 <GovueField
                   :label="`${t('documents.lines.unit')} (${i + 1})`"
                   :error="shown[`line.${i}.unit`]"
+                  :disabled="locked"
                 >
                   <GovueSelect v-model="line.unit" :options="unitOptions" />
                 </GovueField>
@@ -858,6 +855,7 @@ const regimeModel = computed({
                 <GovueField
                   :label="`${t('documents.editor.lineDiscount')} (${i + 1})`"
                   :error="line.discountMode === 'none' ? shown[`line.${i}.discount`] : undefined"
+                  :disabled="locked"
                 >
                   <GovueSelect
                     :model-value="line.discountMode"
@@ -904,6 +902,7 @@ const regimeModel = computed({
               <GovueField
                 :label="t('documents.editor.documentDiscount')"
                 :error="form.discountMode === 'none' ? shown.discount : undefined"
+                :disabled="locked"
               >
                 <GovueSelect
                   :model-value="form.discountMode"
@@ -1045,7 +1044,7 @@ const regimeModel = computed({
           @issued="onIssued"
           @new-correction="openNewCorrection"
           @preparing="issuePreparing = $event"
-          @discarded="goWithoutPrompt({ name: 'documents' })"
+          @discarded="goWithoutPrompt(router, { name: 'documents' })"
         />
       </section>
     </template>

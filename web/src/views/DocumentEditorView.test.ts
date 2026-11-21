@@ -1240,6 +1240,188 @@ describe('DocumentEditorView', () => {
     })
   })
 
+  describe('while a save is in flight', () => {
+    const description = () => screen.getByLabelText(/^Description \(1\)/)
+
+    // jsdom has no pointer capture; the select's pointer down handler asks.
+    beforeEach(() => {
+      Element.prototype.hasPointerCapture = () => false
+      Element.prototype.setPointerCapture = () => {}
+      Element.prototype.releasePointerCapture = () => {}
+    })
+
+    function deferredPut() {
+      const control: { answer: (doc: Doc) => void } = { answer: () => {} }
+      mockApi({
+        put: () =>
+          new Promise((resolve) => {
+            control.answer = resolve
+          }),
+      })
+      return control
+    }
+
+    it('opens a select on pointer down when nothing is saving', async () => {
+      mockApi()
+      await renderView('/documents/edit/d-1')
+      await ready()
+
+      await fireEvent.pointerDown(screen.getByRole('combobox', { name: 'Unit (1)' }), {
+        button: 0,
+        ctrlKey: false,
+        pointerType: 'mouse',
+      })
+
+      expect(await screen.findByRole('listbox')).toBeVisible()
+    })
+
+    it('does not open a select on pointer down: the select ignores the fieldset', async () => {
+      const put = deferredPut()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(description(), ' one')
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+
+      for (const name of [
+        'Unit (1)',
+        'Catalogue item (1)',
+        'Line discount (1)',
+        'Document discount',
+      ]) {
+        await fireEvent.pointerDown(screen.getByRole('combobox', { name }), {
+          button: 0,
+          ctrlKey: false,
+          pointerType: 'mouse',
+        })
+      }
+      await wait(30)
+
+      expect(screen.queryByRole('listbox')).toBeNull()
+      put.answer(draftDoc())
+    })
+
+    it('sends one PUT when Issue is clicked during a save and says why it waits', async () => {
+      const put = deferredPut()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(description(), ' one')
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Issue' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+
+      const issue = screen.getByRole('button', { name: 'Issue' })
+      expect(issue).toBeDisabled()
+      expect(screen.getByText('Issuing waits until the draft is saved.')).toBeVisible()
+      // Whatever still gets a click through must not start a second save.
+      issue.removeAttribute('disabled')
+      await fireEvent.click(issue)
+      await wait(40)
+
+      expect(rec.puts).toHaveLength(1)
+      put.answer(draftDoc())
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Issue' })).toBeEnabled())
+      expect(rec.puts).toHaveLength(1)
+    })
+
+    it('stops the confirmation by the dirty check alone when the preview has settled again', async () => {
+      const put = deferredPut()
+      const user = userEvent.setup()
+      await renderView('/documents/edit/d-1')
+      await ready()
+      await user.type(description(), ' one')
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Issue' })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Issue' }))
+      await vi.waitFor(() => expect(rec.puts).toHaveLength(1))
+      const previewsBefore = rec.previews.length
+
+      // The edit gets through the lock; the save outlasts the preview debounce.
+      await fireEvent.update(description(), 'Consulting one MORE')
+      await vi.waitFor(() => expect(rec.previews.length).toBeGreaterThan(previewsBefore))
+      await wait(50)
+      expect(rec.previews.at(-1)?.body.lines[0]?.description).toBe('Consulting one MORE')
+      put.answer(draftDoc())
+
+      expect(await screen.findByText(/changed while it was being saved/)).toBeVisible()
+      await wait(30)
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(rec.posts.filter((p) => p.path.endsWith('/issue'))).toHaveLength(0)
+    })
+  })
+
+  describe('a lost session in the issue panel with a dirty form', () => {
+    function baseChangedThen(correctionAnswer: () => Promise<unknown>) {
+      mockApi({
+        stored: draftDoc({ type: 'correction', corrects_document_id: 'd-0' }),
+        post: (path) =>
+          path.endsWith('/issue')
+            ? Promise.reject(apiError(409, 'correction_base_changed', { correction_base_seq: '2' }))
+            : correctionAnswer(),
+      })
+    }
+
+    async function failIssue(user: ReturnType<typeof userEvent.setup>) {
+      await clickIssue(user)
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', {
+          name: 'Issue permanently',
+        }),
+      )
+      await screen.findByTestId('issue-error')
+    }
+
+    it('does not ask when an issue answers 401', async () => {
+      mockApi({ post: () => Promise.reject(apiError(401, ErrorCode.unauthenticated)) })
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await clickIssue(user)
+      const dialog = await screen.findByRole('dialog')
+      // An edit made after the save, while the confirmation is open.
+      await fireEvent.update(screen.getByLabelText(/^Description \(1\)/), 'Changed meanwhile')
+      await user.click(within(dialog).getByRole('button', { name: 'Issue permanently' }))
+
+      await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+      expect(screen.queryByText('Leave without saving?')).toBeNull()
+    })
+
+    it('does not ask when a new correction answers 401', async () => {
+      baseChangedThen(() => Promise.reject(apiError(401, ErrorCode.unauthenticated)))
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await failIssue(user)
+      const start = screen.getByRole('button', {
+        name: 'Start a new correction from the effective document',
+      })
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' more')
+      await user.click(start)
+
+      await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+      expect(screen.queryByText('Leave without saving?')).toBeNull()
+    })
+
+    it('does not ask when the discard answers 401', async () => {
+      baseChangedThen(() => Promise.resolve(draftDoc({ id: 'd-9' })))
+      vi.mocked(apiClient.del).mockRejectedValue(apiError(401, ErrorCode.unauthenticated))
+      const user = userEvent.setup()
+      const { router } = await renderView('/documents/edit/d-1')
+      await ready()
+      await failIssue(user)
+      const discard = screen.getByRole('button', { name: 'Discard the old draft' })
+      await user.type(screen.getByLabelText(/^Description \(1\)/), ' more')
+      await user.click(discard)
+      await user.click(
+        within(await screen.findByRole('dialog')).getByRole('button', { name: 'Discard draft' }),
+      )
+
+      await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+      expect(screen.queryByText('Leave without saving?')).toBeNull()
+    })
+  })
+
   describe('leaving without a question', () => {
     it('does not ask when the session is gone', async () => {
       mockApi({ put: () => Promise.reject(apiError(401, ErrorCode.unauthenticated)) })
