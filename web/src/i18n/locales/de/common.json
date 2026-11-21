@@ -1,5 +1,28 @@
 {
   "appName": "solobill",
   "skipToContent": "Zum Inhalt springen",
-  "cancel": "Abbrechen"
+  "cancel": "Abbrechen",
+  "mainNavigation": "Hauptnavigation",
+  "menu": "Menü",
+  "signedInAs": "Angemeldet als {name}",
+  "logout": "Abmelden",
+  "loggingOut": "Wird abgemeldet",
+  "logoutError": "Abmelden ist fehlgeschlagen.",
+  "fieldErrors": {
+    "required": "Dieses Feld ist erforderlich.",
+    "invalidLanguage": "Wähle Deutsch oder Englisch.",
+    "invalidCountry": "Gib einen Ländercode aus zwei Buchstaben ein, zum Beispiel DE.",
+    "negative": "Der Wert darf nicht negativ sein.",
+    "invalidUnit": "Wähle Stück, Stunde oder Tag.",
+    "wrongType": "Der Wert hat die falsche Art.",
+    "invalid": "Ungültiger Wert."
+  },
+  "errors": {
+    "forbidden": "Dafür fehlt dir die Berechtigung.",
+    "server": "Der Server hatte einen Fehler. Versuche es später noch einmal.",
+    "network": "Der Server ist nicht erreichbar. Prüfe die Verbindung.",
+    "session": "Die Sitzung konnte nicht geladen werden. Speichern und Löschen sind gesperrt. Lade die Seite neu.",
+    "generic": "Das hat nicht geklappt. Versuche es noch einmal."
+  },
+  "gobdBanner": "Der Dateispeicher ist nicht gegen Änderung und Löschung geschützt. Belege werden so nicht revisionssicher aufbewahrt."
 }

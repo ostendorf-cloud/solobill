@@ -1,1 +1,49 @@
-{}
+{
+  "nav": "Katalog",
+  "title": "Katalog",
+  "lead": "Leistungen und Artikel mit Preis, die du in Dokumente übernehmen kannst.",
+  "tableCaption": "Liste der Katalogeinträge",
+  "loading": "Der Katalog wird geladen.",
+  "loadError": "Der Katalog konnte nicht geladen werden.",
+  "loadErrorTitle": "Laden fehlgeschlagen",
+  "emptyTitle": "Noch keine Einträge",
+  "emptyDescription": "Lege den ersten Eintrag an, um ihn später in Dokumenten zu verwenden.",
+  "create": "Eintrag anlegen",
+  "createTitle": "Neuer Eintrag",
+  "editTitle": "Eintrag bearbeiten",
+  "editFor": "{name} bearbeiten",
+  "deleteFor": "{name} löschen",
+  "edit": "Bearbeiten",
+  "delete": "Löschen",
+  "save": "Speichern",
+  "saving": "Der Eintrag wird gespeichert",
+  "cancel": "Abbrechen",
+  "saved": "Der Eintrag ist gespeichert.",
+  "saveError": "Der Eintrag konnte nicht gespeichert werden. Prüfe die markierten Felder.",
+  "skuTaken": "Diese Artikelnummer ist schon vergeben.",
+  "priceInvalid": "Gib den Betrag ohne Tausendertrennzeichen ein, zum Beispiel 1234,56.",
+  "deleteTitle": "Eintrag löschen?",
+  "deleteMessage": "Der Eintrag verschwindet aus dem Katalog. Ausgestellte Dokumente bleiben unverändert.",
+  "deleted": "Der Eintrag ist gelöscht.",
+  "deleteError": "Der Eintrag konnte nicht gelöscht werden.",
+  "columns": {
+    "name": "Name",
+    "sku": "Artikelnummer",
+    "unit": "Einheit",
+    "price": "Preis",
+    "actions": "Aktionen"
+  },
+  "fields": {
+    "name": "Name",
+    "description": "Beschreibung",
+    "sku": "Artikelnummer",
+    "price": "Preis pro Einheit in EUR",
+    "priceHint": "Zum Beispiel 95 oder 95,50.",
+    "unit": "Einheit"
+  },
+  "units": {
+    "piece": "Stück",
+    "hour": "Stunde",
+    "day": "Tag"
+  }
+}

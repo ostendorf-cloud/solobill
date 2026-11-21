@@ -1,1 +1,52 @@
-{}
+{
+  "nav": "Customers",
+  "title": "Customers",
+  "lead": "Your customers with their address and the language of their documents.",
+  "tableCaption": "List of customers",
+  "loading": "Loading the customers.",
+  "loadError": "The customers could not be loaded.",
+  "loadErrorTitle": "Loading failed",
+  "emptyTitle": "No customers yet",
+  "emptyDescription": "Add the first customer to attach invoices and offers to them.",
+  "create": "Add customer",
+  "createTitle": "New customer",
+  "editTitle": "Edit customer",
+  "editFor": "Edit {name}",
+  "deleteFor": "Delete {name}",
+  "edit": "Edit",
+  "delete": "Delete",
+  "save": "Save",
+  "saving": "Saving the customer",
+  "cancel": "Cancel",
+  "saved": "The customer is saved.",
+  "saveError": "The customer could not be saved. Check the marked fields.",
+  "numberTaken": "This customer number is already in use.",
+  "deleteTitle": "Delete this customer?",
+  "deleteMessage": "The customer disappears from the list. Issued documents stay unchanged.",
+  "deleted": "The customer is deleted.",
+  "deleteError": "The customer could not be deleted.",
+  "columns": {
+    "number": "Number",
+    "name": "Name",
+    "city": "City",
+    "language": "Language",
+    "actions": "Actions"
+  },
+  "fields": {
+    "name": "Name",
+    "number": "Customer number",
+    "email": "Email",
+    "vatId": "VAT ID",
+    "street": "Street and number",
+    "addressLine2": "Address line 2",
+    "postalCode": "Postal code",
+    "city": "City",
+    "countryCode": "Country code",
+    "countryCodeHint": "Two letters, for example DE.",
+    "documentLanguage": "Language of documents"
+  },
+  "language": {
+    "de": "German",
+    "en": "English"
+  }
+}
