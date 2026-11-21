@@ -1,6 +1,7 @@
 package docpayload
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode"
@@ -31,6 +32,12 @@ const (
 	// description, the tax note, the payment terms and the notes.
 	MaxTextChars = 1000
 	MaxTextLines = 20
+	// MaxDataBytes bounds the template data the renderer writes for
+	// Typst (internal/pdf's DataBytes, 2 MiB). CheckPrintable applies it
+	// to the payload's own JSON, a close lower bound of that data; the
+	// renderer's checker (docissue.PayloadChecker) enforces the exact
+	// limit on the data it builds.
+	MaxDataBytes = 2 << 20
 )
 
 // printableRanges are the runes both bundled fonts of TemplateDocumentV1
@@ -308,6 +315,10 @@ func CheckPrintable(p FrozenPayloadV1) map[string]string {
 	text("tax_note", p.TaxNote)
 	text("payment_terms", p.PaymentTerms)
 	text("notes", p.Notes)
+
+	if data, err := json.Marshal(p); err != nil || len(data) > MaxDataBytes {
+		add("lines", fmt.Sprintf("the document is too large to print: at most %d bytes of data", MaxDataBytes))
+	}
 
 	return problems
 }

@@ -63,16 +63,56 @@ var (
 	ErrNotDraft = errors.New("docissue: the document is issued already")
 
 	// ErrNumberTaken is a display number or a correction sequence that
-	// exists in the tenant already, for example an imported number. The
-	// API answers it as 409 conflict.
+	// exists in the tenant already. The API answers it as 409 conflict.
+	//
+	// The usual cause is an imported document whose original number
+	// equals the next number the counter renders. Such a collision blocks
+	// every further issue of that type and year, because the refused
+	// issue rolls its allocation back and the next attempt renders the
+	// same number again, until the counter is raised past the imported
+	// number (ImportedDocumentRepository.RaiseCounter, issue #81), as
+	// docs/concepts/solobill.md, "Imported documents and original
+	// numbers", says.
 	ErrNumberTaken = errors.New("docissue: the number exists already")
+
+	// ErrDraftChanged is the write of an issue that found no draft of the
+	// locked type any more. It cannot happen after Lock in the same
+	// transaction; it stays a distinct error so a broken lock is never
+	// reported as a taken number. The API answers it as 409 conflict.
+	ErrDraftChanged = errors.New("docissue: the draft changed or is no draft of this type any more")
+
+	// ErrRendererUnavailable is an issue without a PayloadChecker. Issuing
+	// fails closed: only the renderer can tell whether a payload prints,
+	// and a frozen payload is never changed again. The API answers it as
+	// 503 renderer_unavailable.
+	ErrRendererUnavailable = errors.New("docissue: no renderer checks the payload, issuing is off")
 )
 
-// PayloadChecker is an optional, deeper check of a payload before it is
+// CorrectionRegimeError is a correction whose issue date lies in a VAT
+// regime period other than the regime of the original invoice. Whether
+// such a correction keeps the original's regime is an open tax question
+// the owner clarifies with a tax adviser; until then it is refused. The
+// API answers it as 409 correction_regime_changed.
+type CorrectionRegimeError struct {
+	OriginalRegime    storage.VATRegime
+	OriginalIssueDate string
+	PeriodRegime      storage.VATRegime
+	IssueDate         string
+}
+
+func (e *CorrectionRegimeError) Error() string {
+	return fmt.Sprintf("docissue: the correction would need the VAT regime of the original invoice (%s, issued %s), "+
+		"but the period on the issue date %s is %s; a correction across a VAT regime change is not supported yet",
+		e.OriginalRegime, e.OriginalIssueDate, e.IssueDate, e.PeriodRegime)
+}
+
+// PayloadChecker is the renderer's check of a payload before it is
 // frozen. The renderer of issue #74 implements it with
 // internal/pdf.CheckPrintable, which also measures every word against
-// its cell and estimates the pages; that needs the font metrics, which
-// only the renderer has. Its details are merged like Check's.
+// its cell, estimates the pages and bounds the template data (2 MiB);
+// that needs the font metrics and the limits table of internal/pdf. Its
+// details are merged like Check's. Issuing refuses without one
+// (ErrRendererUnavailable).
 type PayloadChecker interface {
 	CheckPayload(ctx context.Context, p docpayload.FrozenPayloadV1) (map[string]string, error)
 }
@@ -92,7 +132,8 @@ type Issuer struct {
 	SellerProfileLogos storage.SellerProfileLogoRepository
 	Files              storage.FileRepository
 
-	// Checker is optional, see PayloadChecker.
+	// Checker is required: without it Issue answers
+	// ErrRendererUnavailable before it locks anything.
 	Checker PayloadChecker
 }
 
@@ -108,6 +149,8 @@ type numberPlan struct {
 	value         int64
 	correctionSeq int
 	corrects      *docpayload.DocumentReference
+	// rootRegime is the VAT regime of the chain's original invoice.
+	rootRegime storage.VATRegime
 }
 
 // Issue issues the draft id at now. In order, all in the caller's
@@ -130,6 +173,10 @@ type numberPlan struct {
 // Any error leaves the caller to roll the transaction back, the counter
 // allocation included.
 func (i Issuer) Issue(ctx context.Context, id uuid.UUID, now time.Time) (storage.Document, error) {
+	if i.Checker == nil {
+		return storage.Document{}, ErrRendererUnavailable
+	}
+
 	draft, err := i.Documents.Lock(ctx, id)
 	if err != nil {
 		return storage.Document{}, err
@@ -161,6 +208,14 @@ func (i Issuer) Issue(ctx context.Context, id uuid.UUID, now time.Time) (storage
 	if err != nil {
 		return storage.Document{}, fmt.Errorf("docissue: regime on %s: %w", issueDate.Format(docpayload.DateLayout), err)
 	}
+	if draft.Type == storage.DocumentTypeCorrection && period.Regime != plan.rootRegime {
+		return storage.Document{}, &CorrectionRegimeError{
+			OriginalRegime:    plan.rootRegime,
+			OriginalIssueDate: plan.corrects.IssueDate,
+			PeriodRegime:      period.Regime,
+			IssueDate:         issueDate.Format(docpayload.DateLayout),
+		}
+	}
 	if period.Regime != draft.VATRegime {
 		return storage.Document{}, &RegimeMismatchError{Regime: period.Regime}
 	}
@@ -187,6 +242,12 @@ func (i Issuer) Issue(ctx context.Context, id uuid.UUID, now time.Time) (storage
 	customer, err := i.Customers.FindByID(ctx, draft.CustomerID)
 	if err != nil {
 		return storage.Document{}, fmt.Errorf("docissue: customer: %w", err)
+	}
+	if customer.DeletedAt != nil {
+		problems["customer_id"] = "the customer is deleted: a document for a deleted customer cannot be issued"
+	}
+	for path, reason := range exemptLines(draft) {
+		problems[path] = reason
 	}
 
 	logo, err := i.logoSHA256(ctx)
@@ -247,7 +308,13 @@ func (i Issuer) Issue(ctx context.Context, id uuid.UUID, now time.Time) (storage
 	}
 
 	issued, err := i.Documents.Issue(ctx, draft.ID, issue)
+	if errors.Is(err, storage.ErrNotADraft) {
+		return storage.Document{}, ErrDraftChanged
+	}
 	if errors.Is(err, storage.ErrConflict) {
+		// A unique index refused the display number or the correction
+		// sequence. See ErrNumberTaken for why a collision with an
+		// imported number blocks issuing until the counter is raised.
 		return storage.Document{}, ErrNumberTaken
 	}
 	if err != nil {
@@ -362,7 +429,30 @@ func (i Issuer) planCorrection(ctx context.Context, draft storage.Document) (num
 			Number:    *root.DisplayNumber,
 			IssueDate: issueDateOf(root),
 		},
+		rootRegime: root.VATRegime,
 	}, nil
+}
+
+// ReasonExemptLine is the field error of a tax exempt line under the
+// standard regime: section 14 Abs. 4 Satz 1 Nr. 8 UStG wants the
+// exemption's reason printed, and no draft field carries it yet.
+const ReasonExemptLine = "a tax exempt line (rate 0) needs an exemption reason under the standard regime, which is not supported yet"
+
+// exemptLines names every line of d at rate 0 under the standard regime.
+// A Kleinunternehmer document has rate 0 on every line by law and is not
+// affected.
+func exemptLines(d storage.Document) map[string]string {
+	problems := map[string]string{}
+	if d.VATRegime != storage.VATRegimeStandard {
+		return problems
+	}
+	for i, l := range d.Lines {
+		if l.VATRatePermyriad == 0 {
+			problems[fmt.Sprintf("lines[%d].vat_rate_permyriad", i)] = ReasonExemptLine
+		}
+	}
+
+	return problems
 }
 
 // issueDateOf is the issue date an issued document printed: the one in

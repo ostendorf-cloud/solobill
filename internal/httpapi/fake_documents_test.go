@@ -2,11 +2,14 @@ package httpapi_test
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/ostendorf-cloud/solobill/internal/docissue/docissuetest"
+	"github.com/ostendorf-cloud/solobill/internal/docpayload"
 	"github.com/ostendorf-cloud/solobill/internal/httpapi"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
@@ -25,8 +28,16 @@ import (
 // untagged scope therefore reads as uuid.Nil, a tenant no row has: the
 // fake answers no rows and refuses every write, instead of failing the
 // profile routes with ErrNoTenantScope.
+//
+// Issuing fails closed without a renderer that checks payloads. A test
+// opts in with withPayloadChecker before it builds its app; the hook
+// then sets checkingRenderer. Every other app keeps the contract's own
+// sentinel renderer (testhooks_contract_test.go), which checks nothing.
 func init() {
-	repositoryHooks = append(repositoryHooks, func(_ *testing.T, repos *httpapi.Repositories) {
+	repositoryHooks = append(repositoryHooks, func(t *testing.T, repos *httpapi.Repositories) {
+		if _, ok := payloadCheckerByTest.Load(t); ok {
+			repos.Renderer = checkingRenderer{}
+		}
 		tenant := func(ctx context.Context) (uuid.UUID, bool) {
 			if id, ok := httpapi.ScopedTenant(ctx); ok {
 				return id, true
@@ -44,6 +55,29 @@ func init() {
 		repos.Documents = store
 		repos.DocumentNumbers = store
 	})
+}
+
+// payloadCheckerByTest holds the tests whose app gets checkingRenderer.
+var payloadCheckerByTest sync.Map
+
+// withPayloadChecker makes the next app of t carry checkingRenderer.
+func withPayloadChecker(t *testing.T) {
+	t.Helper()
+
+	payloadCheckerByTest.Store(t, true)
+	t.Cleanup(func() { payloadCheckerByTest.Delete(t) })
+}
+
+// checkingRenderer stands in for the renderer of issue #74: it accepts
+// every payload in CheckPayload and renders nothing.
+type checkingRenderer struct{}
+
+func (checkingRenderer) Render(context.Context, []byte, bool) ([]byte, error) {
+	return nil, errors.New("checkingRenderer: rendering is not supported")
+}
+
+func (checkingRenderer) CheckPayload(context.Context, docpayload.FrozenPayloadV1) (map[string]string, error) {
+	return nil, nil
 }
 
 // documentStore reads the fake back out of the app.

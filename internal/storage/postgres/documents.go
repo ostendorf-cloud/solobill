@@ -302,8 +302,9 @@ func (r *documentRepository) Issue(ctx context.Context, id uuid.UUID, issue stor
 			// but is not a draft of this type: queries/documents.sql's
 			// IssueDocument's own doc comment is why this is reported as
 			// a conflict, not a not-found, unlike every other :one query
-			// in this package reaching pgx.ErrNoRows.
-			return storage.Document{}, storage.ErrConflict
+			// in this package reaching pgx.ErrNoRows. ErrNotADraft tells
+			// it apart from a unique index refusing the number.
+			return storage.Document{}, fmt.Errorf("%w: %w", storage.ErrConflict, storage.ErrNotADraft)
 		}
 
 		return storage.Document{}, mapDocumentWriteError(err)

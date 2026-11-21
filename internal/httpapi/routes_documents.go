@@ -46,6 +46,13 @@ const (
 	codeVATRegimeMissing      = "vat_regime_missing"
 	codeVATRegimeMismatch     = "vat_regime_mismatch"
 	codeCorrectionBaseChanged = "correction_base_changed"
+	// codeCorrectionRegimeChanged is a correction whose issue date lies
+	// in another VAT regime than its original invoice: an open tax
+	// question, refused until the owner decides it.
+	codeCorrectionRegimeChanged = "correction_regime_changed"
+	// codeRendererUnavailable is an issue or a correction while no
+	// renderer checks payloads: issuing fails closed.
+	codeRendererUnavailable = "renderer_unavailable"
 )
 
 const documentDateLayout = docpayload.DateLayout
@@ -396,13 +403,18 @@ func checkDiscount(p documentProblems, prefix string, percent *int32, amount *in
 // saves always has totals.
 // Under the Kleinunternehmer regime every line's rate must be 0 (section
 // 19 UStG); the path names the line, before internal/money refuses the
-// whole calculation.
+// whole calculation. Under the standard regime a rate of 0 is a tax
+// exempt line, whose exemption reason no draft field carries yet: it is
+// refused here already, so the owner never builds a draft that issuing
+// refuses with a tax_note error the owner cannot fix.
 func checkMoney(p documentProblems, d storage.Document, lines []storage.DocumentLine) *money.Result {
-	if d.VATRegime == storage.VATRegimeKleinunternehmer {
-		for i, l := range lines {
-			if l.VATRatePermyriad != 0 {
-				p.add(fmt.Sprintf("lines[%d].vat_rate_permyriad", i), "must be 0 under the Kleinunternehmer regime")
-			}
+	for i, l := range lines {
+		path := fmt.Sprintf("lines[%d].vat_rate_permyriad", i)
+		switch {
+		case d.VATRegime == storage.VATRegimeKleinunternehmer && l.VATRatePermyriad != 0:
+			p.add(path, "must be 0 under the Kleinunternehmer regime")
+		case d.VATRegime == storage.VATRegimeStandard && l.VATRatePermyriad == 0:
+			p.add(path, docissue.ReasonExemptLine)
 		}
 	}
 	if len(p) > 0 || len(lines) == 0 || d.VATRegime == "" {
@@ -467,6 +479,7 @@ func documentsError(err error) error {
 	var invalid *docissue.ValidationError
 	var mismatch *docissue.RegimeMismatchError
 	var baseChanged *docissue.BaseChangedError
+	var regimeChanged *docissue.CorrectionRegimeError
 
 	switch {
 	case errors.As(err, &invalid):
@@ -475,6 +488,21 @@ func documentsError(err error) error {
 		return api.New(http.StatusConflict, codeVATRegimeMismatch,
 			"the draft's VAT regime differs from the regime of the period on the issue date").
 			WithDetails(map[string]any{"vat_regime": string(mismatch.Regime)})
+	case errors.As(err, &regimeChanged):
+		return api.New(http.StatusConflict, codeCorrectionRegimeChanged, fmt.Sprintf(
+			"this correction would need the VAT regime of the original invoice (%s, issued %s), but the VAT regime period "+
+				"on the issue date %s is %s: a correction across a VAT regime change is not supported yet",
+			regimeChanged.OriginalRegime, regimeChanged.OriginalIssueDate, regimeChanged.IssueDate, regimeChanged.PeriodRegime)).
+			WithDetails(map[string]any{
+				"vat_regime":          string(regimeChanged.PeriodRegime),
+				"original_vat_regime": string(regimeChanged.OriginalRegime),
+				"original_issue_date": regimeChanged.OriginalIssueDate,
+				"issue_date":          regimeChanged.IssueDate,
+			})
+	case errors.Is(err, docissue.ErrRendererUnavailable):
+		return rendererUnavailable()
+	case errors.Is(err, docissue.ErrDraftChanged):
+		return api.Conflict("the draft changed or is no draft of this type any more")
 	case errors.As(err, &baseChanged):
 		return api.New(http.StatusConflict, codeCorrectionBaseChanged,
 			"another correction was issued since this draft was created; start a new correction").
@@ -935,23 +963,36 @@ func (a *app) handleDeleteDocument(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
-// issuer is the docissue.Issuer over the wired repositories. The
-// renderer of issue #74 adds its deeper printable check when it
-// implements docissue.PayloadChecker.
-func (a *app) issuer() docissue.Issuer {
-	i := docissue.Issuer{
+// rendererUnavailable is the 503 of an issue or a correction while no
+// renderer checks payloads.
+func rendererUnavailable() *api.Error {
+	return api.New(http.StatusServiceUnavailable, codeRendererUnavailable,
+		"issuing is off until the PDF renderer is wired: only the renderer can confirm that a document prints").Exposed()
+}
+
+// payloadChecker is the renderer's payload check. Issuing fails closed:
+// only the renderer (issue #74) knows whether a payload prints, and an
+// issued payload is never changed again, so without it the issue and
+// correction routes answer 503 before they lock or number anything.
+// Drafts and the preview keep working.
+func (a *app) payloadChecker() (docissue.PayloadChecker, bool) {
+	checker, ok := a.repos.Renderer.(docissue.PayloadChecker)
+
+	return checker, ok && checker != nil
+}
+
+// issuer is the docissue.Issuer over the wired repositories and the
+// renderer's check.
+func (a *app) issuer(checker docissue.PayloadChecker) docissue.Issuer {
+	return docissue.Issuer{
 		Documents:          a.repos.Documents,
 		DocumentNumbers:    a.repos.DocumentNumbers,
 		VATRegimePeriods:   a.repos.VATRegimePeriods,
 		Customers:          a.repos.Customers,
 		SellerProfileLogos: a.repos.SellerProfileLogos,
 		Files:              a.repos.Files,
+		Checker:            checker,
 	}
-	if checker, ok := a.repos.Renderer.(docissue.PayloadChecker); ok {
-		i.Checker = checker
-	}
-
-	return i
 }
 
 // handleIssueDocument answers POST /api/v1/documents/{id}/issue, owner
@@ -967,11 +1008,15 @@ func (a *app) handleIssueDocument(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
+	checker, ok := a.payloadChecker()
+	if !ok {
+		return rendererUnavailable()
+	}
 	if err := decodeEmptyBody(r); err != nil {
 		return err
 	}
 
-	issuer := a.issuer()
+	issuer := a.issuer(checker)
 	now := time.Now()
 
 	var out documentJSON
@@ -1041,6 +1086,11 @@ func (a *app) handleCreateCorrection(w http.ResponseWriter, r *http.Request) err
 	c, ok, err := a.documentsCaller(w, r, true)
 	if !ok {
 		return err
+	}
+	// A correction draft can only ever be issued, so it waits for the
+	// renderer like the issue route does.
+	if _, ok := a.payloadChecker(); !ok {
+		return rendererUnavailable()
 	}
 	id, err := documentID(r)
 	if err != nil {

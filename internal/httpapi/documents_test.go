@@ -78,9 +78,12 @@ type docFixture struct {
 	customer string
 }
 
-// newDocFixture is a Kleinunternehmer tenant, the owner's own regime.
+// newDocFixture is a Kleinunternehmer tenant, the owner's own regime,
+// in an app whose renderer checks payloads, so issuing is on.
 func newDocFixture(t *testing.T, slug string) docFixture {
 	t.Helper()
+
+	withPayloadChecker(t)
 
 	return addDocTenant(t, buildTestApp(t, 1000), slug)
 }
@@ -144,6 +147,12 @@ func (f docFixture) setProfile(t *testing.T, complete bool) {
 func (f docFixture) setPeriod(t *testing.T, validFrom string) {
 	t.Helper()
 
+	f.setPeriodRegime(t, validFrom, storage.VATRegimeKleinunternehmer)
+}
+
+func (f docFixture) setPeriodRegime(t *testing.T, validFrom string, regime storage.VATRegime) {
+	t.Helper()
+
 	periods, ok := f.app.repos.VATRegimePeriods.(*fakeVATRegimes)
 	if !ok {
 		t.Fatalf("VATRegimePeriods = %T, want the fake", f.app.repos.VATRegimePeriods)
@@ -153,7 +162,7 @@ func (f docFixture) setPeriod(t *testing.T, validFrom string) {
 		t.Fatalf("parse %q: %v", validFrom, err)
 	}
 	_, err = periods.Create(context.Background(), storage.VATRegimePeriod{
-		TenantID: f.tenant.ID, ValidFrom: from, Regime: storage.VATRegimeKleinunternehmer,
+		TenantID: f.tenant.ID, ValidFrom: from, Regime: regime,
 	})
 	// The fake holds one tenant's periods: a second tenant of the same
 	// app reuses the first one's period.
@@ -423,6 +432,7 @@ func TestIssueRefusals(t *testing.T) {
 	t.Run("no period covers today", func(t *testing.T) {
 		t.Parallel()
 
+		withPayloadChecker(t)
 		app := buildTestApp(t, 1000)
 		tenant := app.store.addTenant(storage.Tenant{Slug: "no-period", Name: "no-period"})
 		f := docFixture{app: app, tenant: tenant, owner: profileLogin(t, app, tenant, "owner@no-period.test", storage.AccountRoleOwner)}
@@ -694,4 +704,106 @@ func TestListFiltersAndDerivesTheChainStatus(t *testing.T) {
 		t.Errorf("year filter of another year = %v", got)
 	}
 	masterDataWantField(t, f.do(t, f.owner, http.MethodGet, documentsPath+"?state=cancelled", nil), "state")
+}
+
+func TestIssuingFailsClosedWithoutARenderer(t *testing.T) {
+	t.Parallel()
+
+	// No withPayloadChecker: the app carries the contract's sentinel
+	// renderer, which checks nothing.
+	f := addDocTenant(t, buildTestApp(t, 1000), "no-renderer")
+	id := f.createID(t)
+	masterDataWantStatus(t, f.do(t, f.owner, http.MethodPost, documentsPath+"/preview", f.kuBody()), http.StatusOK)
+
+	wantErrorCode(t, f.issue(t, id), http.StatusServiceUnavailable, "renderer_unavailable")
+	wantErrorCode(t, f.do(t, f.owner, http.MethodPost, documentsPath+"/"+id+"/correction", nil), http.StatusServiceUnavailable, "renderer_unavailable")
+	if got := f.counter(t, storage.DocumentTypeInvoice); got != 0 {
+		t.Errorf("counter = %d, want 0", got)
+	}
+	if locked := documentStore(t, f.app).Locked(); len(locked) != 0 {
+		t.Errorf("locked = %v, want nothing locked", locked)
+	}
+	if stored, _ := documentStore(t, f.app).Get(uuid.MustParse(id)); stored.State != storage.DocumentStateDraft {
+		t.Errorf("state = %q, want draft", stored.State)
+	}
+}
+
+func TestACorrectionOfAnOfferIsRefused(t *testing.T) {
+	t.Parallel()
+
+	f := newDocFixture(t, "offer-correction")
+	body := f.kuBody()
+	body["type"] = "offer"
+	delete(body, "service_date")
+	offer := f.create(t, f.owner, body).str(t, "id")
+	f.mustIssue(t, offer)
+
+	wantErrorCode(t, f.do(t, f.owner, http.MethodPost, documentsPath+"/"+offer+"/correction", nil), http.StatusConflict, "conflict")
+	rec := f.do(t, f.owner, http.MethodGet, documentsPath+"?type=correction", nil)
+	if docs := masterDataDecode[map[string][]any](t, rec)["documents"]; len(docs) != 0 {
+		t.Errorf("a correction of an offer was stored: %v", docs)
+	}
+}
+
+func TestATaxExemptLineUnderTheStandardRegimeIsRefusedEarly(t *testing.T) {
+	t.Parallel()
+
+	f := newDocFixture(t, "exempt")
+	standard := f.invoiceBody(0)
+	standard["vat_regime"] = "standard"
+	for _, path := range []string{documentsPath, documentsPath + "/preview"} {
+		rec := f.do(t, f.owner, http.MethodPost, path, standard)
+		masterDataWantField(t, rec, "lines[0].vat_rate_permyriad")
+		if got := masterDataDecode[masterDataErrorBody](t, rec).Error.Details["lines[0].vat_rate_permyriad"]; got != docissue.ReasonExemptLine {
+			t.Errorf("%s reason = %v, want %q", path, got, docissue.ReasonExemptLine)
+		}
+	}
+
+	// A Kleinunternehmer line at rate 0 is the law, not an exemption.
+	ku := f.kuBody()
+	ku["vat_regime"] = "kleinunternehmer"
+	masterDataWantStatus(t, f.do(t, f.owner, http.MethodPost, documentsPath+"/preview", ku), http.StatusOK)
+	f.create(t, f.owner, ku)
+}
+
+func TestIssueRefusesADeletedCustomer(t *testing.T) {
+	t.Parallel()
+
+	f := newDocFixture(t, "deleted-customer")
+	id := f.createID(t)
+	masterDataWantStatus(t, f.do(t, f.owner, http.MethodDelete, "/api/v1/customers/"+f.customer, nil), http.StatusNoContent)
+
+	got := wantErrorCode(t, f.issue(t, id), http.StatusBadRequest, "invalid_argument")
+	if reason, _ := got.Error.Details["customer_id"].(string); !strings.Contains(reason, "deleted") {
+		t.Errorf("details = %v, want customer_id naming the deleted customer", got.Error.Details)
+	}
+	if got := f.counter(t, storage.DocumentTypeInvoice); got != 0 {
+		t.Errorf("counter = %d, want 0", got)
+	}
+}
+
+func TestACorrectionAcrossARegimeChangeIsRefused(t *testing.T) {
+	t.Parallel()
+
+	f := newDocFixture(t, "regime-change")
+	original := f.createID(t)
+	f.mustIssue(t, original)
+	correction := decodeObject(t, f.do(t, f.owner, http.MethodPost, documentsPath+"/"+original+"/correction", nil)).str(t, "id")
+	// The regime changes today, after the original was issued.
+	today := docissue.IssueDate(time.Now()).Format(docpayload.DateLayout)
+	f.setPeriodRegime(t, today, storage.VATRegimeStandard)
+
+	got := wantErrorCode(t, f.issue(t, correction), http.StatusConflict, "correction_regime_changed")
+	want := map[string]any{
+		"vat_regime": "standard", "original_vat_regime": "kleinunternehmer",
+		"original_issue_date": today, "issue_date": today,
+	}
+	for key, value := range want {
+		if got.Error.Details[key] != value {
+			t.Errorf("details[%s] = %v, want %v", key, got.Error.Details[key], value)
+		}
+	}
+	if stored, _ := documentStore(t, f.app).Get(uuid.MustParse(correction)); stored.State != storage.DocumentStateDraft {
+		t.Errorf("state = %q, want the draft to stay", stored.State)
+	}
 }

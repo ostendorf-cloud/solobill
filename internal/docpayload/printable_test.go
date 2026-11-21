@@ -23,6 +23,7 @@ func TestDocumentV1LimitsArePinned(t *testing.T) {
 		"MaxFooterTextLines": docpayload.MaxFooterTextLines,
 		"MaxTextChars":       docpayload.MaxTextChars,
 		"MaxTextLines":       docpayload.MaxTextLines,
+		"MaxDataBytes":       docpayload.MaxDataBytes,
 	}
 	want := map[string]int{
 		"MaxLines":           1000,
@@ -33,6 +34,7 @@ func TestDocumentV1LimitsArePinned(t *testing.T) {
 		"MaxFooterTextLines": 4,
 		"MaxTextChars":       1000,
 		"MaxTextLines":       20,
+		"MaxDataBytes":       2 << 20,
 	}
 	for name, w := range want {
 		if got[name] != w {
@@ -118,6 +120,14 @@ func TestCheckPrintable(t *testing.T) {
 		{"payment terms over the limit", func(p *docpayload.FrozenPayloadV1) { p.PaymentTerms = long(1001) }, "payment_terms"},
 		{"tax note over its lines", func(p *docpayload.FrozenPayloadV1) { p.TaxNote = lines(21) }, "tax_note"},
 		{"invalid utf-8", func(p *docpayload.FrozenPayloadV1) { p.Customer.Address.City = "Berlin\xff" }, "customer.address.city"},
+		{"too much data although every field is in its limit", func(p *docpayload.FrozenPayloadV1) {
+			l := p.Lines[0]
+			l.Description = strings.Repeat("Ж", docpayload.MaxTextChars)
+			p.Lines = make([]docpayload.Line, docpayload.MaxLines)
+			for i := range p.Lines {
+				p.Lines[i] = l
+			}
+		}, "lines"},
 		{"too many lines", func(p *docpayload.FrozenPayloadV1) {
 			l := p.Lines[0]
 			p.Lines = make([]docpayload.Line, docpayload.MaxLines+1)

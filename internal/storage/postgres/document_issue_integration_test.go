@@ -146,12 +146,21 @@ func (e issueEnv) seedTenant(t *testing.T, prefix string) (storage.Tenant, stora
 	return tenant, customer
 }
 
+// acceptAll is the renderer's payload check as these tests assume it:
+// it accepts every payload. Issuing refuses without a check at all.
+type acceptAll struct{}
+
+func (acceptAll) CheckPayload(context.Context, docpayload.FrozenPayloadV1) (map[string]string, error) {
+	return nil, nil
+}
+
 func (e issueEnv) issuer() docissue.Issuer {
 	return docissue.Issuer{
 		Documents:        e.store.Documents(),
 		DocumentNumbers:  e.store.DocumentNumbers(),
 		VATRegimePeriods: e.store.VATRegimePeriods(),
 		Customers:        e.store.Customers(),
+		Checker:          acceptAll{},
 	}
 }
 
@@ -388,14 +397,16 @@ func TestIssue_ASecondIssueOfANumberIsRefused(t *testing.T) {
 	if err := issueAt(first.ID, 1, "RE-20260001"); err != nil {
 		t.Fatalf("first issue: %v", err)
 	}
-	if err := issueAt(second.ID, 2, "RE-20260001"); !errors.Is(err, storage.ErrConflict) {
-		t.Errorf("same display number = %v, want ErrConflict", err)
+	// A unique index refuses: ErrConflict alone, never ErrNotADraft.
+	if err := issueAt(second.ID, 2, "RE-20260001"); !errors.Is(err, storage.ErrConflict) || errors.Is(err, storage.ErrNotADraft) {
+		t.Errorf("same display number = %v, want ErrConflict from the unique index", err)
 	}
-	if err := issueAt(second.ID, 1, "RE-20260001-X"); !errors.Is(err, storage.ErrConflict) {
-		t.Errorf("same number and year = %v, want ErrConflict", err)
+	if err := issueAt(second.ID, 1, "RE-20260001-X"); !errors.Is(err, storage.ErrConflict) || errors.Is(err, storage.ErrNotADraft) {
+		t.Errorf("same number and year = %v, want ErrConflict from the unique index", err)
 	}
-	if err := issueAt(first.ID, 3, "RE-20260003"); !errors.Is(err, storage.ErrConflict) {
-		t.Errorf("issuing an issued document again = %v, want ErrConflict", err)
+	// No draft matched: ErrConflict wrapping ErrNotADraft.
+	if err := issueAt(first.ID, 3, "RE-20260003"); !errors.Is(err, storage.ErrConflict) || !errors.Is(err, storage.ErrNotADraft) {
+		t.Errorf("issuing an issued document again = %v, want ErrConflict and ErrNotADraft", err)
 	}
 	if got := e.find(t, second.ID); got.State != storage.DocumentStateDraft {
 		t.Errorf("second state = %q, want draft", got.State)
@@ -561,8 +572,8 @@ func TestDocuments_CrossTenant(t *testing.T) {
 		if _, err := docs.Issue(ctx, draftA.ID, storage.DocumentIssue{
 			Type: storage.DocumentTypeInvoice, Number: 99, NumberYear: 2026, DisplayNumber: "RE-20260099",
 			IssuedAt: issuedAtForTest(2026), Payload: payload, PayloadSHA256: hash,
-		}); !errors.Is(err, storage.ErrConflict) {
-			t.Errorf("Issue = %v, want ErrConflict", err)
+		}); !errors.Is(err, storage.ErrNotADraft) {
+			t.Errorf("Issue = %v, want ErrNotADraft", err)
 		}
 
 		// Every call above matches zero rows and raises no SQL error, so

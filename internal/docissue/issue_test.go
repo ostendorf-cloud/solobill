@@ -137,6 +137,7 @@ func newFixture(t *testing.T, regime storage.VATRegime) *fixture {
 		DocumentNumbers:  f.store,
 		VATRegimePeriods: f.periods,
 		Customers:        &customers{rows: map[uuid.UUID]storage.Customer{f.customer.ID: f.customer}},
+		Checker:          passChecker{},
 	}
 
 	return f
@@ -657,6 +658,169 @@ func (f files) FindByID(_ context.Context, id uuid.UUID) (storage.File, error) {
 }
 
 func (f files) FindBySHA256(context.Context, string) ([]storage.File, error) { return nil, nil }
+
+// passChecker is a PayloadChecker that accepts every payload, the
+// renderer's check as the tests assume it.
+type passChecker struct{}
+
+func (passChecker) CheckPayload(context.Context, docpayload.FrozenPayloadV1) (map[string]string, error) {
+	return nil, nil
+}
+
+func TestIssueFailsClosedWithoutARendererCheck(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, storage.VATRegimeKleinunternehmer)
+	f.issuer.Checker = nil
+	draft := f.draft(t, storage.Document{})
+
+	if _, err := f.issuer.Issue(f.ctx, draft.ID, now); !errors.Is(err, docissue.ErrRendererUnavailable) {
+		t.Fatalf("Issue() error = %v, want ErrRendererUnavailable", err)
+	}
+	if locked := f.store.Locked(); len(locked) != 0 {
+		t.Errorf("locked = %v, want nothing locked before the renderer check", locked)
+	}
+	if got := f.store.Counter(f.tenant, storage.DocumentTypeInvoice, 2026); got != 0 {
+		t.Errorf("counter = %d, want 0", got)
+	}
+	if stored, _ := f.store.Get(draft.ID); stored.State != storage.DocumentStateDraft {
+		t.Errorf("state = %q, want draft", stored.State)
+	}
+}
+
+func TestIssueRefusesADeletedCustomer(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, storage.VATRegimeKleinunternehmer)
+	draft := f.draft(t, storage.Document{})
+	deleted := f.customer
+	deleted.DeletedAt = ptr(now.Add(-time.Hour))
+	f.issuer.Customers = &customers{rows: map[uuid.UUID]storage.Customer{deleted.ID: deleted}}
+
+	_, err := f.issuer.Issue(f.ctx, draft.ID, now)
+	var invalid *docissue.ValidationError
+	if !errors.As(err, &invalid) || !strings.Contains(invalid.Details["customer_id"], "deleted") {
+		t.Fatalf("Issue() error = %v, want a customer_id field error naming the deleted customer", err)
+	}
+	if got := f.store.Counter(f.tenant, storage.DocumentTypeInvoice, 2026); got != 0 {
+		t.Errorf("counter = %d, want 0", got)
+	}
+}
+
+func TestIssueNamesATaxExemptLineUnderTheStandardRegime(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, storage.VATRegimeStandard)
+	// Put, not Create: the draft routes refuse such a line already.
+	draft := f.store.Put(storage.Document{
+		TenantID: f.tenant, Type: storage.DocumentTypeInvoice, State: storage.DocumentStateDraft,
+		CustomerID: f.customer.ID, VATRegime: storage.VATRegimeStandard, ServiceDate: ptr(day("2026-11-01")),
+		Lines: []storage.DocumentLine{
+			{Description: "Consulting", QuantityThousandths: 1000, Unit: "hour", UnitPriceCents: 9500, VATRatePermyriad: 1900},
+			{Description: "Exempt", QuantityThousandths: 1000, Unit: "piece", UnitPriceCents: 100},
+		},
+	})
+
+	_, err := f.issuer.Issue(f.ctx, draft.ID, now)
+	var invalid *docissue.ValidationError
+	if !errors.As(err, &invalid) || invalid.Details["lines[1].vat_rate_permyriad"] != docissue.ReasonExemptLine {
+		t.Fatalf("Issue() error = %v, want lines[1].vat_rate_permyriad: %s", err, docissue.ReasonExemptLine)
+	}
+	if _, ok := invalid.Details["lines[0].vat_rate_permyriad"]; ok {
+		t.Errorf("details = %v, want only the exempt line named", invalid.Details)
+	}
+}
+
+func TestCorrectionAcrossARegimeChangeIsRefused(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, storage.VATRegimeKleinunternehmer)
+	original, err := f.issuer.Issue(f.ctx, f.draft(t, storage.Document{}).ID, now)
+	if err != nil {
+		t.Fatalf("Issue(original) error = %v", err)
+	}
+	f.periods.list = append(f.periods.list, storage.VATRegimePeriod{
+		ID: uuid.New(), TenantID: f.tenant, ValidFrom: day("2026-12-01"), Regime: storage.VATRegimeStandard,
+	})
+	f.profile.VATID = ptr("DE123456789")
+
+	for _, regime := range []storage.VATRegime{storage.VATRegimeKleinunternehmer, storage.VATRegimeStandard} {
+		draft := f.correctionDraft(t, original.ID, original, 8000)
+		// The draft keeps the original's regime, or the owner set the
+		// period's regime: both are refused with the specific error.
+		stored, _ := f.store.Get(draft.ID)
+		stored.VATRegime = regime
+		f.store.Put(stored)
+
+		_, err := f.issuer.Issue(f.ctx, draft.ID, day("2026-12-02").Add(10*time.Hour))
+		var changed *docissue.CorrectionRegimeError
+		if !errors.As(err, &changed) {
+			t.Fatalf("Issue(correction, draft %s) error = %v, want a CorrectionRegimeError", regime, err)
+		}
+		if changed.OriginalRegime != storage.VATRegimeKleinunternehmer || changed.PeriodRegime != storage.VATRegimeStandard ||
+			changed.OriginalIssueDate != "2026-11-20" || changed.IssueDate != "2026-12-02" {
+			t.Errorf("error = %+v, want both regimes and both dates", changed)
+		}
+	}
+}
+
+func TestACorrectionOfAnOfferIsRefused(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, storage.VATRegimeKleinunternehmer)
+	offer, err := f.issuer.Issue(f.ctx, f.draft(t, storage.Document{Type: storage.DocumentTypeOffer}).ID, now)
+	if err != nil {
+		t.Fatalf("Issue(offer) error = %v", err)
+	}
+	if _, ok := docissue.RootOf(offer); ok {
+		t.Fatalf("RootOf(offer) = true, want an offer to belong to no chain")
+	}
+
+	// A correction draft naming an offer, put past the routes.
+	seq := int32(0)
+	draft := f.store.Put(storage.Document{
+		TenantID: f.tenant, Type: storage.DocumentTypeCorrection, State: storage.DocumentStateDraft,
+		CustomerID: f.customer.ID, VATRegime: storage.VATRegimeKleinunternehmer,
+		CorrectsDocumentID: &offer.ID, CorrectionBaseID: &offer.ID, CorrectionBaseSeq: &seq,
+		Lines: []storage.DocumentLine{{Description: "Consulting", QuantityThousandths: 1000, Unit: "hour", UnitPriceCents: 9500}},
+	})
+	if _, err := f.issuer.Issue(f.ctx, draft.ID, now); err == nil {
+		t.Fatalf("a correction of an offer was issued")
+	}
+}
+
+func TestIssueDateAcrossDaylightSavingTime(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want string
+	}{
+		{"winter time, one hour ahead of UTC", time.Date(2026, 3, 28, 23, 30, 0, 0, time.UTC), "2026-03-29"},
+		{"night of the switch to summer time", time.Date(2026, 3, 29, 0, 30, 0, 0, time.UTC), "2026-03-29"},
+		{"summer time, two hours ahead", time.Date(2026, 3, 29, 22, 30, 0, 0, time.UTC), "2026-03-30"},
+		{"last evening of summer time", time.Date(2026, 10, 24, 21, 30, 0, 0, time.UTC), "2026-10-24"},
+		{"summer time, just after midnight", time.Date(2026, 10, 24, 23, 30, 0, 0, time.UTC), "2026-10-25"},
+		{"after the switch back to winter time", time.Date(2026, 10, 25, 22, 30, 0, 0, time.UTC), "2026-10-25"},
+		{"winter time, just after midnight", time.Date(2026, 10, 25, 23, 30, 0, 0, time.UTC), "2026-10-26"},
+		{"new year in winter time", time.Date(2026, 12, 31, 23, 0, 0, 0, time.UTC), "2027-01-01"},
+		{"old year one second before", time.Date(2026, 12, 31, 22, 59, 59, 0, time.UTC), "2026-12-31"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := docissue.IssueDate(tt.now)
+			if got.Format(docpayload.DateLayout) != tt.want {
+				t.Errorf("IssueDate(%s) = %s, want %s", tt.now, got.Format(docpayload.DateLayout), tt.want)
+			}
+			if docissue.IssuedAt(tt.now).Year() != got.Year() {
+				t.Errorf("IssuedAt(%s).Year() = %d, want the number year %d", tt.now, docissue.IssuedAt(tt.now).Year(), got.Year())
+			}
+		})
+	}
+}
 
 // checker is a PayloadChecker that refuses every payload.
 type checker struct{}

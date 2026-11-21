@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -373,15 +374,16 @@ func (s *Store) Issue(ctx context.Context, id uuid.UUID, issue storage.DocumentI
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	notADraft := fmt.Errorf("%w: %w", storage.ErrConflict, storage.ErrNotADraft)
 	d, err := s.find(ctx, id)
 	if errors.Is(err, storage.ErrNotFound) {
-		return storage.Document{}, storage.ErrConflict
+		return storage.Document{}, notADraft
 	}
 	if err != nil {
 		return storage.Document{}, err
 	}
 	if d.State != storage.DocumentStateDraft || d.Type != issue.Type {
-		return storage.Document{}, storage.ErrConflict
+		return storage.Document{}, notADraft
 	}
 	isCorrection := issue.Type == storage.DocumentTypeCorrection
 	if !isCorrection && issue.IssuedAt.Year() != issue.NumberYear {

@@ -213,9 +213,10 @@ type DocumentRepository interface {
 	SellerProfileForIssue(ctx context.Context) (SellerProfile, error)
 
 	// Issue moves the draft id to issued in one statement, writing
-	// everything DocumentIssue holds. ErrConflict when id is not a draft
-	// of issue.Type in this tenant, or when the display number or the
-	// correction sequence is taken already (the unique indexes).
+	// everything DocumentIssue holds. ErrConflict wrapping ErrNotADraft
+	// when id is not a draft of issue.Type in this tenant; ErrConflict
+	// alone when the display number or the correction sequence is taken
+	// already (the unique indexes).
 	//
 	// The caller locks the draft with Lock first, validates, and only
 	// then allocates the number of an invoice or an offer with

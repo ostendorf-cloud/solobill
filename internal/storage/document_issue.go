@@ -1,6 +1,16 @@
 package storage
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrNotADraft is what DocumentRepository.Issue wraps together with
+// ErrConflict when its write matched no draft of the given type: the
+// row is issued already, has another type, or is gone. A unique index
+// refusing the display number or the correction sequence is ErrConflict
+// alone, so a caller can tell the two apart.
+var ErrNotADraft = errors.New("not a draft of this type")
 
 // DocumentIssue is everything DocumentRepository.Issue writes when it
 // moves a draft to issued. Issue #70 (I4).
