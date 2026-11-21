@@ -20,6 +20,7 @@ import { useRouter } from 'vue-router'
 import { apiClient } from '../api'
 import {
   assetFieldErrors,
+  germanYear,
   GROUPS,
   isExpenseTaken,
   isRegimeMissing,
@@ -50,7 +51,8 @@ const { notify } = useToasts()
 const abort = new AbortController()
 onBeforeUnmount(() => abort.abort())
 
-const thisYear = new Date().getFullYear()
+// The payment year starts at the current German year, like the server's.
+const thisYear = germanYear()
 const year = ref(String(thisYear))
 const expenses = ref<Expense[]>([])
 const periods = ref<VatPeriod[]>([])

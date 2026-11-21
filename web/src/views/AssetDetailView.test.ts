@@ -1,5 +1,5 @@
 import { ApiError, ErrorCode, createGovueI18n, useToasts } from '@ostendorf-cloud/govue'
-import { render, screen, within } from '@testing-library/vue'
+import { fireEvent, render, screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
@@ -16,7 +16,7 @@ vi.mock('../api', () => ({
 }))
 
 const NOTE_EN =
-  'The thresholds for low value assets (800 EUR) and the pool (250 to 1,000 EUR) are applied to the gross price for a small business owner. This reading is not verified. Check it with your tax adviser.'
+  'For a small business owner the limits for low value assets (800 EUR), the pool (250 to 1,000 EUR) and the immediate expense (250 EUR) are applied to the gross price. This reading is not verified. Check it with your tax adviser.'
 
 // The clock is fixed: 21 November 2026, so 2026 is the open year.
 const NOW = new Date('2026-11-21T10:00:00Z')
@@ -346,7 +346,11 @@ describe('AssetDetailView', () => {
       const dialog = await screen.findByRole('dialog')
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-      expect(await within(dialog).findByText(/can no longer be edited/)).toBeVisible()
+      expect(
+        await within(dialog).findByText(
+          'The asset can no longer be edited, or the new date lies in a year that has ended. Record a disposal for a later change.',
+        ),
+      ).toBeVisible()
       expect(within(dialog).queryByText(/An asset exists for this expense/)).toBeNull()
       expect(screen.queryByText(/Something went wrong/)).toBeNull()
     })
@@ -513,6 +517,24 @@ describe('AssetDetailView', () => {
 
       await vi.waitFor(() => expect(me.value).toBeNull())
       await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+    })
+
+    it('sends nothing when the disposal form is submitted without a session', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      await renderView()
+      const dialog = await openDisposal(user)
+
+      me.value = null
+      // The submit event reaches confirmDisposal() without the disabled button.
+      const form = dialog.querySelector('form')
+      expect(form).not.toBeNull()
+      await fireEvent.submit(form as HTMLFormElement)
+
+      expect(apiClient.post).not.toHaveBeenCalled()
+      expect(
+        (await within(dialog).findAllByText(/The session could not be loaded/)).length,
+      ).toBeGreaterThan(0)
     })
 
     it('does not send without a session', async () => {

@@ -49,6 +49,9 @@ const disposalError = ref('')
 const disposing = ref(false)
 
 const isOwner = computed(() => me.value?.role === 'owner')
+// Computed from the loaded asset and the clock when the asset loads, not
+// ticking over New Year. That is fine: it is only a hint, and the server's 409
+// is the authority.
 const block = computed(() => (asset.value ? editBlock(asset.value) : null))
 const lineLabels = computed(
   () => new Map(categories.value.map((c) => [c.key, c.label_de] as const)),

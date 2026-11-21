@@ -16,9 +16,9 @@ vi.mock('../api', () => ({
 }))
 
 const NOTE_EN =
-  'The thresholds for low value assets (800 EUR) and the pool (250 to 1,000 EUR) are applied to the gross price for a small business owner. This reading is not verified. Check it with your tax adviser.'
+  'For a small business owner the limits for low value assets (800 EUR), the pool (250 to 1,000 EUR) and the immediate expense (250 EUR) are applied to the gross price. This reading is not verified. Check it with your tax adviser.'
 const NOTE_DE =
-  'Die Grenzen für geringwertige Wirtschaftsgüter (800 EUR) und den Sammelposten (250 bis 1.000 EUR) werden bei Kleinunternehmern auf den Bruttopreis angewendet. Diese Auslegung ist nicht geprüft. Klären Sie sie mit Ihrer Steuerberatung.'
+  'Die Grenzen für geringwertige Wirtschaftsgüter (800 EUR), den Sammelposten (250 bis 1.000 EUR) und den Sofortabzug (250 EUR) werden bei Kleinunternehmern auf den Bruttopreis angewendet. Diese Auslegung ist nicht geprüft. Klären Sie sie mit Ihrer Steuerberatung.'
 
 const laptop = {
   id: 'a-1',
@@ -130,6 +130,11 @@ async function choose(label: RegExp | string, option: string): Promise<void> {
   await vi.waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
 }
 
+interface Deferred {
+  resolve: (value: unknown) => void
+  reject: (error: unknown) => void
+}
+
 const LAPTOP_OPTION = '2026-03-10 Laptop Shop 1,783.81 EUR'
 
 /** openCreate opens the dialog and picks the laptop expense. */
@@ -223,30 +228,52 @@ describe('AssetsView', () => {
     await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
   })
 
-  it('ignores a late answer of an older request', async () => {
-    const calls: { resolve: (value: unknown) => void; reject: (error: unknown) => void }[] = []
-    vi.mocked(apiClient.get).mockImplementation(
-      () =>
-        new Promise((resolve, reject) => {
-          calls.push({ resolve, reject })
-        }),
-    )
+  // The owner sees Create during the first load, and a save reloads the list:
+  // two loads are pending, and the OLDER one settles last.
+  it.each([
+    ['a stale list', (c: Deferred) => c.resolve({ assets: [phone] })],
+    ['a stale failure', (c: Deferred) => c.reject(apiError(500, ErrorCode.internal))],
+    ['a stale 401', (c: Deferred) => c.reject(apiError(401, ErrorCode.unauthenticated))],
+  ])('ignores %s that settles after the newer load', async (_name, settleStale) => {
+    const loads: Deferred[] = []
+    mockApi()
+    const base = vi.mocked(apiClient.get).getMockImplementation()
+    if (!base) {
+      throw new Error('mockApi installed no implementation')
+    }
+    vi.mocked(apiClient.get).mockImplementation((path: string, options?: unknown) => {
+      if (path === '/assets') {
+        return new Promise((resolve, reject) => {
+          loads.push({ resolve, reject })
+        })
+      }
+      return base(path, options as never)
+    })
+    vi.mocked(apiClient.post).mockResolvedValue(laptop)
+    const user = userEvent.setup()
     const { router } = renderView()
     const push = vi.spyOn(router, 'push')
-    await vi.waitFor(() => expect(calls).toHaveLength(1))
-    calls[0]?.reject(apiError(500, ErrorCode.internal))
-    await userEvent.setup().click(await screen.findByRole('button', { name: 'Try again' }))
-    await vi.waitFor(() => expect(calls).toHaveLength(2))
-    calls[1]?.resolve({ assets: [laptop] })
-    expect(await screen.findByRole('rowheader', { name: 'Laptop' })).toBeVisible()
+    await vi.waitFor(() => expect(loads).toHaveLength(1))
 
-    // The first request had failed long ago; a duplicate late 401 changes nothing.
-    calls[0]?.reject(apiError(401, ErrorCode.unauthenticated))
+    const dialog = await openCreateAndPick(user)
+    await user.type(within(dialog).getByLabelText(/^Useful life/), '36')
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    await vi.waitFor(() => expect(loads).toHaveLength(2))
+
+    loads[1]?.resolve({ assets: [laptop] })
+    expect(await screen.findByRole('rowheader', { name: 'Laptop' })).toBeVisible()
+    const stale = loads[0]
+    if (!stale) {
+      throw new Error('the first load is missing')
+    }
+    settleStale(stale)
     await new Promise((resolve) => setTimeout(resolve, 20))
 
+    expect(screen.getByRole('rowheader', { name: 'Laptop' })).toBeVisible()
+    expect(screen.queryByRole('rowheader', { name: 'Phone' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
     expect(me.value).not.toBeNull()
     expect(push).not.toHaveBeenCalled()
-    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('cancels the load when the view goes away and ignores a late 401', async () => {
@@ -438,6 +465,56 @@ describe('AssetsView', () => {
       expect(save).toBeDisabled()
       await user.click(save)
       expect(apiClient.post).not.toHaveBeenCalled()
+    })
+
+    it('sends nothing when the form is submitted without a session', async () => {
+      mockApi()
+      const user = userEvent.setup()
+      renderView()
+      const dialog = await openCreateAndPick(user)
+      await user.type(within(dialog).getByLabelText(/^Useful life/), '36')
+
+      me.value = null
+      // The submit event reaches save() without the disabled button.
+      const form = dialog.querySelector('form')
+      expect(form).not.toBeNull()
+      await fireEvent.submit(form as HTMLFormElement)
+
+      expect(apiClient.post).not.toHaveBeenCalled()
+      expect(
+        (await within(dialog).findAllByText(/The session could not be loaded/)).length,
+      ).toBeGreaterThan(0)
+    })
+
+    it('cancels a running save when the view goes away and ignores a late 401', async () => {
+      mockApi()
+      let reject: (error: unknown) => void = () => {}
+      vi.mocked(apiClient.post).mockImplementation(
+        () =>
+          new Promise((_resolve, rej) => {
+            reject = rej
+          }),
+      )
+      const user = userEvent.setup()
+      const { router, unmount } = renderView()
+      const dialog = await openCreateAndPick(user)
+      await user.type(within(dialog).getByLabelText(/^Useful life/), '36')
+      await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await vi.waitFor(() => expect(apiClient.post).toHaveBeenCalled())
+      const signal = vi.mocked(apiClient.post).mock.calls[0]?.[2]?.signal
+      expect(signal).toBeInstanceOf(AbortSignal)
+      expect(signal?.aborted).toBe(false)
+
+      const push = vi.spyOn(router, 'push')
+      const replace = vi.spyOn(router, 'replace')
+      unmount()
+      expect(signal?.aborted).toBe(true)
+      reject(apiError(401, ErrorCode.unauthenticated))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(me.value).not.toBeNull()
+      expect(push).not.toHaveBeenCalled()
+      expect(replace).not.toHaveBeenCalled()
     })
 
     it('hides the useful life for a method that has none', async () => {

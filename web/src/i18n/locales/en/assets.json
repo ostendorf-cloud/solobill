@@ -12,7 +12,7 @@
   "open": "Open",
   "openFor": "Open {name}",
   "back": "Back to the assets",
-  "unverifiedNote": "The thresholds for low value assets (800 EUR) and the pool (250 to 1,000 EUR) are applied to the gross price for a small business owner. This reading is not verified. Check it with your tax adviser.",
+  "unverifiedNote": "For a small business owner the limits for low value assets (800 EUR), the pool (250 to 1,000 EUR) and the immediate expense (250 EUR) are applied to the gross price. This reading is not verified. Check it with your tax adviser.",
   "bookValueMissing": "The list does not show a current book value. The schedule of an asset shows the book value of every year.",
   "columns": {
     "name": "Name",
@@ -91,7 +91,7 @@
     "cancel": "Cancel",
     "saved": "The asset is saved.",
     "saveError": "The asset could not be saved. Check the marked fields.",
-    "conflictEdit": "The asset can no longer be edited: its first schedule year has ended or it is disposed. Record a disposal instead.",
+    "conflictEdit": "The asset can no longer be edited, or the new date lies in a year that has ended. Record a disposal for a later change.",
     "expenseTaken": "An asset exists for this expense already."
   },
   "disposal": {

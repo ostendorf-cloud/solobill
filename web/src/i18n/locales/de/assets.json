@@ -12,7 +12,7 @@
   "open": "Öffnen",
   "openFor": "{name} öffnen",
   "back": "Zurück zu den Anlagegütern",
-  "unverifiedNote": "Die Grenzen für geringwertige Wirtschaftsgüter (800 EUR) und den Sammelposten (250 bis 1.000 EUR) werden bei Kleinunternehmern auf den Bruttopreis angewendet. Diese Auslegung ist nicht geprüft. Klären Sie sie mit Ihrer Steuerberatung.",
+  "unverifiedNote": "Die Grenzen für geringwertige Wirtschaftsgüter (800 EUR), den Sammelposten (250 bis 1.000 EUR) und den Sofortabzug (250 EUR) werden bei Kleinunternehmern auf den Bruttopreis angewendet. Diese Auslegung ist nicht geprüft. Klären Sie sie mit Ihrer Steuerberatung.",
   "bookValueMissing": "Die Liste zeigt keinen aktuellen Buchwert. Der Plan eines Anlageguts zeigt den Buchwert jedes Jahres.",
   "columns": {
     "name": "Name",
@@ -91,7 +91,7 @@
     "cancel": "Abbrechen",
     "saved": "Das Anlagegut ist gespeichert.",
     "saveError": "Das Anlagegut konnte nicht gespeichert werden. Prüfen Sie die markierten Felder.",
-    "conflictEdit": "Das Anlagegut kann nicht mehr bearbeitet werden: Sein erstes Planjahr ist abgelaufen oder es ist abgegangen. Erfassen Sie stattdessen einen Abgang.",
+    "conflictEdit": "Das Anlagegut kann nicht mehr bearbeitet werden, oder das neue Datum liegt in einem abgelaufenen Jahr. Erfassen Sie für eine spätere Änderung einen Abgang.",
     "expenseTaken": "Für diese Ausgabe gibt es schon ein Anlagegut."
   },
   "disposal": {
