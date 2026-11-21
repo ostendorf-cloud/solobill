@@ -468,10 +468,11 @@ A URL whose port cannot be read as a number at all, a `?port=abc` query paramete
 non-numeric host-embedded port such as `host:abc`, fails on its own guard instead, naming the
 values key, where the bad port was found (the query parameter or the host part) and that a
 URL's port must be digits only. The message prints neither the URL nor the bad value, since the
-URL may carry a password. Left to the two guards above, a non-numeric query parameter still failed the
-render, but with a message built for a numeric mismatch ("set `networkPolicy.egress.postgres.port`
-to `abc`"); a non-numeric host-embedded port crashed inside `urlParse` itself, aborting the whole
-render with a raw Go template error instead of a message this chart authored.
+URL may carry a password. Left to the two mismatch guards above, a non-numeric query parameter
+still failed the render, but with a message built for a numeric mismatch ("set
+`networkPolicy.egress.postgres.port` to `abc`"); a non-numeric host-embedded port crashed inside
+`urlParse` itself, aborting the whole render with a raw Go template error instead of a message
+this chart authored.
 
 The two mismatch guards compare the ports as integers, so `05432` and `5432` are the same port:
 a leading zero in a URL no longer fails the render with advice to set the policy port to
@@ -484,7 +485,36 @@ unquoted `port: 05432` is read as an octal number by YAML 1.1, here `2842`, and 
 accepts it: against a URL naming `5432` the guard then fails with "policy port is 2842". Write
 the plain number, `5432`, in a values file.
 
-A further guard is not about a URL at all: `service.port` and `adminPort` select two different
+The same helper also checks the raw URL before `urlParse` reads it, because `urlParse` aborts the
+render on a URL that Go's `net/url` rejects and prints the whole URL, user info included. A
+URL may hold only the characters RFC 3986 allows (letters, digits, `-._~`, the reserved set
+`:/?#[]@!$&'()*+,;=`, and `%` followed by two hex digits). Whitespace, control characters,
+`^ { } | < > "` a backtick, a backslash and anything outside ASCII fail the render on their own
+guard, which names only the values key (`config.databaseUrl`, `config.oidc.issuerUrl` or
+`objectStore.endpoint`) and never the URL. The same guard rejects a scheme part that is not a
+scheme, a scheme-relative URL (`//host`), a bracket in the user info, a bracketed host that is
+not a valid IPv6 literal, and a `%` in the host other than an IPv6 zone. The host port is read
+after the first colon of the host, as `net/url` does, so a second colon in the host or the port
+is a non-numeric port. An IPv4 address in brackets, a percent-encoded non-ASCII host name, a
+scheme-relative URL and a `postgres://` URL with a second colon in the host are rejected as
+well. None of them is a usable URL here.
+
+The guards were run over 2610 renders of the three keys with a fake password (punctuation,
+control characters, percent escapes, IPv6 forms, scheme-relative and opaque URLs, long values),
+and none printed the URL. That is a test, not a proof: a shape that none of those renders hit
+could still abort in `urlParse` and print it. A password with an unencoded `/`, `?`, `#` or `@`
+is not a valid URL and is out of scope: the text after that character is read as part of the host
+or the port. Percent-encode such a password, or keep it out of the URL, as the chart already
+asks for `config.databaseUrl`.
+
+`objectStore.endpoint`'s shape (`http` or `https`, host only, no user info, path, query or
+fragment) is a `fail` guard in `templates/_objectstore.tpl`, not a pattern in
+`values.schema.json`: helm prints the rejected value in a schema pattern error, user info
+included. The guard names only the key. No schema pattern applies to a URL value, so no schema
+error carries one. `config.passkey.origins` items keep a `^https://` pattern: they are origins,
+never carry credentials, and a rejected one is printed in the schema error.
+
+The last guard is not about a URL at all: `service.port` and `adminPort` select two different
 listeners, and the public ingress rule above, unscoped by default, renders on whichever port
 number `service.port` names. Equal, that same rule now also covers `adminPort`, admitting it
 from any source regardless of `networkPolicy.ingress.admin` and inverting, silently, the
@@ -693,7 +723,10 @@ This chart is verified with:
   `NetworkPolicy` with its egress half off
 - `helm template`, over a must-fail set: one case per `fail` and `required` guard in the
   chart's templates, asserting both that the render fails and that it fails with that guard's
-  own message. This set is deliberately not run through `helm lint`: a template's `fail` or
+  own message. Two guards have no case there, each covered by `helm-unittest` instead: the
+  empty `migrations` directory (not a value) and `replicaCount` above 1 (the schema refuses it
+  first). Every case also asserts that its fake password is absent from the error text. This
+  set is deliberately not run through `helm lint`: a template's `fail` or
   `required` call is only logged by `helm lint`, which still reports no failed chart and exits
   zero, so a lint pass proves nothing about a guard built on either
 - `kubeconform`, against every one of those rendered manifests. The default schema set

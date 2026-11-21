@@ -908,6 +908,158 @@ tests:
             port must be digits only. Fix the port after the host's ":", or remove
             it so this chart falls back to the scheme's own default port.
 
+  # A URL that net/url rejects aborts the render inside urlParse, and that
+  # error prints the whole URL. solobill.urlPort rejects the three shapes
+  # before urlParse, naming only the values key. The exact errorMessage
+  # proves that no part of the URL, the fake token below included, is printed.
+  - it: fails config.databaseUrl with a bad percent escape without printing it
+    set:
+      config:
+        databaseUrl: "postgres://u:s3cr3tTOKEN@postgres.example.svc:5432/solobill?x=%zz"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
+  - it: fails config.databaseUrl with a percent sign at the end without printing it
+    set:
+      config:
+        databaseUrl: "postgres://u:s3cr3tTOKEN@postgres.example.svc:5432/solobill%4"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
+  - it: fails config.databaseUrl with a space in the host without printing it
+    set:
+      config:
+        databaseUrl: "postgres://u:s3cr3tTOKEN@post gres.example.svc:5432/solobill"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
+  - it: fails config.databaseUrl with a control character without printing it
+    set:
+      config:
+        databaseUrl: "postgres://u:s3cr3tTOKEN@postgres.example.svc:5432/solobill\u0001"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
+  - it: accepts a valid percent escape in config.databaseUrl
+    set:
+      config:
+        databaseUrl: "postgres://u:p%40ss@postgres.example.svc:5432/solobill"
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: reads the port of a config.databaseUrl that carries user info
+    set:
+      config:
+        databaseUrl: "postgres://u:p@host:5432/db?sslmode=disable"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.egress[1].ports[0].port
+          value: 5432
+
+  - it: fails on the port of a config.databaseUrl that carries user info, proving the port is read
+    set:
+      config:
+        databaseUrl: "postgres://u:p@host:6432/db?sslmode=disable"
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.databaseUrl names port 6432 but networkPolicy.egress.postgres.port is
+            5432: with networkPolicy.enabled and networkPolicy.egress.enabled both true,
+            this policy would deny the one connection this application cannot start
+            without. Set networkPolicy.egress.postgres.port to 6432, or point
+            config.databaseUrl at port 5432.
+
+  - it: fails config.oidc.issuerUrl with a bad percent escape without printing it
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://u:s3cr3tTOKEN@idp.example.com/realms/%zz"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.oidc.issuerUrl is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
+  - it: fails config.oidc.issuerUrl with a space in the host without printing it
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://u:s3cr3tTOKEN@idp .example.com/realms/solobill"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.oidc.issuerUrl is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
+  - it: fails config.oidc.issuerUrl with a control character without printing it
+    set:
+      existingSecret:
+        oidcClientSecretKey: OIDC_CLIENT_SECRET
+      config:
+        oidc:
+          issuerUrl: "https://u:s3cr3tTOKEN@idp.example.com/realms/solobill\u0001"
+          clientId: solobill
+          redirectUrl: https://solobill.example.com/api/v1/auth/oidc/callback
+          defaultTenantSlug: acme
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            config.oidc.issuerUrl is not a valid URL: it holds a character or shape a
+            URL may not have: whitespace, a control character, a percent sign not
+            followed by two hex digits, a non-ASCII character, one of ^ { } | < > `
+            the double quote or the backslash, a misplaced bracket, a percent escape
+            in the host or a missing scheme. Fix it. The value is not printed here
+            because a URL may carry a password.
+
   # solobill.urlPort is the same helper for config.oidc.issuerUrl as it is for
   # config.databaseUrl above: a change that broke the guard for one path and
   # not the other would otherwise go unnoticed, since the two tests above only
