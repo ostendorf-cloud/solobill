@@ -23,6 +23,25 @@ type Account struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type Asset struct {
+	ID                    uuid.UUID
+	TenantID              uuid.UUID
+	Name                  string
+	AcquiredOn            pgtype.Date
+	CostBasisCents        int64
+	Method                string
+	AssetGroup            string
+	UsefulLifeMonths      pgtype.Int4
+	ExpenseID             pgtype.UUID
+	OpeningBookValueCents pgtype.Int8
+	OpeningBookValueYear  pgtype.Int4
+	DisposedOn            pgtype.Date
+	DisposalProceedsCents pgtype.Int8
+	Imported              bool
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
 type CatalogueItem struct {
 	ID             uuid.UUID
 	TenantID       uuid.UUID
