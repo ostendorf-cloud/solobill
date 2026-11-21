@@ -89,3 +89,59 @@ func TestMapWriteError(t *testing.T) {
 		})
 	}
 }
+
+// TestMapLedgerAndDocumentWriteError pins the one difference between the two
+// write mappings: a foreign key violation is storage.ErrConflict for a
+// document and passes through with its SQLSTATE for an expense or other
+// income row. It runs without a database, because the integration tests that
+// read the SQLSTATE are the only other guard and they skip without one.
+func TestMapLedgerAndDocumentWriteError(t *testing.T) {
+	t.Parallel()
+
+	wrap := func(code string) error {
+		return fmt.Errorf("insert: %w", &pgconn.PgError{Code: code})
+	}
+
+	tests := []struct {
+		code             string
+		ledgerConflict   bool
+		documentConflict bool
+	}{
+		{code: pgUniqueViolation, ledgerConflict: true, documentConflict: true},
+		{code: pgIntegrityConstraintViolationClass, ledgerConflict: true, documentConflict: true},
+		{code: pgForeignKeyViolation, ledgerConflict: false, documentConflict: true},
+		{code: "23514", ledgerConflict: false, documentConflict: false},
+		{code: "42501", ledgerConflict: false, documentConflict: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			t.Parallel()
+
+			cases := map[string]struct {
+				mapFn    func(error) error
+				conflict bool
+			}{
+				"ledger":   {mapFn: mapLedgerWriteError, conflict: tt.ledgerConflict},
+				"document": {mapFn: mapDocumentWriteError, conflict: tt.documentConflict},
+			}
+
+			for name, tc := range cases {
+				got := tc.mapFn(wrap(tt.code))
+
+				if errors.Is(got, storage.ErrConflict) != tc.conflict {
+					t.Errorf("%s mapping of %s = %v, want conflict %v", name, tt.code, got, tc.conflict)
+				}
+
+				var pgErr *pgconn.PgError
+				if !tc.conflict && (!errors.As(got, &pgErr) || pgErr.Code != tt.code) {
+					t.Errorf("%s mapping of %s = %v, want the raw SQLSTATE", name, tt.code, got)
+				}
+			}
+		})
+	}
+
+	if mapLedgerWriteError(nil) != nil || mapDocumentWriteError(nil) != nil {
+		t.Error("a nil error mapped to a non-nil error")
+	}
+}
