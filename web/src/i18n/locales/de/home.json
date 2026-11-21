@@ -1,0 +1,16 @@
+{
+  "title": "Übersicht",
+  "lead": "Diese Ansicht bestätigt nur, dass Anmeldung und Token funktionieren.",
+  "loading": "Profil wird geladen",
+  "loadError": "Profil konnte nicht geladen werden.",
+  "email": "E-Mail",
+  "name": "Name",
+  "role": "Rolle",
+  "tenantId": "Mandanten-ID",
+  "logout": "Abmelden",
+  "loggingOut": "Wird abgemeldet",
+  "logoutError": "Abmelden ist fehlgeschlagen.",
+  "passkeys": "Passkeys",
+  "passkeysLead": "Melden Sie sich beim nächsten Mal mit einem Passkey statt mit Passwort und TOTP-Code an.",
+  "passkeyAdded": "Passkey hinzugefügt."
+}

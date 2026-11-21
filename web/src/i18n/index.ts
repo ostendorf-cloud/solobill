@@ -1,7 +1,6 @@
 import { createI18n } from 'vue-i18n'
 
-import de from './locales/de.json'
-import en from './locales/en.json'
+import { de, en } from './locales'
 
 /** The only two locales this shell serves. German is the source of truth:
  *  the tax domain this tool works in is German. */

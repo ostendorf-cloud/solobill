@@ -1,0 +1,91 @@
+{{/*
+The integrity scan of issue #75: "solobill files verify" reads every stored
+object, recomputes its SHA-256 and compares it with the files row. A
+mismatch or a missing object fails the Job (non-zero exit, the file id in
+the log), which is what an alert on failed Jobs picks up. Weekly by
+default (docs/concepts/solobill.md, "Receipt storage and GoBD").
+
+Rendered only while objectStore.endpoint is set: without a store there is
+nothing to compare. The pod carries the chart's selector labels, so the
+NetworkPolicy's DNS, PostgreSQL and object store egress rules apply to it
+as they do to the Deployment. It gets the database and S3 variables only,
+never the session or CSRF key.
+*/}}
+{{- if and .Values.objectStore.endpoint .Values.objectStore.verify.enabled -}}
+{{- $verify := .Values.objectStore.verify -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ printf "%s-files-verify" (include "solobill.fullname" .) | trunc 52 | trimSuffix "-" }}
+  labels:
+    {{- include "solobill.selectorLabels" . | nindent 4 }}
+    helm.sh/chart: {{ include "solobill.chart" . }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+    app.kubernetes.io/component: files-verify
+    app.kubernetes.io/part-of: {{ include "solobill.name" . }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  {{- with $verify.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ $verify.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A failed scan is a finding, not a flake: it is not retried.
+      backoffLimit: 0
+      # A scan that hangs on the store fails instead of blocking the next.
+      activeDeadlineSeconds: {{ $verify.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "solobill.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: files-verify
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "solobill.serviceAccountName" . }}
+          automountServiceAccountToken: false
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: files-verify
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["files", "verify"]
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              env:
+                - name: LOG_LEVEL
+                  value: {{ .Values.config.logLevel | quote }}
+                - name: DATABASE_URL
+                  value: {{ .Values.config.databaseUrl | quote }}
+                - name: DATABASE_USER
+                  value: {{ .Values.config.databaseUser | quote }}
+                - name: DATABASE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.existingSecret.name }}
+                      key: {{ .Values.existingSecret.databasePasswordKey }}
+                {{- include "solobill.objectStore.env" . | nindent 16 }}
+              resources:
+                {{- toYaml $verify.resources | nindent 16 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

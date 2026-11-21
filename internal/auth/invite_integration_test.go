@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ostendorf-cloud/govue/account"
 
 	"github.com/ostendorf-cloud/solobill/internal/auth"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
@@ -60,7 +61,7 @@ func TestAcceptInviteIsSingleUseUnderConcurrentAccept(t *testing.T) {
 		t.Fatalf("create tenant: %v", err)
 	}
 
-	manager := auth.NewInviteManager(store, time.Now)
+	manager := auth.NewInviteManager(store, integrationHasher(t), time.Now)
 
 	rawToken, invite, err := manager.CreateInvite(ctx, auth.CreateInviteParams{
 		TenantID: tenant.ID,
@@ -82,9 +83,9 @@ func TestAcceptInviteIsSingleUseUnderConcurrentAccept(t *testing.T) {
 	codes := make([]string, attempts)
 
 	for i := range attempts {
-		code, err := auth.GenerateTOTPCode(secret, time.Now())
+		code, err := account.TOTPCode(secret, time.Now())
 		if err != nil {
-			t.Fatalf("GenerateTOTPCode: %v", err)
+			t.Fatalf("TOTPCode: %v", err)
 		}
 		codes[i] = code
 	}
@@ -193,7 +194,7 @@ func TestAcceptInviteOIDCIsSingleUseUnderConcurrentAccept(t *testing.T) {
 		t.Fatalf("create tenant: %v", err)
 	}
 
-	manager := auth.NewInviteManager(store, time.Now)
+	manager := auth.NewInviteManager(store, integrationHasher(t), time.Now)
 
 	rawToken, invite, err := manager.CreateInvite(ctx, auth.CreateInviteParams{
 		TenantID: tenant.ID,
@@ -280,4 +281,18 @@ func TestAcceptInviteOIDCIsSingleUseUnderConcurrentAccept(t *testing.T) {
 	if matching[0].OIDCSubject == nil || *matching[0].OIDCSubject == "" {
 		t.Error("the one account created by the race has no oidc_subject bound")
 	}
+}
+
+// integrationHasher has one slot per racer, so every concurrent accept
+// reaches MarkUsed instead of a few answering account.ErrHashingBusy
+// before the race these tests are about.
+func integrationHasher(t *testing.T) *account.Hasher {
+	t.Helper()
+
+	hasher, err := account.NewHasher(account.HasherConfig{MaxConcurrentHashes: 16})
+	if err != nil {
+		t.Fatalf("NewHasher: %v", err)
+	}
+
+	return hasher
 }

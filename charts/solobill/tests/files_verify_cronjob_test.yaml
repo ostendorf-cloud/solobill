@@ -1,0 +1,117 @@
+suite: files verify CronJob
+templates:
+  - templates/files-verify-cronjob.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  migrationJob:
+    databaseUser: solobill_migrator
+tests:
+  - it: renders nothing without an endpoint
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders nothing when disabled
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:8333"
+        bucket: solobill
+        verify:
+          enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: runs "files verify" weekly with the database and S3 variables only
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:8333"
+        bucket: solobill
+    asserts:
+      - isKind:
+          of: CronJob
+      - equal:
+          path: spec.schedule
+          value: "17 3 * * 0"
+      - equal:
+          path: spec.concurrencyPolicy
+          value: Forbid
+      - equal:
+          path: spec.jobTemplate.spec.backoffLimit
+          value: 0
+      - equal:
+          path: spec.jobTemplate.spec.activeDeadlineSeconds
+          value: 3600
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.containers[0].args
+          value: ["files", "verify"]
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: S3_BUCKET
+            value: solobill
+      - contains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: solobill-secrets
+                key: DATABASE_PASSWORD
+      - notContains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: SESSION_CODEC_KEY
+          any: true
+      - notContains:
+          path: spec.jobTemplate.spec.template.spec.containers[0].env
+          content:
+            name: CSRF_KEY
+          any: true
+      - equal:
+          path: spec.jobTemplate.spec.template.spec.automountServiceAccountToken
+          value: false
+
+  - it: carries the selector labels the NetworkPolicy selects
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:8333"
+        bucket: solobill
+    asserts:
+      - equal:
+          path: spec.jobTemplate.spec.template.metadata.labels["app.kubernetes.io/name"]
+          value: solobill
+      - equal:
+          path: spec.jobTemplate.spec.template.metadata.labels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+
+  - it: follows a custom schedule and deadline
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:8333"
+        bucket: solobill
+        verify:
+          enabled: true
+          schedule: "0 2 * * *"
+          activeDeadlineSeconds: 900
+    asserts:
+      - equal:
+          path: spec.schedule
+          value: "0 2 * * *"
+      - equal:
+          path: spec.jobTemplate.spec.activeDeadlineSeconds
+          value: 900
+
+  - it: refuses a deadline under a minute through the schema
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:8333"
+        bucket: solobill
+        verify:
+          activeDeadlineSeconds: 10
+    asserts:
+      - failedTemplate: {}

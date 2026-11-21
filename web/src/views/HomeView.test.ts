@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-import en from '../i18n/locales/en.json'
+import { en } from '../i18n/locales'
 import { apiClient, csrfToken } from '../api'
 import HomeView from './HomeView.vue'
 
@@ -65,6 +65,14 @@ describe('HomeView', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/auth/logout')
     expect(router.currentRoute.value.name).toBe('login')
     expect(csrfToken.value).toBeUndefined()
+  })
+
+  it('offers the passkey section once the profile is loaded', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue(profile)
+
+    renderHomeView()
+
+    expect(await screen.findByRole('heading', { name: 'Passkeys' })).toBeVisible()
   })
 
   it('redirects to login when the session is not authenticated', async () => {

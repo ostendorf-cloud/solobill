@@ -18,10 +18,10 @@ name: renovate
 # "if:", not duplicated here.
 on:
   # Deliberately staggered from ostendorf-cloud/workflows's own dogfooding
-  # cron (17 3 * * *) and from other repositories' Renovate schedules in this
+  # cron (17 * * * *) and from other repositories' Renovate schedules in this
   # rollout.
   schedule:
-    - cron: "42 4 * * *"
+    - cron: "42 * * * *"
   workflow_dispatch:
   issues:
     types: [edited]
@@ -33,7 +33,5 @@ permissions:
 
 jobs:
   renovate:
-    # v0.2.1 - kept on its own line, not a trailing comment: inline it would push this
-    # line past yamllint's 120-character line-length limit (the SHA alone is 40 characters).
-    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate.yaml@52cffb7b98063f12833bf09ca1b0ab20293a483c
+    uses: ostendorf-cloud/workflows/.github/workflows/reusable-renovate.yaml@v0
     secrets: inherit

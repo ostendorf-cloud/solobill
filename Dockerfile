@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+# syntax=docker/dockerfile:1@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 
 # Frontend build stage: produces the dist/ bundle cmd/solobill's
 # go:embed directive needs populated before the Go stage below can even
@@ -11,7 +11,14 @@
 # web/vite.config.ts's own outDir is "../cmd/solobill/dist", relative to
 # web/, so this stage keeps the same sibling layout the repository itself
 # has (cmd/ next to web/) instead of building web/ in isolation.
-FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS web
+#
+# Digest for node:26.13.1-bookworm-slim is the multi-platform image index
+# (linux/amd64, linux/arm64, linux/ppc64le), resolved against Docker Hub's
+# API; re-resolve with
+# "docker buildx imagetools inspect node:26.13.1-bookworm-slim" if this
+# patch version ever moves. That command reports the index digest below,
+# the same one a plain "docker pull" resolves against on either platform.
+FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS web
 
 WORKDIR /src
 
@@ -34,11 +41,15 @@ RUN mkdir -p cmd/solobill && cd web && pnpm run build
 # pgtype, pgxpool, ... - verified by "go list -deps" against this
 # repository's go.mod, none of them import "C"), so there is no libc
 # dependency this build is dropping by going static. Pinned to
-# 1.27.0-bookworm, the exact patch mise.toml pins go to (not a newer
-# 1.27.x): see mise.toml's own comment for why golangci-lint 2.15.0
-# specifically needs that exact patch, a constraint this image is kept
-# aligned with even though golangci-lint itself never runs here.
-FROM golang:1.27.0-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS build
+# 1.27.4-bookworm, the exact patch mise.toml pins go to.
+#
+# Digest for golang:1.27.4-bookworm is the multi-platform image index
+# (linux/amd64, linux/arm64, linux/386, linux/arm/v7, linux/ppc64le),
+# matching mise.toml's pinned Go patch exactly; resolved against Docker
+# Hub's API. Re-resolve with
+# "docker buildx imagetools inspect golang:1.27.4-bookworm" if this patch
+# version ever moves; that command reports the index digest below.
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS build
 
 WORKDIR /src
 
@@ -64,12 +75,11 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/solobill ./cmd/sol
 # repository here with a Dockerfile: same base image, same ":nonroot" tag,
 # same reasoning in its own Dockerfile comment.
 #
-# Pinned by tag, not digest: resolving and recording a digest needs a
-# registry pull, which this sandbox could not make (no network egress to
-# a container registry; see the implementation report). ":nonroot" is
-# itself the distroless project's own maintained, documented tag, not a
-# floating "latest" - acceptable as the alternative to a digest, and the
-# same choice cve-notifier already made.
+# Digest for gcr.io/distroless/static-debian12:nonroot is the multi-platform
+# image index (linux/amd64, linux/arm64, linux/arm/v7, linux/s390x,
+# linux/ppc64le), resolved against gcr.io's registry API; re-resolve with
+# "docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot"
+# if this needs refreshing; that command reports the index digest below.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 COPY --from=build /out/solobill /usr/local/bin/solobill

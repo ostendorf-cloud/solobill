@@ -37,13 +37,16 @@ WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 ORDER BY created_at;
 
 -- name: UpdateAccount :one
+-- Writes the role, the status and the OIDC subject only. The password
+-- hash, the TOTP secret and totp_last_counter change only through the
+-- conditional writes of login_accounts.sql: an update from a row read
+-- earlier would otherwise put back a counter a login has advanced since,
+-- and reopen the replay of a consumed TOTP code (issue #50), or put back a
+-- password hash a password change has replaced.
 UPDATE accounts
-SET password_hash = $2,
-    totp_secret = $3,
-    totp_last_counter = $4,
-    oidc_subject = $5,
-    role = $6,
-    status = $7,
+SET oidc_subject = $2,
+    role = $3,
+    status = $4,
     updated_at = now()
 WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 RETURNING id, tenant_id, email, password_hash, totp_secret, totp_last_counter, oidc_subject, role, status, created_at, updated_at;

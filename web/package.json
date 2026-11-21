@@ -13,7 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ostendorf-cloud/govue": "ostendorf-cloud/govue#v0.4.0&path:/web",
+    "@ostendorf-cloud/govue": "ostendorf-cloud/govue#v0.5.0&path:/web",
     "tailwindcss": "^4.3.3",
     "vue": "^3.5.44",
     "vue-i18n": "^11.1.5",
@@ -24,7 +24,6 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/user-event": "^14.6.8",
     "@testing-library/vue": "^8.1.0",
-    "@tsconfig/node24": "^24.0.5",
     "@types/node": "^26.6.6",
     "@vitejs/plugin-vue": "^6.0.10",
     "@vue/eslint-config-prettier": "^10.2.0",

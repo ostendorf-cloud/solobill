@@ -1,0 +1,73 @@
+{
+  "nav": "Einstellungen",
+  "title": "Verkäuferprofil",
+  "lead": "Deine Angaben, wie sie auf jeder Rechnung und jedem Angebot stehen.",
+  "loading": "Das Profil wird geladen.",
+  "loadError": "Das Profil konnte nicht geladen werden.",
+  "ownerOnly": "Nur die Inhaberin oder der Inhaber kann das Verkäuferprofil ändern.",
+  "save": "Speichern",
+  "saving": "Das Profil wird gespeichert",
+  "saved": "Das Profil ist gespeichert.",
+  "saveError": "Das Profil konnte nicht gespeichert werden. Prüfe die markierten Felder.",
+  "issueReady": "Bereit zum Ausstellen unter",
+  "ready": "vollständig",
+  "incomplete": "unvollständig",
+  "sections": {
+    "seller": "Name und Anschrift",
+    "tax": "Steuer",
+    "bank": "Bankverbindung",
+    "contact": "Kontakt und Texte",
+    "numbering": "Nummerierung"
+  },
+  "fields": {
+    "legalName": "Name oder Firma",
+    "street": "Straße und Hausnummer",
+    "addressLine2": "Adresszeile 2",
+    "postalCode": "Postleitzahl",
+    "city": "Ort",
+    "countryCode": "Ländercode",
+    "countryCodeHint": "Zwei Buchstaben, zum Beispiel DE.",
+    "taxNumber": "Steuernummer",
+    "vatId": "USt-IdNr",
+    "kleinunternehmerId": "Kleinunternehmer-Identifikationsnummer",
+    "kleinunternehmerHint": "§ 34a UStDV: Eine Kleinunternehmerrechnung darf sie statt der beiden anderen tragen.",
+    "defaultVatRegime": "Standard-Besteuerung",
+    "defaultVatRegimeHint": "Füllt nur einen neuen Entwurf vor, solange unten kein Zeitraum existiert.",
+    "defaultLanguage": "Standardsprache der Dokumente",
+    "bankName": "Bank",
+    "iban": "IBAN",
+    "bic": "BIC",
+    "email": "E-Mail",
+    "phone": "Telefon",
+    "website": "Website",
+    "footerText": "Fußzeile",
+    "numberFormatHint": "Eine Änderung gilt erst für das nächste ausgestellte Dokument. Nach dem ersten ausgestellten Dokument einer Art darf sich nur das Präfix ändern. Platzhalter: {'{year}'}, {'{yy}'}, {'{seq}'}, {'{seq:4}'}.",
+    "invoiceFormat": "Format der Rechnungsnummer",
+    "offerFormat": "Format der Angebotsnummer"
+  },
+  "regime": {
+    "kleinunternehmer": "Kleinunternehmer (§ 19 UStG)",
+    "standard": "Regelbesteuerung"
+  },
+  "language": {
+    "de": "Deutsch",
+    "en": "Englisch"
+  },
+  "vat": {
+    "title": "Verlauf der Besteuerungsart",
+    "lead": "Maßgeblich an einem Tag ist der jüngste Zeitraum, der an oder vor diesem Tag begonnen hat. Ein Zeitraum wird nie geändert: Ein falscher wird durch einen neuen berichtigt, der ihn nennt.",
+    "empty": "Noch kein Zeitraum.",
+    "superseded": "(berichtigt)",
+    "validFrom": "Gültig ab",
+    "validFromHint": "Ein Datum wie 2026-10-14.",
+    "regimeLabel": "Besteuerungsart",
+    "note": "Notiz",
+    "supersedes": "Berichtigt",
+    "supersedesHint": "Wähle den falschen Zeitraum, den dieser ersetzt, falls es einen gibt.",
+    "supersedesNone": "Keine Berichtigung",
+    "add": "Zeitraum hinzufügen",
+    "adding": "Der Zeitraum wird hinzugefügt",
+    "conflict": "Ab diesem Datum gibt es schon einen Zeitraum, oder der gewählte Zeitraum wurde schon berichtigt.",
+    "addError": "Der Zeitraum konnte nicht hinzugefügt werden."
+  }
+}

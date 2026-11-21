@@ -4,11 +4,15 @@
   "type": "object",
   "required": ["image", "service", "adminPort", "config", "existingSecret"],
   "properties": {
+    "requestLimits": {
+      "type": "object",
+      "description": "Request body limits at the ingress, matching the upload limits of docs/api.md. Owned by issue #82 alone: it fills this property and templates/_requestlimits.tpl."
+    },
     "replicaCount": {
       "type": "integer",
       "minimum": 1,
       "maximum": 1,
-      "description": "cmd/solobill's session store is in-memory (govue's session.NewMemoryStore); it is correct for exactly one replica. A second replica would keep its own, separate set of sessions, so a request load-balanced to the other pod would see its caller as logged out."
+      "description": "cmd/solobill's session store is in-memory (govue's session.NewMemoryStore), and so is the passkey challenge store; both are correct for exactly one replica. A second replica would keep its own, separate set of sessions, so a request load-balanced to the other pod would see its caller as logged out."
     },
     "image": {
       "type": "object",
@@ -250,6 +254,54 @@
     "nodeSelector": { "type": "object" },
     "tolerations": { "type": "array" },
     "affinity": { "type": "object" },
+    "objectStore": {
+      "type": "object",
+      "description": "The S3 compatible store for receipts, imported originals and the logo. Owned by issue #75 alone, together with templates/_objectstore.tpl and templates/files-verify-cronjob.yaml.",
+      "additionalProperties": false,
+      "required": ["endpoint", "bucket", "region", "usePathStyle", "objectLock", "requireVersioning", "existingSecret", "verify"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "pattern": "^(https?://[^/?#@]+/?)?$",
+          "description": "Base URL of the S3 API, scheme and host only. Empty: no store, the file routes answer 503."
+        },
+        "bucket": { "type": "string" },
+        "region": { "type": "string", "minLength": 1 },
+        "usePathStyle": { "type": "boolean" },
+        "objectLock": { "type": "boolean" },
+        "requireVersioning": { "type": "boolean" },
+        "existingSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "accessKeyIdKey": { "type": "string" },
+            "secretAccessKeyKey": { "type": "string" }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespaceSelector": { "type": "object" },
+            "podSelector": { "type": "object" },
+            "ipBlock": { "type": "object" }
+          }
+        },
+        "verify": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "schedule", "activeDeadlineSeconds"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "schedule": { "type": "string", "minLength": 1 },
+            "activeDeadlineSeconds": { "type": "integer", "minimum": 60 },
+            "annotations": { "type": "object" },
+            "resources": { "type": "object" }
+          }
+        }
+      }
+    },
     "config": {
       "type": "object",
       "required": ["listenAddr", "adminListenAddr", "databaseUrl", "databaseUser"],
@@ -284,6 +336,32 @@
         "rateLimitBurst": { "type": "integer", "minimum": 1 },
         "rateLimitPer": { "type": "string", "minLength": 1 },
         "inviteDefaultTtl": { "type": "string", "minLength": 1 },
+        "loginRateLimits": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The limits in front of the routes that verify a password, a TOTP code or a passkey. 0 and an empty string keep cmd/solobill's defaults.",
+          "properties": {
+            "clientBurst": { "type": "integer", "minimum": 0 },
+            "clientPer": { "type": "string" },
+            "loginBurst": { "type": "integer", "minimum": 0 },
+            "loginPer": { "type": "string" },
+            "ceilingBurst": { "type": "integer", "minimum": 0 },
+            "ceilingPer": { "type": "string" }
+          }
+        },
+        "passkey": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The WebAuthn relying party. Passkeys are off while rpId is empty. Configuration only, never derived from a request.",
+          "properties": {
+            "rpId": { "type": "string" },
+            "rpDisplayName": { "type": "string", "minLength": 1 },
+            "origins": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^https://" }
+            }
+          }
+        },
         "oidc": {
           "type": "object",
           "properties": {

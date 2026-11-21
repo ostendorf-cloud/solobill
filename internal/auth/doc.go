@@ -1,15 +1,32 @@
-// Package auth is the business logic behind solobill's two login paths: an
-// OIDC login against Keycloak through govue's oidc package, and a local
-// account path (password plus TOTP) behind the same Identity shape, per
-// docs/concepts/solobill.md's "Auth through govue's OIDC package, with a
-// local account path behind the same interface, so a later SaaS
-// self-signup does not need a second auth model."
+// Package auth is the tenancy layer solobill puts on top of govue's login
+// packages: an OIDC login against Keycloak through govue's oidc package,
+// and a local account path (password plus TOTP, and passkeys) through
+// govue's account and passkey packages, all behind the same Identity
+// shape, per docs/concepts/solobill.md's "Auth through govue's OIDC
+// package, with a local account path behind the same interface, so a
+// later SaaS self-signup does not need a second auth model."
 //
-// Nothing here is an HTTP handler, except the two govue already hands back
-// as http.Handler values (Handlers.Login, Handlers.Callback): routing,
-// middleware and the local-login and invite-accept endpoints are
-// internal/httpapi's job, a later step. This package is called by that
-// step; it does not call out to it.
+// # What govue does and what stays here
+//
+// Since issue #86 this package carries no password hashing, no TOTP code
+// and no login logic of its own. govue's account.Service checks the
+// password and the code, and its handlers serve the login, the logout and
+// the password change; govue's passkey handlers run the WebAuthn
+// ceremonies. What stays here is solobill's own:
+//
+//   - AccountStore and PasskeyStore, the adapters over solobill's tables,
+//     scoped to the tenant on the request context (scope.go). govue's
+//     packages know no tenant.
+//   - TenantFromPath and TenantFromSession, which put that tenant there.
+//   - Login.StartSession, which turns govue's verified identity into a
+//     session carrying the tenant and the role.
+//   - InviteManager, which admits a member with a password and a TOTP
+//     secret in one step (through govue's hasher and TOTP functions), or
+//     by binding an OIDC subject.
+//   - The OIDC admission gate below.
+//
+// Routing and the middleware chain are internal/httpapi's job. This
+// package is called by it; it does not call out to it.
 //
 // # The unified identity model
 //

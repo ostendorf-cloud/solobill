@@ -14,20 +14,23 @@ import (
 
 const createCustomer = `-- name: CreateCustomer :one
 
-INSERT INTO customers (tenant_id, name, email, vat_id, street, postal_code, city, country_code)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at
+INSERT INTO customers (tenant_id, name, email, vat_id, street, address_line2, postal_code, city, country_code, number, document_language)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at, document_language, number, address_line2
 `
 
 type CreateCustomerParams struct {
-	TenantID    uuid.UUID
-	Name        string
-	Email       pgtype.Text
-	VatID       pgtype.Text
-	Street      pgtype.Text
-	PostalCode  pgtype.Text
-	City        pgtype.Text
-	CountryCode pgtype.Text
+	TenantID         uuid.UUID
+	Name             string
+	Email            pgtype.Text
+	VatID            pgtype.Text
+	Street           pgtype.Text
+	AddressLine2     pgtype.Text
+	PostalCode       pgtype.Text
+	City             pgtype.Text
+	CountryCode      pgtype.Text
+	Number           pgtype.Text
+	DocumentLanguage string
 }
 
 // Tenant isolation here is two independent layers, matching
@@ -48,9 +51,12 @@ func (q *Queries) CreateCustomer(ctx context.Context, arg CreateCustomerParams) 
 		arg.Email,
 		arg.VatID,
 		arg.Street,
+		arg.AddressLine2,
 		arg.PostalCode,
 		arg.City,
 		arg.CountryCode,
+		arg.Number,
+		arg.DocumentLanguage,
 	)
 	var i Customer
 	err := row.Scan(
@@ -66,6 +72,9 @@ func (q *Queries) CreateCustomer(ctx context.Context, arg CreateCustomerParams) 
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DocumentLanguage,
+		&i.Number,
+		&i.AddressLine2,
 	)
 	return i, err
 }
@@ -91,7 +100,7 @@ func (q *Queries) DeleteCustomer(ctx context.Context, id uuid.UUID) (int64, erro
 }
 
 const getCustomerByID = `-- name: GetCustomerByID :one
-SELECT id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at, document_language, number, address_line2
 FROM customers
 WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 `
@@ -116,15 +125,18 @@ func (q *Queries) GetCustomerByID(ctx context.Context, id uuid.UUID) (Customer, 
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DocumentLanguage,
+		&i.Number,
+		&i.AddressLine2,
 	)
 	return i, err
 }
 
 const listCustomers = `-- name: ListCustomers :many
-SELECT id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at, document_language, number, address_line2
 FROM customers
 WHERE deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-ORDER BY name
+ORDER BY name, id
 `
 
 // ListCustomers filters deleted_at IS NULL, unlike GetCustomerByID: this
@@ -154,6 +166,9 @@ func (q *Queries) ListCustomers(ctx context.Context) ([]Customer, error) {
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DocumentLanguage,
+			&i.Number,
+			&i.AddressLine2,
 		); err != nil {
 			return nil, err
 		}
@@ -171,23 +186,29 @@ SET name = $2,
     email = $3,
     vat_id = $4,
     street = $5,
-    postal_code = $6,
-    city = $7,
-    country_code = $8,
+    address_line2 = $6,
+    postal_code = $7,
+    city = $8,
+    country_code = $9,
+    number = $10,
+    document_language = $11,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at
+RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at, document_language, number, address_line2
 `
 
 type UpdateCustomerParams struct {
-	ID          uuid.UUID
-	Name        string
-	Email       pgtype.Text
-	VatID       pgtype.Text
-	Street      pgtype.Text
-	PostalCode  pgtype.Text
-	City        pgtype.Text
-	CountryCode pgtype.Text
+	ID               uuid.UUID
+	Name             string
+	Email            pgtype.Text
+	VatID            pgtype.Text
+	Street           pgtype.Text
+	AddressLine2     pgtype.Text
+	PostalCode       pgtype.Text
+	City             pgtype.Text
+	CountryCode      pgtype.Text
+	Number           pgtype.Text
+	DocumentLanguage string
 }
 
 // UpdateCustomer is guarded by "AND deleted_at IS NULL": a soft-deleted
@@ -201,9 +222,12 @@ func (q *Queries) UpdateCustomer(ctx context.Context, arg UpdateCustomerParams) 
 		arg.Email,
 		arg.VatID,
 		arg.Street,
+		arg.AddressLine2,
 		arg.PostalCode,
 		arg.City,
 		arg.CountryCode,
+		arg.Number,
+		arg.DocumentLanguage,
 	)
 	var i Customer
 	err := row.Scan(
@@ -219,6 +243,9 @@ func (q *Queries) UpdateCustomer(ctx context.Context, arg UpdateCustomerParams) 
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DocumentLanguage,
+		&i.Number,
+		&i.AddressLine2,
 	)
 	return i, err
 }

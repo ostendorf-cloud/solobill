@@ -5,7 +5,13 @@
 // meResponse), and then spends that token on a real mutating request, the
 // logout button's POST /api/v1/auth/logout, which the server's CSRF
 // protector middleware would reject without it.
-import { isApiError, GovueButton, GovueCard, GovuePage } from '@ostendorf-cloud/govue'
+import {
+  isApiError,
+  GovueButton,
+  GovueCard,
+  GovuePage,
+  GovuePasskeyButton,
+} from '@ostendorf-cloud/govue'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -28,6 +34,7 @@ const loading = ref(true)
 const loadError = ref('')
 const loggingOut = ref(false)
 const logoutError = ref('')
+const passkeyAdded = ref(false)
 
 onMounted(async () => {
   try {
@@ -99,5 +106,20 @@ async function logout(): Promise<void> {
     </GovueCard>
 
     <p v-if="logoutError" role="alert" class="text-danger-text">{{ logoutError }}</p>
+
+    <!-- govue's passkey button adds a passkey to the logged in account
+         (POST /api/v1/auth/passkeys/register/begin and finish). The server
+         answers 404 when passkeys are not configured, and the button then
+         shows its own error. -->
+    <GovueCard v-if="profile" :title="t('home.passkeys')">
+      <p class="text-sm text-text-muted">{{ t('home.passkeysLead') }}</p>
+      <GovuePasskeyButton
+        :client="apiClient"
+        mode="enrol"
+        path="/auth/passkeys"
+        @success="passkeyAdded = true"
+      />
+      <p v-if="passkeyAdded" role="status" class="text-sm">{{ t('home.passkeyAdded') }}</p>
+    </GovueCard>
   </GovuePage>
 </template>

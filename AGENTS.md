@@ -121,6 +121,29 @@ every row-level-security assertion through it rather than through `DATABASE_URL`
 Postgres superuser bypasses row level security regardless of `FORCE ROW LEVEL SECURITY`, so
 asserting isolation through a superuser connection would prove nothing.
 
+## Conflict zones
+
+- A branch that touches `internal/storage/postgres/sqlcgen/models.go` rebases onto `main` and
+  runs `task generate:sqlc` again. It never hand merges a conflict in generated code.
+- A migration uses a version inside its issue's reserved range. The ranges are the table
+  "Migration timestamp reservation" in `docs/concepts/solobill.md`.
+- A feature adds its routes in its own `internal/httpapi/routes_<resource>.go`, its Vue routes
+  in `web/src/router/routes/<feature>.ts` and its strings in
+  `web/src/i18n/locales/{de,en}/<feature>.json`. It does not edit the index files.
+- A feature adds its store accessor in `store_<resource>.go`, its wiring in
+  `cmd/solobill/wire_<feature>.go`, a subcommand in `cmd/solobill/cmd_<name>.go`, its
+  configuration in `internal/config/config_<feature>.go`, its HTTP test fakes in
+  `internal/httpapi/fake_<resource>_test.go`, its EÜR keys in `internal/category/keys_<issue>.go`
+  with `docs/concepts/euer-keys/<issue>.md`, and its grants in
+  `docker/postgres/grants/<range start>_<name>.sql`.
+- Only the contract issue (#67) edits `docs/concepts/solobill.md` and `docs/api.md` during the
+  year end milestone.
+- A second branch that changes `go.mod` rebases onto `main` and runs `go mod tidy`. It never
+  hand merges `go.sum`.
+- The full list is the section "Conflict zones" in `docs/concepts/solobill.md`.
+- The Layout section above is stale during the year end milestone on purpose. Only the
+  hardening issue (#82) rewrites it, once.
+
 ## Deviations
 
 - This repository uses the Elastic License 2.0 instead of the organisation's baseline
@@ -128,13 +151,9 @@ asserting isolation through a superuser connection would prove nothing.
 - The Elastic License 2.0 is source available, not open source.
 - The reason: this tool has product potential, so a third party should not be able to
   offer it as a hosted service without the author's own agreement.
-- `.github/workflows/dco.yaml` calls `ostendorf-cloud/workflows`'s reusable workflow at `v0.1.1`.
-  `checks.yaml`'s `renovate-config` job and `renovate.yaml` call theirs at `v0.2.1`. None use a
-  floating `v0` major tag: `ostendorf-cloud/workflows` has not cut one yet. Repoint all three at
-  `v0` once it exists.
 - `Dockerfile`'s web stage installs corepack through npm instead of `mise`: Node stopped
   distributing corepack from Node.js 25 onward (nodejs/node PR 57617), and there is no `mise`
   inside that image stage to install it another way.
-- `.yamllint.yaml`'s line-length limit is 140, not the baseline's 120. A pinned reusable
-  workflow reference then fits on one line together with its version comment, matching
+- `.yamllint.yaml`'s line-length limit is 140, not the baseline's 120. A pinned action
+  reference then fits on one line together with its version comment, matching
   most of the organisation's own repositories.

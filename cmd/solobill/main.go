@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
+	"github.com/ostendorf-cloud/govue/account"
 	"github.com/ostendorf-cloud/govue/health"
 	"github.com/ostendorf-cloud/govue/httpserver"
 	"github.com/ostendorf-cloud/govue/logging"
@@ -30,9 +31,12 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	code, msg := exitWith(dispatch(os.Args[1:], os.Stdout, run))
+	if msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+	}
+	if code != 0 {
+		os.Exit(code)
 	}
 }
 
@@ -48,8 +52,9 @@ func main() {
 // runtime overhead, so even 1000 of them cost on the order of 1 MiB,
 // against charts/solobill/values.yaml's 256Mi memory limit. A session is
 // only ever created by a login that already succeeded (a verified local
-// password plus TOTP code, a verified OIDC identity, or a redeemed
-// single-use invite token), never by an anonymous request, so nothing
+// password plus TOTP code, a verified passkey, a verified OIDC identity,
+// or a redeemed single-use invite token), never by an anonymous request,
+// and a login ends the session the browser already carried, so nothing
 // short of a credential compromise can drive the store toward this
 // bound. docs/concepts/solobill.md frames this application's own scale
 // as "a single-user start" where "a second tenant can be added without a
@@ -110,8 +115,26 @@ func run() error {
 		return fmt.Errorf("solobill: build login codec: %w", err)
 	}
 
-	localAuth := auth.NewLocalAuthenticator(store, nil)
-	invites := auth.NewInviteManager(store, nil)
+	// One Argon2id hasher per process, shared by the login and the invite
+	// accept, so govue's cap on concurrent derivations holds for both.
+	hasher, err := account.NewHasher(account.HasherConfig{})
+	if err != nil {
+		return fmt.Errorf("solobill: build password hasher: %w", err)
+	}
+
+	login, err := auth.NewLogin(auth.LoginConfig{
+		Store:          store,
+		Sessions:       sessions,
+		Hasher:         hasher,
+		Logger:         logger,
+		TrustedOrigins: cfg.AllowedOrigins,
+		Passkey:        passkeyConfig(cfg),
+	})
+	if err != nil {
+		return fmt.Errorf("solobill: build login: %w", err)
+	}
+
+	invites := auth.NewInviteManager(store, hasher, nil)
 
 	healthRegistry := health.New()
 	healthRegistry.Add("database", 0, pool.Ping)
@@ -126,14 +149,27 @@ func run() error {
 		return fmt.Errorf("solobill: %w", err)
 	}
 
+	repos, err := buildRepositories(ctx, wireEnv{cfg: cfg, logger: logger, store: store, health: healthRegistry})
+	if err != nil {
+		return fmt.Errorf("solobill: %w", err)
+	}
+
 	handlers, err := httpapi.NewHandler(httpapi.Deps{
-		Logger:           logger,
-		Store:            store,
-		Sessions:         sessions,
-		LoginCodec:       oidcLoginCodec(cfg, loginCodec),
-		CSRFKey:          cfg.CSRFKey,
-		LocalAuth:        localAuth,
-		Invites:          invites,
+		Logger:     logger,
+		Store:      store,
+		Sessions:   sessions,
+		LoginCodec: oidcLoginCodec(cfg, loginCodec),
+		CSRFKey:    cfg.CSRFKey,
+		Login:      login,
+		Invites:    invites,
+		LoginLimits: httpapi.LoginLimits{
+			ClientBurst:  cfg.Auth.LoginClientBurst,
+			ClientPer:    cfg.Auth.LoginClientPer,
+			LoginBurst:   cfg.Auth.LoginBurst,
+			LoginPer:     cfg.Auth.LoginPer,
+			CeilingBurst: cfg.Auth.LoginCeilingBurst,
+			CeilingPer:   cfg.Auth.LoginCeilingPer,
+		},
 		OIDCHandlers:     oidcHandlers,
 		HealthRegistry:   healthRegistry,
 		AllowedOrigins:   cfg.AllowedOrigins,
@@ -143,6 +179,7 @@ func run() error {
 		RateLimitPer:     cfg.RateLimitPer,
 		DefaultInviteTTL: cfg.DefaultInviteTTL,
 		DistFS:           spaFS,
+		Repositories:     repos,
 	})
 	if err != nil {
 		return fmt.Errorf("solobill: build http handler: %w", err)
@@ -212,6 +249,22 @@ func buildOIDCHandlers(
 	}
 
 	return handlers, nil
+}
+
+// passkeyConfig returns the passkey relying party from cfg, or nil when
+// PASSKEY_RP_ID is unset and passkeys stay off. The RP id and the origins
+// are configuration only, never read off a request.
+func passkeyConfig(cfg config.Config) *auth.PasskeyConfig {
+	if !cfg.Auth.PasskeysEnabled {
+		return nil
+	}
+
+	return &auth.PasskeyConfig{
+		RPID:           cfg.Auth.PasskeyRPID,
+		RPDisplayName:  cfg.Auth.PasskeyRPDisplayName,
+		Origins:        cfg.Auth.PasskeyOrigins,
+		AllowPlainHTTP: cfg.SessionAllowPlainHTTP,
+	}
 }
 
 // oidcLoginCodec returns loginCodec when OIDC is enabled, or nil when it is

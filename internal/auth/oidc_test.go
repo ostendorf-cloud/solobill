@@ -393,7 +393,7 @@ func newOIDCHandlerFixture(t *testing.T) *oidcHandlerFixture {
 
 	store := newFakeStore()
 	tenant := store.addTenant(storage.Tenant{Slug: "acme", Name: "Acme"})
-	invites := NewInviteManager(store, func() time.Time { return now })
+	invites := NewInviteManager(store, testHasher(t), func() time.Time { return now })
 
 	return &oidcHandlerFixture{
 		idp: idp, provider: provider, codec: codec, sessions: sessions,

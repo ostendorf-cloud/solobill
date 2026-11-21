@@ -119,6 +119,16 @@ type Customer struct {
 	// deliberately no default: picking one is a business-policy decision
 	// for a later UI layer, not this package's.
 	CountryCode *string
+	// DocumentLanguage is the language this customer's documents are
+	// rendered in by default. Create and Update treat an empty value as
+	// DocumentLanguageGerman; a row read back always carries one.
+	DocumentLanguage DocumentLanguage
+	// Number is the owner's own customer number, printed on documents,
+	// nil when none is used. It is unique per tenant among active
+	// customers, case-insensitively. AddressLine2 is an optional second
+	// address line.
+	Number       *string
+	AddressLine2 *string
 	// DeletedAt is nil for an active customer, set once soft deleted. A
 	// customer is never hard deleted: see db/migrations' customers
 	// migration for why.
@@ -185,7 +195,29 @@ const (
 	// original invoice via Document.CorrectsDocumentID, never a
 	// modification of it: see Document.CorrectsDocumentID and
 	// DocumentRepository for how immutability is actually enforced.
+	//
+	// From issue #70 on, a correction replaces the invoice: it carries
+	// the full corrected lines, and the newest issued correction of a
+	// chain is the effective document. See docs/concepts/solobill.md,
+	// "Corrections".
 	DocumentTypeCorrection DocumentType = "correction"
+	// DocumentTypeOffer is an offer (Angebot) with its own counter. The
+	// constant is part of the year end contract (issue #67). The
+	// database accepts it only once issue #70's migration widens
+	// documents_type_check; see the migration reservation table in
+	// docs/concepts/solobill.md.
+	DocumentTypeOffer DocumentType = "offer"
+)
+
+// DocumentLanguage is the language a document is rendered in. German is
+// the default: the tax domain this tool works in is German.
+type DocumentLanguage string
+
+const (
+	// DocumentLanguageGerman renders a document in German.
+	DocumentLanguageGerman DocumentLanguage = "de"
+	// DocumentLanguageEnglish renders a document in English.
+	DocumentLanguageEnglish DocumentLanguage = "en"
 )
 
 // DocumentState is a Document's lifecycle state. "A state transition is a
@@ -259,12 +291,42 @@ type Document struct {
 	// for Type == DocumentTypeCorrection: see db/migrations'
 	// documents_correction_requires_original.
 	CorrectsDocumentID *uuid.UUID
-	VATRegime          VATRegime
+	// CorrectionSeq is a correction's place in the chain of its original
+	// invoice: 1 for the first correction, 2 for the next. Set at issue,
+	// in the issuing transaction, never from document_numbers. The
+	// correction's display number is the original's plus "-" and this
+	// value. nil for every other type and for a correction draft. The
+	// column lands with issue #70's migration.
+	CorrectionSeq *int32
+	// CorrectionBaseID and CorrectionBaseSeq record, on a correction
+	// draft, the chain's effective document the draft copied its lines
+	// from (internal/docchain.Base). Issuing refuses with 409
+	// correction_base_changed when the chain's effective document is no
+	// longer that one. nil for every other row. The columns land with
+	// issue #70's migration.
+	CorrectionBaseID  *uuid.UUID
+	CorrectionBaseSeq *int32
+	// DisplayNumber is the number as printed, stored once at issue: the
+	// rendered template, a correction's suffixed number, or an imported
+	// document's original number. Unique per tenant. Every list and read
+	// returns this stored value, so a later template change never
+	// rewrites an issued number. nil for a draft. The column lands with
+	// issue #70's migration.
+	DisplayNumber *string
+	// CustomerReference is the customer's own reference (order number,
+	// "Ihr Zeichen"), printed on the document. The column lands with
+	// issue #70's migration.
+	CustomerReference *string
+	VATRegime         VATRegime
 	// ServiceDate is the Leistungsdatum/Lieferdatum German VAT law
 	// (§14 UStG) requires, separate from the document's own date
 	// (IssuedAt once issued). nil until known, which is routinely the
 	// case while a draft is still being edited.
 	ServiceDate *time.Time
+	// ServiceDateTo ends a service period that starts at ServiceDate. nil
+	// for a single service date. The column lands with issue #70's
+	// migration.
+	ServiceDateTo *time.Time
 	// DueDate is nil until decided, for the same reason ServiceDate is.
 	DueDate *time.Time
 	// DiscountPercentPermyriad and DiscountAmountCents are this
@@ -296,6 +358,25 @@ type Document struct {
 	// this) is a later milestone, out of this step's scope. False for
 	// every document this step's own code ever creates.
 	Imported bool
+	// OriginalNumber is the number an imported document was issued under,
+	// exactly as the customer holds it (for example "RE-2024-017"). nil
+	// for every document solobill issued itself. Display uses it when
+	// set; Number keeps the uniqueness and counter role. The column lands
+	// with issue #70's migration.
+	OriginalNumber *string
+	// SourceOfferID names the offer an invoice was created from, nil
+	// otherwise. The column lands with issue #70's migration.
+	SourceOfferID *uuid.UUID
+	// Language is the language this document is rendered in. The column
+	// lands with issue #70's migration; empty means DocumentLanguageGerman.
+	Language DocumentLanguage
+	// ValidUntil is an offer's validity date, nil for every other type.
+	// The column lands with issue #70's migration.
+	ValidUntil *time.Time
+	// PaymentTerms and Notes are free text printed on the document. The
+	// columns land with issue #70's migration.
+	PaymentTerms *string
+	Notes        *string
 	// FrozenPayload is the complete, self-contained snapshot an issued
 	// document is rendered from forever: nil until State ==
 	// DocumentStateIssued. Its shape is a later rendering step's

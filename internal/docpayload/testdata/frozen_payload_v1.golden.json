@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "type": "correction",
+  "language": "en",
+  "vat_regime": "standard",
+  "template_version": "invoice-v1",
+  "currency": "EUR",
+  "number": "RE-20260009-1",
+  "number_value": 9,
+  "number_year": 2026,
+  "correction_seq": 1,
+  "issue_date": "2026-12-05",
+  "service_period": {
+    "from": "2026-11-01",
+    "to": "2026-11-30"
+  },
+  "due_date": "2026-12-19",
+  "valid_until": "2026-12-31",
+  "seller": {
+    "legal_name": "Example Trading",
+    "address": {
+      "street": "Main Street 1",
+      "line2": "Building B",
+      "postal_code": "12345",
+      "city": "Example City",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "vat_id": "DE000000000",
+    "kleinunternehmer_id": "DE-KU-0000000",
+    "bank_name": "Example Bank",
+    "iban": "DE00000000000000000000",
+    "bic": "EXAMPLEXXX",
+    "email": "office@example.test",
+    "phone": "+49 000 000000",
+    "website": "https://example.test",
+    "footer_text": "Footer",
+    "logo_sha256": "aa"
+  },
+  "customer": {
+    "id": "6f1c2a4e-0000-4000-8000-000000000001",
+    "number": "K-0042",
+    "name": "Customer Ltd",
+    "address": {
+      "street": "Side Street 2",
+      "line2": "c/o Accounts",
+      "postal_code": "54321",
+      "city": "Other City",
+      "country_code": "DE"
+    },
+    "vat_id": "DE111111111"
+  },
+  "customer_reference": "PO-7",
+  "corrects": {
+    "id": "6f1c2a4e-0000-4000-8000-000000000003",
+    "number": "RE-20260009",
+    "issue_date": "2026-12-01"
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "Consulting",
+      "quantity_thousandths": 1000,
+      "unit": "hour",
+      "unit_price_cents": 10000,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {
+        "percent_permyriad": 1000,
+        "amount_cents": 500
+      },
+      "net_after_line_discount_cents": 9000,
+      "document_discount_share_cents": 100,
+      "net_after_all_discounts_cents": 8900
+    }
+  ],
+  "document_discount": {
+    "percent_permyriad": 1000,
+    "amount_cents": 500
+  },
+  "totals": {
+    "net_total_cents": 9000,
+    "document_discount_cents": 100,
+    "net_after_document_discount_cents": 8900,
+    "vat": [
+      {
+        "rate_permyriad": 1900,
+        "net_cents": 8900,
+        "vat_cents": 1691
+      }
+    ],
+    "vat_total_cents": 1691,
+    "grand_total_cents": 10591
+  },
+  "tax_note": "Note",
+  "payment_terms": "14 days",
+  "notes": "Thanks",
+  "imported": true,
+  "original": {
+    "file_id": "6f1c2a4e-0000-4000-8000-000000000002",
+    "sha256": "bb"
+  }
+}

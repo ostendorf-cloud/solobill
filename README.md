@@ -14,6 +14,12 @@ The foundation is in place: local and OIDC login, sessions, the invite flow, row
 and a Vue shell that proves login and the token contract work end to end. No accounting feature
 exists yet.
 
+Login runs on `govue`'s `account`, `session` and `passkey` packages: password and TOTP in one
+step, passkeys next to them, an invite that sets the password and confirms the TOTP code
+together, and OIDC bound to the same account. solobill keeps the tenancy rules on top. See the
+section "Login on govue" in `docs/concepts/solobill.md` and `charts/solobill/README.md` for
+the cookie, proxy, replica and passkey settings a deployment needs.
+
 ## Install
 
 ```sh
@@ -47,10 +53,14 @@ embedded, then a distroless runtime) and starts three services: `postgres`, a on
 service that applies `db/migrations` and exits, and `solobill` itself, which waits for `migrate`
 to finish before it starts. The database comes up with a seeded `demo` tenant
 (`SEED_TENANT_SLUG`/`SEED_TENANT_NAME` in `.env.example`), so there is a tenant to use right away.
+Open `http://localhost:8080`, not `127.0.0.1`: compose configures passkeys for the relying party
+`localhost`, the one host WebAuthn allows over plain HTTP.
 
 `solobill` never connects to Postgres as the bootstrap superuser `migrate` uses to run the
 migrations: see the comment on `docker-compose.yaml`'s `postgres` service for why there are two
 separate database roles, and `AGENTS.md` for the one-line summary.
+
+The published image `ghcr.io/ostendorf-cloud/solobill` is one manifest list for `linux/amd64` and `linux/arm64`.
 
 `task dev:up` and `task dev:down` wrap `docker compose up --build -d` and `docker compose down`.
 

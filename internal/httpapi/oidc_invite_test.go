@@ -57,7 +57,7 @@ func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
 		t.Fatalf("auth.NewOIDCProvider() error = %v", err)
 	}
 
-	invites := auth.NewInviteManager(store, nil)
+	invites := newTestInvites(t, store)
 
 	oidcHandlers, err := oidc.NewHandlers(oidc.HandlerConfig{
 		Provider: provider,
@@ -83,7 +83,7 @@ func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
 		Sessions:         sessions,
 		LoginCodec:       loginCodec,
 		CSRFKey:          fixedKey(t, 3),
-		LocalAuth:        auth.NewLocalAuthenticator(store, nil),
+		Login:            newTestLogin(t, store, sessions),
 		Invites:          invites,
 		OIDCHandlers:     oidcHandlers,
 		HealthRegistry:   healthRegistry,

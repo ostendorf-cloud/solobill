@@ -73,6 +73,36 @@ address, so this combination must not render silently.
 {{- if and .Values.ingress.enabled (not .Values.config.trustedProxies) -}}
 {{ fail "ingress.enabled is true but config.trustedProxies is empty: every client would share one rate-limit bucket keyed to the ingress controller's own address, collapsing per-client brute-force protection. Set config.trustedProxies to the ingress controller's pod/service CIDR." }}
 {{- end -}}
+{{/*
+The same holds behind a Gateway: the TCP peer is the gateway's data plane,
+and the login limits of govue's account handlers (per client, per login
+and client) would all collapse into one bucket.
+*/}}
+{{- if and .Values.httpRoute.enabled (not .Values.config.trustedProxies) -}}
+{{ fail "httpRoute.enabled is true but config.trustedProxies is empty: every client would share one rate-limit bucket keyed to the gateway's own address, collapsing per-client brute-force protection and the login limits. Set config.trustedProxies to the gateway data plane's CIDR." }}
+{{- end -}}
+{{/*
+The session store (govue's session.MemoryStore) and the passkey challenge
+store (passkey.MemoryChallengeStore) both live in the memory of one pod. A
+second replica would not know the first one's sessions and challenges, so
+a request load-balanced to it would see its caller as logged out and fail
+a passkey ceremony. values.schema.json already refuses this; the guard
+stays for a render with --skip-schema-validation.
+*/}}
+{{- if gt (int .Values.replicaCount) 1 -}}
+{{ fail "replicaCount above 1 is not supported: the session store and the passkey challenge store are in the memory of one pod. Scaling out needs a shared session store first." }}
+{{- end -}}
+{{/*
+Passkeys are bound to the relying party id, which is configuration only.
+An rp id without the origins the browser runs the ceremony from fails at
+startup anyway; failing the render says so earlier.
+*/}}
+{{- if and .Values.config.passkey.rpId (not .Values.config.passkey.origins) -}}
+{{ fail "config.passkey.rpId is set but config.passkey.origins is empty: set the exact https origins the SPA is served from, each config.passkey.rpId or a subdomain of it." }}
+{{- end -}}
+{{- if and .Values.config.sessionAllowPlainHttp (or .Values.ingress.enabled .Values.httpRoute.enabled) -}}
+{{ fail "config.sessionAllowPlainHttp is true with an ingress or a gateway in front: it drops the Secure attribute and the __Host- prefix of the session cookie, which is for a plain HTTP localhost setup only. Leave it false." }}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -186,6 +216,43 @@ spec:
               value: {{ .Values.config.rateLimitPer | quote }}
             - name: INVITE_DEFAULT_TTL
               value: {{ .Values.config.inviteDefaultTtl | quote }}
+            {{- with .Values.config.loginRateLimits }}
+            {{- if .clientBurst }}
+            - name: LOGIN_RATE_LIMIT_CLIENT_BURST
+              value: {{ .clientBurst | quote }}
+            {{- end }}
+            {{- if .clientPer }}
+            - name: LOGIN_RATE_LIMIT_CLIENT_PER
+              value: {{ .clientPer | quote }}
+            {{- end }}
+            {{- if .loginBurst }}
+            - name: LOGIN_RATE_LIMIT_LOGIN_BURST
+              value: {{ .loginBurst | quote }}
+            {{- end }}
+            {{- if .loginPer }}
+            - name: LOGIN_RATE_LIMIT_LOGIN_PER
+              value: {{ .loginPer | quote }}
+            {{- end }}
+            {{- if .ceilingBurst }}
+            - name: LOGIN_RATE_LIMIT_CEILING_BURST
+              value: {{ .ceilingBurst | quote }}
+            {{- end }}
+            {{- if .ceilingPer }}
+            - name: LOGIN_RATE_LIMIT_CEILING_PER
+              value: {{ .ceilingPer | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.config.passkey.rpId }}
+            - name: PASSKEY_RP_ID
+              value: {{ .Values.config.passkey.rpId | quote }}
+            - name: PASSKEY_RP_DISPLAY_NAME
+              value: {{ .Values.config.passkey.rpDisplayName | quote }}
+            - name: PASSKEY_ORIGINS
+              value: {{ join "," .Values.config.passkey.origins | quote }}
+            {{- end }}
+            {{- with include "solobill.objectStore.env" . }}
+            {{- . | nindent 12 }}
+            {{- end }}
           {{- if .Values.startupProbe.enabled }}
           startupProbe:
             httpGet:

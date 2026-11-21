@@ -11,9 +11,9 @@
 -- current_setting(..., true)::uuid reads that same value back.
 
 -- name: CreateCustomer :one
-INSERT INTO customers (tenant_id, name, email, vat_id, street, postal_code, city, country_code)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at;
+INSERT INTO customers (tenant_id, name, email, vat_id, street, address_line2, postal_code, city, country_code, number, document_language)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at, document_language, number, address_line2;
 
 -- GetCustomerByID deliberately does not filter on deleted_at: a later
 -- document still has to resolve a deleted customer by id (see
@@ -21,7 +21,7 @@ RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country
 -- must keep answering for an already soft-deleted row.
 --
 -- name: GetCustomerByID :one
-SELECT id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at, document_language, number, address_line2
 FROM customers
 WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid;
 
@@ -32,10 +32,10 @@ WHERE id = $1 AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')
 -- a picker expects it alphabetical, not in creation order.
 --
 -- name: ListCustomers :many
-SELECT id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at
+SELECT id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at, document_language, number, address_line2
 FROM customers
 WHERE deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-ORDER BY name;
+ORDER BY name, id;
 
 -- UpdateCustomer is guarded by "AND deleted_at IS NULL": a soft-deleted
 -- customer cannot be edited back to life through an ordinary update: see
@@ -48,12 +48,15 @@ SET name = $2,
     email = $3,
     vat_id = $4,
     street = $5,
-    postal_code = $6,
-    city = $7,
-    country_code = $8,
+    address_line2 = $6,
+    postal_code = $7,
+    city = $8,
+    country_code = $9,
+    number = $10,
+    document_language = $11,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at;
+RETURNING id, tenant_id, name, email, vat_id, street, postal_code, city, country_code, deleted_at, created_at, updated_at, document_language, number, address_line2;
 
 -- DeleteCustomer is the soft delete itself: an UPDATE, never a DELETE,
 -- guarded by "AND deleted_at IS NULL" so a second call against an

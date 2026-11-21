@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-import en from './i18n/locales/en.json'
+import { en } from './i18n/locales'
 import App from './App.vue'
 
 describe('App', () => {

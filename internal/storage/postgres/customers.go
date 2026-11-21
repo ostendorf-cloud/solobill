@@ -24,14 +24,17 @@ func (r *customerRepository) Create(ctx context.Context, customer storage.Custom
 	}
 
 	row, err := sqlcgen.New(tx).CreateCustomer(ctx, sqlcgen.CreateCustomerParams{
-		TenantID:    customer.TenantID,
-		Name:        customer.Name,
-		Email:       ptrToText(customer.Email),
-		VatID:       ptrToText(customer.VATID),
-		Street:      ptrToText(customer.Street),
-		PostalCode:  ptrToText(customer.PostalCode),
-		City:        ptrToText(customer.City),
-		CountryCode: ptrToText(customer.CountryCode),
+		TenantID:         customer.TenantID,
+		Name:             customer.Name,
+		Email:            ptrToText(customer.Email),
+		VatID:            ptrToText(customer.VATID),
+		Street:           ptrToText(customer.Street),
+		AddressLine2:     ptrToText(customer.AddressLine2),
+		PostalCode:       ptrToText(customer.PostalCode),
+		City:             ptrToText(customer.City),
+		CountryCode:      ptrToText(customer.CountryCode),
+		Number:           ptrToText(customer.Number),
+		DocumentLanguage: documentLanguageOrDefault(customer.DocumentLanguage),
 	})
 	if err != nil {
 		return storage.Customer{}, mapWriteError(err)
@@ -96,14 +99,17 @@ func (r *customerRepository) Update(ctx context.Context, customer storage.Custom
 	}
 
 	row, err := sqlcgen.New(tx).UpdateCustomer(ctx, sqlcgen.UpdateCustomerParams{
-		ID:          customer.ID,
-		Name:        customer.Name,
-		Email:       ptrToText(customer.Email),
-		VatID:       ptrToText(customer.VATID),
-		Street:      ptrToText(customer.Street),
-		PostalCode:  ptrToText(customer.PostalCode),
-		City:        ptrToText(customer.City),
-		CountryCode: ptrToText(customer.CountryCode),
+		ID:               customer.ID,
+		Name:             customer.Name,
+		Email:            ptrToText(customer.Email),
+		VatID:            ptrToText(customer.VATID),
+		Street:           ptrToText(customer.Street),
+		AddressLine2:     ptrToText(customer.AddressLine2),
+		PostalCode:       ptrToText(customer.PostalCode),
+		City:             ptrToText(customer.City),
+		CountryCode:      ptrToText(customer.CountryCode),
+		Number:           ptrToText(customer.Number),
+		DocumentLanguage: documentLanguageOrDefault(customer.DocumentLanguage),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -142,17 +148,31 @@ func (r *customerRepository) Delete(ctx context.Context, id uuid.UUID) error {
 
 func customerFromRow(row sqlcgen.Customer) storage.Customer {
 	return storage.Customer{
-		ID:          row.ID,
-		TenantID:    row.TenantID,
-		Name:        row.Name,
-		Email:       textToPtr(row.Email),
-		VATID:       textToPtr(row.VatID),
-		Street:      textToPtr(row.Street),
-		PostalCode:  textToPtr(row.PostalCode),
-		City:        textToPtr(row.City),
-		CountryCode: textToPtr(row.CountryCode),
-		DeletedAt:   timeToPtr(row.DeletedAt),
-		CreatedAt:   timeFromTimestamptz(row.CreatedAt),
-		UpdatedAt:   timeFromTimestamptz(row.UpdatedAt),
+		ID:               row.ID,
+		TenantID:         row.TenantID,
+		Name:             row.Name,
+		Email:            textToPtr(row.Email),
+		VATID:            textToPtr(row.VatID),
+		Street:           textToPtr(row.Street),
+		AddressLine2:     textToPtr(row.AddressLine2),
+		PostalCode:       textToPtr(row.PostalCode),
+		City:             textToPtr(row.City),
+		CountryCode:      textToPtr(row.CountryCode),
+		Number:           textToPtr(row.Number),
+		DocumentLanguage: storage.DocumentLanguage(row.DocumentLanguage),
+		DeletedAt:        timeToPtr(row.DeletedAt),
+		CreatedAt:        timeFromTimestamptz(row.CreatedAt),
+		UpdatedAt:        timeFromTimestamptz(row.UpdatedAt),
 	}
+}
+
+// documentLanguageOrDefault maps the unset zero value to German, the
+// column's own DEFAULT, so a caller that leaves the language out gets the
+// same result as an insert that omits the column.
+func documentLanguageOrDefault(l storage.DocumentLanguage) string {
+	if l == "" {
+		return string(storage.DocumentLanguageGerman)
+	}
+
+	return string(l)
 }

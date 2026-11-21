@@ -2,6 +2,11 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+# Request body limits at the ingress (docs/api.md upload limits). Owned by
+# issue #82 alone, together with templates/_requestlimits.tpl. Empty until
+# then.
+requestLimits: {}
+
 replicaCount: 1
 
 image:
@@ -394,9 +399,43 @@ config:
   # which is correct with no ingress or proxy in front of the pod.
   trustedProxies: []
 
-  # Token bucket applied to local login and invite accept.
+  # General per client token bucket, applied to every public route.
   rateLimitBurst: 10
   rateLimitPer: "1m"
+
+  # The stricter limits in front of the routes that verify a password, a
+  # TOTP code or a passkey (govue's account and passkey handlers, issue
+  # #86). Each costs an Argon2id derivation, and govue runs one at a time
+  # by default, so without them anyone keeps the hasher busy and every
+  # login answers 503. Empty strings and 0 keep cmd/solobill's defaults,
+  # the values of the wishlist adoption:
+  #   client:  5 per minute per client address
+  #   login:   10 per 15 minutes per tenant, login and client address
+  #   ceiling: 100 per hour per tenant and login, from any address
+  # They key on the client address, so they only work per client with
+  # trustedProxies set behind an ingress or a gateway.
+  loginRateLimits:
+    clientBurst: 0
+    clientPer: ""
+    loginBurst: 0
+    loginPer: ""
+    ceilingBurst: 0
+    ceilingPer: ""
+
+  # --------------------------------------------------------------------
+  # Passkeys
+  # --------------------------------------------------------------------
+  # Off while rpId is empty. The relying party is configuration, never
+  # read off a request's Host header. rpId is the host every passkey is
+  # bound to, for example "solobill.example.com". It cannot change later:
+  # a passkey registered for one RP id is refused for every other, so a
+  # change loses every passkey. origins are the exact origins the browser
+  # runs the ceremony from, https only, each rpId or a subdomain of it,
+  # for example ["https://solobill.example.com"]. Required with rpId.
+  passkey:
+    rpId: ""
+    rpDisplayName: "solobill"
+    origins: []
 
   # How long a freshly created invite stays redeemable when a
   # create-invite request does not specify one.
@@ -502,7 +541,7 @@ migrationJob:
     # (docker-compose.yaml's own comment: "Pinned to 2.38.1, the latest
     # patch in the 2.38 line mise.toml already pins dbmate to").
     repository: ghcr.io/amacneil/dbmate
-    tag: "2.38.1"
+    tag: "2.38.2"
   annotations: {}
   resources:
     requests:
@@ -510,3 +549,75 @@ migrationJob:
       memory: 64Mi
     limits:
       memory: 128Mi
+
+# The S3 compatible store for receipts, imported originals and the logo
+# (docs/concepts/solobill.md, "Object store client and configuration").
+# Owned by issue #75 alone, together with templates/_objectstore.tpl and
+# templates/files-verify-cronjob.yaml.
+#
+# The bucket is not created here. What it must provide, set up in the
+# infrastructure repository:
+#   - object lock enabled, which S3 allows only when the bucket is created;
+#   - versioning enabled;
+#   - a user limited to this bucket, its key pair in a Secret (below);
+#   - a policy allowing s3:PutObject, s3:GetObject, s3:GetObjectVersion,
+#     s3:GetBucketVersioning, s3:GetBucketObjectLockConfiguration,
+#     s3:PutObjectRetention and s3:GetObjectRetention, and no delete action;
+#   - its own backup, since the database backup covers the metadata only.
+# The process starts in every case: while the bucket is missing,
+# unreachable, unversioned (with requireVersioning) or unlocked (with
+# objectLock), only the file routes answer 503 and GET /api/v1/status
+# reports it.
+objectStore:
+  # Base URL of the S3 API, scheme and host only, for example
+  # "http://s3.seaweedfs.svc:8333". Empty: no store is configured.
+  endpoint: ""
+  # Required when endpoint is set.
+  bucket: ""
+  region: "us-east-1"
+  # SeaweedFS needs path style addressing.
+  usePathStyle: true
+  # Request compliance mode retention per object (end of the upload year
+  # plus ten years) and gate the file routes while the bucket has no
+  # object lock. Set it to true once the bucket has object lock.
+  # Decide before production: with the default false, no object is locked,
+  # and anyone holding the bucket key can delete or overwrite a receipt
+  # (versioning keeps the earlier version, the lock is what prevents the
+  # change).
+  objectLock: false
+  # Gate the file routes while the bucket has no versioning.
+  requireVersioning: true
+  # The S3 key pair, from a Secret this chart does not create. name empty
+  # reads it from existingSecret.name. A key left empty is not rendered
+  # (an anonymous store, never in a real deployment).
+  existingSecret:
+    name: ""
+    accessKeyIdKey: "S3_ACCESS_KEY_ID"
+    secretAccessKeyKey: "S3_SECRET_ACCESS_KEY"
+  # NetworkPolicy destination of the object store egress rule, the same
+  # shape as networkPolicy.egress.postgres. The port is read from
+  # endpoint. Empty: any destination on that port.
+  # Decide before production: left empty, the pods may open a connection to
+  # any address on the store's port, not only to the store. Set
+  # namespaceSelector and podSelector (or ipBlock) to the store's pods.
+  egress:
+    namespaceSelector: {}
+    podSelector: {}
+    ipBlock: {}
+  # The CronJob running "solobill files verify", the weekly integrity
+  # scan. Rendered only while endpoint is set. A failed Job is a finding:
+  # alert on it.
+  verify:
+    enabled: true
+    # Sundays 03:17.
+    schedule: "17 3 * * 0"
+    # The Job fails after this many seconds, so a hanging store cannot
+    # keep a scan running into the next one.
+    activeDeadlineSeconds: 3600
+    annotations: {}
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi

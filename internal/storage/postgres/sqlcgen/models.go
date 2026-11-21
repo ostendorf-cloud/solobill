@@ -37,18 +37,21 @@ type CatalogueItem struct {
 }
 
 type Customer struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	Name        string
-	Email       pgtype.Text
-	VatID       pgtype.Text
-	Street      pgtype.Text
-	PostalCode  pgtype.Text
-	City        pgtype.Text
-	CountryCode pgtype.Text
-	DeletedAt   pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	Name             string
+	Email            pgtype.Text
+	VatID            pgtype.Text
+	Street           pgtype.Text
+	PostalCode       pgtype.Text
+	City             pgtype.Text
+	CountryCode      pgtype.Text
+	DeletedAt        pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	DocumentLanguage string
+	Number           pgtype.Text
+	AddressLine2     pgtype.Text
 }
 
 type Document struct {
@@ -98,6 +101,21 @@ type DocumentNumber struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type File struct {
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	Purpose          string
+	ObjectKey        string
+	ObjectVersionID  pgtype.Text
+	Sha256           string
+	SizeBytes        int64
+	ContentType      string
+	OriginalFilename string
+	UploadedBy       pgtype.UUID
+	UploadedAt       pgtype.Timestamptz
+	RetainUntil      pgtype.Timestamptz
+}
+
 type Invite struct {
 	ID         uuid.UUID
 	TenantID   uuid.UUID
@@ -111,10 +129,64 @@ type Invite struct {
 	TotpSecret pgtype.Text
 }
 
+type PasskeyCredential struct {
+	CredentialID []byte
+	TenantID     uuid.UUID
+	AccountID    uuid.UUID
+	Name         string
+	SignCount    int64
+	Data         []byte
+	CreatedAt    pgtype.Timestamptz
+	LastUsedAt   pgtype.Timestamptz
+	Seq          pgtype.Int8
+}
+
+type PasskeyUserHandle struct {
+	TenantID  uuid.UUID
+	AccountID uuid.UUID
+	Handle    []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+type SellerProfile struct {
+	TenantID           uuid.UUID
+	LegalName          string
+	Street             string
+	AddressLine2       pgtype.Text
+	PostalCode         string
+	City               string
+	CountryCode        string
+	TaxNumber          pgtype.Text
+	VatID              pgtype.Text
+	KleinunternehmerID pgtype.Text
+	DefaultVatRegime   string
+	DefaultLanguage    string
+	BankName           pgtype.Text
+	Iban               pgtype.Text
+	Bic                pgtype.Text
+	Email              pgtype.Text
+	Phone              pgtype.Text
+	Website            pgtype.Text
+	FooterText         pgtype.Text
+	NumberFormats      []byte
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type Tenant struct {
 	ID        uuid.UUID
 	Slug      string
 	Name      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type VatRegimePeriod struct {
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	ValidFrom    pgtype.Date
+	Regime       string
+	Note         pgtype.Text
+	SupersedesID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
 }

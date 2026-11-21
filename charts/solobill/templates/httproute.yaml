@@ -15,7 +15,8 @@ metadata:
   name: {{ include "solobill.fullname" . }}
   labels:
     {{- include "solobill.labels" . | nindent 4 }}
-  {{- with .Values.httpRoute.annotations }}
+  {{- /* httpRoute.annotations win over the request limit hook of issue #82, see _requestlimits.tpl. */}}
+  {{- with merge (deepCopy (.Values.httpRoute.annotations | default dict)) (fromYaml (include "solobill.requestLimits.annotations" .)) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

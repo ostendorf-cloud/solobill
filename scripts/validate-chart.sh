@@ -69,12 +69,15 @@ oidc_valid="${oidc_valid},config.oidc.defaultTenantSlug=acme"
 
 # The two external routing combinations, each valid on its own: ingress enabled with its own
 # required config.trustedProxies guard satisfied, httpRoute enabled with both of its own
-# required parentRefs fields set.
+# required parentRefs fields set and config.trustedProxies set as well.
 ingress_valid="config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx"
 ingress_valid="${ingress_valid},ingress.hosts[0].host=solobill.example.org"
 ingress_valid="${ingress_valid},ingress.hosts[0].paths[0].path=/,ingress.hosts[0].paths[0].pathType=Prefix"
-httproute_valid="httpRoute.enabled=true,httpRoute.hostnames[0]=solobill.example.org"
+httproute_valid="config.trustedProxies[0]=10.0.0.0/8,httpRoute.enabled=true,httpRoute.hostnames[0]=solobill.example.org"
 httproute_valid="${httproute_valid},httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
+
+# Passkeys on, with the relying party and its origin (issue #86).
+passkey_valid="config.passkey.rpId=solobill.example.org,config.passkey.origins[0]=https://solobill.example.org"
 
 # The NetworkPolicy renders on the default values already (networkPolicy.enabled defaults to
 # true), so this combination is the one where every optional scope block is actually set: an
@@ -93,6 +96,7 @@ names=(
   "httpRoute enabled"
   "networkPolicy fully scoped"
   "networkPolicy with the egress half off"
+  "passkeys enabled behind an ingress"
 )
 
 # Each entry is one combination's --set arguments, matching the corresponding
@@ -105,6 +109,7 @@ sets=(
   "${baseline},${httproute_valid}"
   "${baseline},${oidc_valid},${networkpolicy_scoped}"
   "${baseline},networkPolicy.egress.enabled=false"
+  "${baseline},${ingress_valid},${passkey_valid}"
 )
 
 # kubeconform's default schema location carries no Gateway API schemas. This second
@@ -165,6 +170,9 @@ if [ "$mode" = "lint" ]; then
     "networkPolicy.egress.postgres.port empty while egress enabled"
     "networkPolicy.egress.oidc.port empty while egress enabled"
     "service.port equals adminPort"
+    "httpRoute.enabled true, config.trustedProxies empty"
+    "config.passkey.rpId set, config.passkey.origins empty"
+    "config.sessionAllowPlainHttp true behind an ingress"
   )
 
   guard_sets=(
@@ -175,8 +183,8 @@ if [ "$mode" = "lint" ]; then
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser="
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_app"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,ingress.enabled=true,ingress.className=nginx"
-    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,httpRoute.enabled=true,httpRoute.parentRefs.name=,httpRoute.parentRefs.namespace=gateway-system"
-    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,httpRoute.enabled=true,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace="
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.trustedProxies[0]=10.0.0.0/8,httpRoute.enabled=true,httpRoute.parentRefs.name=,httpRoute.parentRefs.namespace=gateway-system"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.trustedProxies[0]=10.0.0.0/8,httpRoute.enabled=true,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace="
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:6432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.oidc.issuerUrl=http://keycloak.identity.svc.cluster.local:8080/realms/solobill"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc/solobill?sslmode=require&port=abc,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
@@ -186,6 +194,9 @@ if [ "$mode" = "lint" ]; then
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,networkPolicy.egress.postgres.port=null"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,networkPolicy.egress.oidc.port=null"
     "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,service.port=8081"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,httpRoute.enabled=true,httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.passkey.rpId=solobill.example.org"
+    "existingSecret.name=solobill-secrets,config.databaseUrl=postgres://postgres.example.svc:5432/solobill?sslmode=require,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator,config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx,config.sessionAllowPlainHttp=true"
   )
 
   # The distinctive lead sentence of each guard's own fail message (see
@@ -214,6 +225,9 @@ if [ "$mode" = "lint" ]; then
     "networkPolicy.egress.postgres.port is required while networkPolicy.egress.enabled is true"
     "networkPolicy.egress.oidc.port is required while networkPolicy.egress.enabled is true"
     "service.port and adminPort are both"
+    "httpRoute.enabled is true but config.trustedProxies is empty"
+    "config.passkey.rpId is set but config.passkey.origins is empty"
+    "config.sessionAllowPlainHttp is true with an ingress or a gateway in front"
   )
 
   for i in "${!guard_names[@]}"; do
