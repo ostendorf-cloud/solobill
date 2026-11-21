@@ -1007,6 +1007,65 @@ describe('DocumentEditorView', () => {
     })
   })
 
+  describe('answers that arrive late', () => {
+    it('does not move to the new address or announce a save after unmount', async () => {
+      let answer: (doc: Doc) => void = () => {}
+      mockApi({
+        post: () =>
+          new Promise((resolve) => {
+            answer = resolve
+          }),
+      })
+      const user = userEvent.setup()
+      const { router, unmount } = await renderView()
+      await ready()
+      await choose(/^Customer/, 'Customer Ltd')
+      await fillFirstLine(user)
+      await user.click(screen.getByRole('button', { name: 'Save draft' }))
+      await vi.waitFor(() => expect(rec.posts).toHaveLength(1))
+
+      const replace = vi.spyOn(router, 'replace')
+      const push = vi.spyOn(router, 'push')
+      unmount()
+      answer(draftDoc({ id: 'd-new' }))
+      await wait(30)
+
+      expect(replace).not.toHaveBeenCalled()
+      expect(push).not.toHaveBeenCalled()
+      expect(toastTitles()).not.toContain('The draft was saved.')
+    })
+
+    it('shows the draft of the address the visitor is on, not an older one that answers late', async () => {
+      mockApi()
+      const base = vi.mocked(apiClient.get).getMockImplementation()
+      const pending: Record<string, (doc: Doc) => void> = {}
+      vi.mocked(apiClient.get).mockImplementation((path: string, options?: unknown) =>
+        path.startsWith('/documents/d-')
+          ? new Promise((resolve) => {
+              pending[path] = resolve
+            })
+          : (base?.(path, options as never) ?? Promise.reject(new Error('no mock'))),
+      )
+      const { router } = await renderView('/documents/edit/d-1')
+      await vi.waitFor(() => expect(pending['/documents/d-1']).toBeDefined())
+      await router.push('/documents/edit/d-2')
+      await vi.waitFor(() => expect(pending['/documents/d-2']).toBeDefined())
+      const withDescription = (id: string, description: string) =>
+        draftDoc({
+          id,
+          lines: (draftDoc().lines ?? []).map((line) => ({ ...line, description })),
+        })
+
+      pending['/documents/d-2']?.(withDescription('d-2', 'Newer draft'))
+      expect(await screen.findByDisplayValue('Newer draft')).toBeVisible()
+      pending['/documents/d-1']?.(withDescription('d-1', 'Older draft'))
+      await wait(30)
+
+      expect(screen.getByLabelText(/^Description \(1\)/)).toHaveValue('Newer draft')
+      expect(screen.queryByDisplayValue('Older draft')).toBeNull()
+    })
+  })
+
   describe('discount errors', () => {
     it('marks the line discount value, not the mode, and moves the focus there', async () => {
       mockApi()

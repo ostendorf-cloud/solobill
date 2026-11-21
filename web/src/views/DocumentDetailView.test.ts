@@ -1,7 +1,8 @@
 import { ApiError, ErrorCode, createGovueI18n, useToasts } from '@ostendorf-cloud/govue'
-import { render, screen, within } from '@testing-library/vue'
+import { fireEvent, render, screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
@@ -152,6 +153,8 @@ async function renderView(id = 'd-1', locale: 'en' | 'de' = 'en') {
 function apiError(status: number, code: string, details?: Record<string, string>) {
   return new ApiError({ code, message: 'failed', status, details })
 }
+
+const wait = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function toastTitles(): string[] {
   return useToasts().toasts.value.map((toast) => toast.title)
@@ -550,6 +553,97 @@ describe('DocumentDetailView', () => {
       expect(toastTitles()).toContain(
         'The session could not be loaded. Saving and deleting are blocked. Reload the page.',
       )
+    })
+  })
+
+  describe('the handlers refuse without a session on their own', () => {
+    const SESSION_TOAST =
+      'The session could not be loaded. Saving and deleting are blocked. Reload the page.'
+
+    /** forceClick clicks a button that the view has disabled, so the handler
+     *  itself, not the disabled attribute, has to refuse. */
+    async function forceClick(button: HTMLElement): Promise<void> {
+      button.removeAttribute('disabled')
+      await fireEvent.click(button)
+    }
+
+    async function sessionGone(): Promise<void> {
+      me.value = null
+      sessionFailed.value = true
+      await nextTick()
+    }
+
+    it('does not start a correction', async () => {
+      mockApi(issued)
+      await renderView()
+      const button = await screen.findByRole('button', { name: 'Correct invoice' })
+
+      // The button disappears with the session once the view re-renders: the
+      // click lands first, on the button the owner was looking at.
+      me.value = null
+      sessionFailed.value = true
+      await fireEvent.click(button)
+      await wait(30)
+
+      expect(posts).toHaveLength(0)
+      expect(toastTitles()).toContain(SESSION_TOAST)
+    })
+
+    it('does not create an invoice from an offer', async () => {
+      mockApi(offer)
+      await renderView('d-4')
+      await screen.findByRole('button', { name: 'Create invoice from offer' })
+
+      await sessionGone()
+      await forceClick(screen.getByRole('button', { name: 'Create invoice from offer' }))
+      await wait(30)
+
+      expect(posts).toHaveLength(0)
+      expect(toastTitles()).toContain(SESSION_TOAST)
+    })
+
+    it('does not discard a draft', async () => {
+      mockApi(draft)
+      const user = userEvent.setup()
+      await renderView()
+      await user.click(await screen.findByRole('button', { name: 'Discard draft' }))
+      const dialog = await screen.findByRole('dialog')
+
+      await sessionGone()
+      await user.click(within(dialog).getByRole('button', { name: 'Discard draft' }))
+      await wait(30)
+
+      expect(deletes).toHaveLength(0)
+      expect(toastTitles()).toContain(SESSION_TOAST)
+    })
+  })
+
+  describe('a customer that cannot be read', () => {
+    it('still shows the document and a dash for the name', async () => {
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path.startsWith('/customers/')) {
+          return Promise.reject(apiError(500, ErrorCode.internal))
+        }
+        return Promise.resolve(draft)
+      })
+      await renderView()
+
+      expect(await screen.findByRole('heading', { name: 'Draft invoice' })).toBeVisible()
+      const term = screen.getByText('Customer', { selector: 'dt' })
+      expect(term.nextElementSibling).toHaveTextContent(/^–$/)
+      expect(screen.getByRole('table', { name: 'Lines of the document' })).toBeVisible()
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+
+    it('renders the customer name as text, never as markup', async () => {
+      const evil = '<img src=x onerror=1>'
+      vi.mocked(apiClient.get).mockImplementation((path: string) =>
+        Promise.resolve(path.startsWith('/customers/') ? { ...customer, name: evil } : draft),
+      )
+      await renderView()
+
+      expect(await screen.findByText(evil)).toBeVisible()
+      expect(document.querySelector('img[src="x"]')).toBeNull()
     })
   })
 

@@ -195,7 +195,7 @@ describe('DocumentsView', () => {
 
   it('keeps a dash when the customer names cannot be read', async () => {
     vi.mocked(apiClient.get).mockImplementation((path: string) =>
-      path === '/customers'
+      path.startsWith('/customers')
         ? Promise.reject(apiError(500, ErrorCode.internal))
         : Promise.resolve({ documents: [original] }),
     )
@@ -204,6 +204,154 @@ describe('DocumentsView', () => {
     const table = await screen.findByRole('table', { name: 'List of documents' })
     expect(within(table).getByRole('rowheader')).toHaveTextContent('RE-20260009')
     expect(within(table).getAllByText('–').length).toBeGreaterThan(0)
+  })
+
+  it('renders a customer name as text, never as markup', async () => {
+    const evil = '<img src=x onerror=1>'
+    vi.mocked(apiClient.get).mockImplementation((path: string) =>
+      Promise.resolve(
+        path === '/customers'
+          ? { customers: [{ id: 'c-1', name: evil }] }
+          : { documents: [original] },
+      ),
+    )
+    renderView()
+
+    const table = await screen.findByRole('table', { name: 'List of documents' })
+    expect(within(table).getByText(evil)).toBeVisible()
+    expect(table.querySelector('img')).toBeNull()
+  })
+
+  describe('customers the list of active customers does not hold', () => {
+    const gone = (n: number) =>
+      doc({ id: `d-gone-${n}`, customer_id: `c-gone-${n}`, number: `RE-${n}` })
+
+    /** singleReads are the ids read through GET /customers/{id}. */
+    function singleReads(): string[] {
+      return vi
+        .mocked(apiClient.get)
+        .mock.calls.map(([path]) => path)
+        .filter((path) => path.startsWith('/customers/'))
+    }
+
+    it('reads a deleted customer by id and shows the name', async () => {
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.resolve(customers)
+        }
+        if (path === '/customers/c-gone-1') {
+          return Promise.resolve({ id: 'c-gone-1', name: 'Gone GmbH' })
+        }
+        return Promise.resolve({ documents: [original, gone(1)] })
+      })
+      renderView()
+
+      expect(await screen.findByText('Gone GmbH')).toBeVisible()
+      expect(screen.getByText('Customer Ltd')).toBeVisible()
+      // The active customer is not read a second time.
+      expect(singleReads()).toEqual(['/customers/c-gone-1'])
+    })
+
+    it('reads each missing customer once, however many documents name it', async () => {
+      const same = (n: number) => doc({ id: `d-${n}`, customer_id: 'c-gone-1', number: `RE-${n}` })
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.resolve({ customers: [] })
+        }
+        if (path.startsWith('/customers/')) {
+          return Promise.resolve({ id: 'c-gone-1', name: 'Gone GmbH' })
+        }
+        return Promise.resolve({ documents: [same(1), same(2), same(3)] })
+      })
+      renderView()
+
+      await screen.findAllByText('Gone GmbH')
+      expect(singleReads()).toEqual(['/customers/c-gone-1'])
+    })
+
+    it('reads at most 20 customers', async () => {
+      const many = Array.from({ length: 25 }, (_, i) => gone(i))
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.resolve({ customers: [] })
+        }
+        if (path.startsWith('/customers/')) {
+          return Promise.resolve({ id: path, name: 'Gone' })
+        }
+        return Promise.resolve({ documents: many })
+      })
+      renderView()
+
+      await vi.waitFor(() => expect(singleReads()).toHaveLength(20))
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(singleReads()).toHaveLength(20)
+      expect(new Set(singleReads()).size).toBe(20)
+    })
+
+    it('keeps a dash when one of the reads fails and shows the others', async () => {
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.resolve({ customers: [] })
+        }
+        if (path === '/customers/c-gone-1') {
+          return Promise.reject(apiError(404, ErrorCode.notFound))
+        }
+        if (path === '/customers/c-gone-2') {
+          return Promise.resolve({ id: 'c-gone-2', name: 'Two GmbH' })
+        }
+        return Promise.resolve({ documents: [gone(1), gone(2)] })
+      })
+      renderView()
+
+      expect(await screen.findByText('Two GmbH')).toBeVisible()
+      const rows = screen.getAllByRole('row')
+      expect(within(rows[1]).getByText('–')).toBeVisible()
+    })
+
+    it('sends a 401 of a single read to the login', async () => {
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.resolve({ customers: [] })
+        }
+        if (path.startsWith('/customers/')) {
+          return Promise.reject(apiError(401, ErrorCode.unauthenticated))
+        }
+        return Promise.resolve({ documents: [gone(1)] })
+      })
+      const { router } = renderView()
+
+      await vi.waitFor(() => expect(me.value).toBeNull())
+      await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+    })
+
+    it('aborts the reads on unmount and changes nothing when an answer arrives afterwards', async () => {
+      let answer: (v: unknown) => void = () => {}
+      vi.mocked(apiClient.get).mockImplementation((path: string) => {
+        if (path === '/customers') {
+          return Promise.resolve({ customers: [] })
+        }
+        if (path.startsWith('/customers/')) {
+          return new Promise((resolve) => {
+            answer = resolve
+          })
+        }
+        return Promise.resolve({ documents: [gone(1)] })
+      })
+      const { router, unmount } = renderView()
+      await vi.waitFor(() => expect(singleReads()).toHaveLength(1))
+      const call = vi.mocked(apiClient.get).mock.calls.find(([p]) => p === '/customers/c-gone-1')
+      const signal = (call?.[1] as { signal: AbortSignal }).signal
+      expect(signal.aborted).toBe(false)
+
+      const push = vi.spyOn(router, 'push')
+      unmount()
+      expect(signal.aborted).toBe(true)
+      answer({ id: 'c-gone-1', name: 'Late GmbH' })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(screen.queryByText('Late GmbH')).toBeNull()
+      expect(push).not.toHaveBeenCalled()
+    })
   })
 
   it('shows the empty state', async () => {

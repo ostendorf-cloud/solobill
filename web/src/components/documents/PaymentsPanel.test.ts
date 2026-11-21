@@ -97,8 +97,8 @@ describe('PaymentsPanel', () => {
     expect(within(table).getByText('2026-12-03')).toBeVisible()
     expect(within(table).getByText('Bank transfer')).toBeVisible()
     expect(within(table).getByText('100.00 EUR')).toBeVisible()
-    expect(screen.getByTestId('paid')).toHaveTextContent('100.00 EUR')
-    expect(screen.getByTestId('open')).toHaveTextContent('137.50 EUR')
+    expect(screen.getByTestId('paid')).toHaveTextContent(/^100\.00 EUR$/)
+    expect(screen.getByTestId('open')).toHaveTextContent(/^137\.50 EUR$/)
     expect(screen.getByText('Open amount')).toBeVisible()
     expect(screen.queryByText('Refund due')).toBeNull()
     expect(emitted().loaded).toEqual([['d-2']])
@@ -128,7 +128,11 @@ describe('PaymentsPanel', () => {
     renderPanel()
 
     expect(await screen.findByText('Refund due')).toBeVisible()
-    expect(screen.getByTestId('open')).toHaveTextContent('25.00 EUR')
+    // The refund due is shown as a positive amount under its own label, never
+    // as a negative "open amount" and never next to the label "Open amount".
+    expect(screen.getByTestId('open')).toHaveTextContent(/^25\.00 EUR$/)
+    expect(screen.queryByText('Open amount')).toBeNull()
+    expect(screen.getByTestId('paid')).toHaveTextContent(/^75\.00 EUR$/)
     expect(screen.getByText(/A refund of 25.00 EUR is due/)).toBeVisible()
     const table = screen.getByRole('table', { name: 'Payments of this invoice' })
     expect(within(table).getByText('-25.00 EUR')).toBeVisible()
@@ -140,6 +144,9 @@ describe('PaymentsPanel', () => {
     renderPanel()
 
     expect(await screen.findByText('The invoice is paid in full.')).toBeVisible()
+    expect(screen.getByTestId('open')).toHaveTextContent(/^0\.00 EUR$/)
+    expect(screen.getByText('Open amount')).toBeVisible()
+    expect(screen.queryByText('Refund due')).toBeNull()
   })
 
   it('keeps the refund button off while no refund is due', async () => {
@@ -332,6 +339,25 @@ describe('PaymentsPanel', () => {
       expect(within(table).queryByRole('button', { name: /^Reverse/ })).toBeNull()
       expect(within(table).getByText('Reversed')).toBeVisible()
       expect(within(table).getByText('Reversal')).toBeVisible()
+    })
+
+    it('does not post a reversal when the session is gone by the time it is confirmed', async () => {
+      mockApi(answer([paid], 10000, 13750))
+      const user = userEvent.setup()
+      renderPanel()
+
+      await user.click(await screen.findByRole('button', { name: /^Reverse the entry/ }))
+      const dialog = await screen.findByRole('dialog')
+      me.value = null
+      sessionFailed.value = true
+      // The confirmation button of the dialog stays enabled: the handler must refuse.
+      await user.click(within(dialog).getByRole('button', { name: 'Reverse' }))
+      await new Promise((resolve) => setTimeout(resolve, 30))
+
+      expect(posts).toHaveLength(0)
+      expect(toastTitles()).toContain(
+        'The session could not be loaded. Saving and deleting are blocked. Reload the page.',
+      )
     })
 
     it('tells a conflict and reloads the list', async () => {

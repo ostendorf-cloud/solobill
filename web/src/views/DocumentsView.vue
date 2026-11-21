@@ -40,6 +40,8 @@ const year = ref(ALL)
 
 const documents = ref<Doc[]>([])
 const customers = ref<Map<string, string>>(new Map())
+// Customers GET /customers does not list (deleted ones), read one by one.
+const deletedNames = ref<Map<string, string>>(new Map())
 const loading = ref(true)
 const loadFailed = ref(false)
 const loadRequestId = ref('')
@@ -119,11 +121,51 @@ async function load(showSkeleton = true): Promise<void> {
     if (names.status === 'fulfilled') {
       customers.value = new Map(names.value.customers.map((c) => [c.id, c.name] as const))
     }
+    void loadDeletedNames(stale)
   } finally {
     if (!stale()) {
       loading.value = false
     }
   }
+}
+
+/** MAX_NAME_LOOKUPS bounds the single reads of customers that the list of
+ *  active customers does not hold. */
+const MAX_NAME_LOOKUPS = 20
+
+/** loadDeletedNames reads the customers of the listed documents that
+ *  GET /customers does not answer for, which are the deleted ones:
+ *  GET /customers/{id} still does. Each id is read once, a failure leaves a
+ *  dash, and a newer list or an unmount drops the answers. */
+async function loadDeletedNames(stale: () => boolean): Promise<void> {
+  const ids = [...new Set(documents.value.map((d) => d.customer_id))]
+    .filter((id) => !customers.value.has(id) && !deletedNames.value.has(id))
+    .slice(0, MAX_NAME_LOOKUPS)
+  if (ids.length === 0) {
+    return
+  }
+  const answers = await Promise.allSettled(
+    ids.map((id) =>
+      apiClient.get<CustomerName>(`/customers/${encodeURIComponent(id)}`, {
+        signal: unmounted.signal,
+      }),
+    ),
+  )
+  if (stale()) {
+    return
+  }
+  const found = new Map(deletedNames.value)
+  for (const [i, answer] of answers.entries()) {
+    if (answer.status === 'rejected') {
+      if (isApiError(answer.reason) && answer.reason.isUnauthenticated) {
+        await toLogin()
+        return
+      }
+    } else if (typeof answer.value.name === 'string') {
+      found.set(ids[i] ?? '', answer.value.name)
+    }
+  }
+  deletedNames.value = found
 }
 
 onMounted(() => load())
@@ -132,7 +174,7 @@ onMounted(() => load())
 watch([type, state, year], () => load(false))
 
 function customerName(d: Doc): string {
-  return customers.value.get(d.customer_id) ?? '–'
+  return customers.value.get(d.customer_id) ?? deletedNames.value.get(d.customer_id) ?? '–'
 }
 
 function rowName(d: Doc): string {
