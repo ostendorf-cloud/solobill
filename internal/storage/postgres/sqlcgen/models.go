@@ -201,6 +201,19 @@ type PasskeyUserHandle struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type Payment struct {
+	ID                uuid.UUID
+	TenantID          uuid.UUID
+	DocumentID        uuid.UUID
+	ReceivedOn        pgtype.Date
+	AmountCents       int64
+	Method            string
+	Note              pgtype.Text
+	ReversesPaymentID pgtype.UUID
+	Imported          bool
+	CreatedAt         pgtype.Timestamptz
+}
+
 type SellerProfile struct {
 	TenantID           uuid.UUID
 	LegalName          string

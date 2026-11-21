@@ -1,0 +1,18 @@
+-- Table grants of the application role for
+-- 20261121130000_create_payments.sql (issue #71). See
+-- 20261113160002_base.sql for how these files are applied.
+--
+-- payments is append-only. The complete list of table privileges and what
+-- the role gets of each:
+--   SELECT      granted: the list, the open amount and the EÜR read rows.
+--   INSERT      granted: a payment, a reversal and a refund are new rows.
+--   UPDATE      not granted: a payment is never changed. A mistake is
+--               undone by a reversal row.
+--   DELETE      not granted: a payment is never removed.
+--   TRUNCATE    not granted: the ledger is never emptied.
+--   REFERENCES  not granted: no table of the role's own references it.
+--   TRIGGER     not granted: the role creates no trigger.
+--   MAINTAIN    not granted: VACUUM, ANALYZE and REINDEX run as the owner.
+-- payments_block_mutation and payments_block_truncate refuse the same
+-- changes for every other role.
+GRANT SELECT, INSERT ON payments TO solobill_app;
