@@ -323,7 +323,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+        image: postgres:19@sha256:aaa10f7ba7328b4a221a6c3184d83eef885bd16bf1f6de864757863156b0a4d1
         env:
           POSTGRES_USER: postgres
           # Obviously-fake, CI-only: this role only ever exists inside a
