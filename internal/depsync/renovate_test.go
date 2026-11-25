@@ -154,6 +154,10 @@ func TestRenovateReadsTheDockerfilePnpm(t *testing.T) {
 			continue
 		}
 		for _, s := range m.MatchStrings {
+			// The Dockerfile has more than one regex manager, this test is about the pnpm one.
+			if !strings.Contains(s, "PNPM_VERSION") {
+				continue
+			}
 			re, err := regexp.Compile(s)
 			if err != nil {
 				t.Fatalf("matchString %q does not compile: %v", s, err)
