@@ -177,8 +177,8 @@ type Deps struct {
 	// unmatched GET that is not under /api/.
 	DistFS fs.FS
 
-	// Now is the clock the access log timestamps with. Nil is time.Now;
-	// tests replace it.
+	// Now is the clock the access log timestamps with, and the clock of
+	// the asset routes' date rules. Nil is time.Now; tests replace it.
 	Now func() time.Time
 
 	// Repositories is every repository of the year end milestone. Each
@@ -311,7 +311,13 @@ func NewHandler(d Deps) (Handlers, error) {
 		inviteTTL = defaultInviteTTL
 	}
 
+	now := d.Now
+	if now == nil {
+		now = time.Now
+	}
+
 	a := &app{
+		now:              now,
 		logger:           d.Logger,
 		store:            d.Store,
 		sessions:         d.Sessions,
@@ -418,6 +424,10 @@ func corsMiddleware(cors *middleware.CORS) []middleware.Middleware {
 // app holds the dependencies the handlers in this package call.
 type app struct {
 	logger *slog.Logger
+
+	// now is Deps.Now, time.Now when that is nil. The asset routes read
+	// it; the other routes still read the wall clock.
+	now func() time.Time
 
 	store auth.Store
 

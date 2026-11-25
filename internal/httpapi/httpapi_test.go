@@ -58,6 +58,15 @@ func buildTestApp(t *testing.T, rateLimitBurst int) testApp {
 func buildTestAppAt(t *testing.T, rateLimitBurst int, now func() time.Time) testApp {
 	t.Helper()
 
+	return buildTestAppClocks(t, rateLimitBurst, now, nil)
+}
+
+// buildTestAppClocks is buildTestAppAt with Deps.Now as well: appNow is
+// the clock of the asset routes' date rules and of the access log. A nil
+// appNow is the wall clock.
+func buildTestAppClocks(t *testing.T, rateLimitBurst int, now, appNow func() time.Time) testApp {
+	t.Helper()
+
 	store := newFakeStore()
 	csrfKey := fixedKey(t, 1)
 
@@ -105,6 +114,7 @@ func buildTestAppAt(t *testing.T, rateLimitBurst int, now func() time.Time) test
 		},
 		DefaultInviteTTL: time.Hour,
 		DistFS:           distFS,
+		Now:              appNow,
 		Repositories:     repos,
 	})
 	if err != nil {

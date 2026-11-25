@@ -48,15 +48,31 @@ type assetJSON struct {
 	DisposedOn            *string    `json:"disposed_on"`
 	DisposalProceedsCents *int64     `json:"disposal_proceeds_cents"`
 	Imported              bool       `json:"imported"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
+	// BookValueCents, BookValueYear and Editable are derived on every
+	// answer and never accepted in a request (see docs/api.md).
+	BookValueCents int64     `json:"book_value_cents"`
+	BookValueYear  *int      `json:"book_value_year"`
+	Editable       bool      `json:"editable"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-func toAssetJSON(a storage.Asset) assetJSON {
+// toAssetJSON is the asset JSON at the German calendar year currentYear.
+// It fails only for a stored asset internal/afa refuses.
+func toAssetJSON(a storage.Asset, currentYear int) (assetJSON, error) {
 	var disposed *string
 	if a.DisposedOn != nil {
 		s := a.DisposedOn.Format(assetDateLayout)
 		disposed = &s
+	}
+
+	value, err := afa.CurrentBookValue(toAFAAsset(a), currentYear)
+	if err != nil {
+		return assetJSON{}, api.Internal(fmt.Errorf("httpapi: book value of asset %s: %w", a.ID, err))
+	}
+	var valueYear *int
+	if value.Year != 0 {
+		valueYear = &value.Year
 	}
 
 	return assetJSON{
@@ -73,9 +89,66 @@ func toAssetJSON(a storage.Asset) assetJSON {
 		DisposedOn:            disposed,
 		DisposalProceedsCents: a.DisposalProceedsCents,
 		Imported:              a.Imported,
+		BookValueCents:        value.Cents,
+		BookValueYear:         valueYear,
+		Editable:              assetEditConflict(a, a, currentYear) == nil,
 		CreatedAt:             a.CreatedAt.UTC(),
 		UpdatedAt:             a.UpdatedAt.UTC(),
+	}, nil
+}
+
+// Codes of the asset routes' 409 answers. The client tells the reasons
+// apart by these, never by the message.
+const (
+	// codeAssetYearEnded: the first schedule year of the stored asset or
+	// of the replacement has ended, or a disposal is dated in an ended
+	// year.
+	codeAssetYearEnded = "asset_year_ended"
+	// codeAssetDisposed: the asset is disposed already.
+	codeAssetDisposed = "asset_disposed"
+	// codeExpenseAlreadyAnAsset: another asset came from the expense.
+	codeExpenseAlreadyAnAsset = "expense_already_an_asset"
+)
+
+func errAssetYearEnded() *api.Error {
+	return api.New(http.StatusConflict, codeAssetYearEnded,
+		"the first schedule year of the asset has ended, record a disposal instead")
+}
+
+func errAssetDisposed() *api.Error {
+	return api.New(http.StatusConflict, codeAssetDisposed, "the asset is disposed")
+}
+
+func errExpenseAlreadyAnAsset() *api.Error {
+	return api.New(http.StatusConflict, codeExpenseAlreadyAnAsset, "the expense is already an asset")
+}
+
+// assetEditConflict is the 409 a PUT that replaces stored with
+// replacement gets at the German calendar year currentYear, or nil while
+// the edit is allowed. A disposed asset goes first. Then the first
+// schedule year of both must not have ended. The repository's Update
+// enforces the same rule; this check only gives each reason its code.
+// With replacement equal to stored it is the editable flag.
+func assetEditConflict(stored, replacement storage.Asset, currentYear int) *api.Error {
+	switch {
+	case stored.DisposedOn != nil:
+		return errAssetDisposed()
+	case afa.FirstScheduleYear(toAFAAsset(stored)) < currentYear,
+		afa.FirstScheduleYear(toAFAAsset(replacement)) < currentYear:
+		return errAssetYearEnded()
+	default:
+		return nil
 	}
+}
+
+// writeAsset answers status with the asset JSON at now.
+func writeAsset(w http.ResponseWriter, status int, asset storage.Asset, now time.Time) error {
+	out, err := toAssetJSON(asset, assetToday(now).Year())
+	if err != nil {
+		return err
+	}
+
+	return api.Write(w, status, out)
 }
 
 // assetRequest is the body of POST and PUT: the asset JSON without id,
@@ -189,8 +262,9 @@ func toAFAAsset(a storage.Asset) afa.Asset {
 }
 
 // assetError maps a repository error to the API error. An *api.Error
-// from inside the scope passes through unchanged.
-func assetError(err error, conflict string) error {
+// from inside the scope passes through unchanged. storage.ErrConflict
+// becomes conflict, or a plain 409 when conflict is nil.
+func assetError(err error, conflict *api.Error) error {
 	var apiErr *api.Error
 	switch {
 	case err == nil:
@@ -199,8 +273,10 @@ func assetError(err error, conflict string) error {
 		return apiErr
 	case errors.Is(err, storage.ErrNotFound):
 		return api.NotFound("not found")
+	case errors.Is(err, storage.ErrConflict) && conflict != nil:
+		return conflict
 	case errors.Is(err, storage.ErrConflict):
-		return api.Conflict(conflict)
+		return api.Conflict("the asset changed meanwhile, load it again")
 	default:
 		return api.Internal(fmt.Errorf("httpapi: assets: %w", err))
 	}
@@ -278,24 +354,20 @@ func (a *app) checkAssetExpense(ctx context.Context, asset storage.Asset) error 
 
 	// One expense becomes at most one asset. The unique index
 	// assets_expense_once is the guard; this check only gives the 409 its
-	// own message, also on PUT, whose repository conflict means a closed
-	// year or a disposal.
+	// own code, also on PUT, whose repository conflict means a closed year
+	// or a disposal.
 	others, err := a.repos.Assets.List(ctx)
 	if err != nil {
 		return err
 	}
 	for _, other := range others {
 		if other.ID != asset.ID && other.ExpenseID != nil && *other.ExpenseID == *asset.ExpenseID {
-			return api.Conflict(msgExpenseAlreadyAsset)
+			return errExpenseAlreadyAnAsset()
 		}
 	}
 
 	return nil
 }
-
-// msgExpenseAlreadyAsset is the 409 of an expense another asset already
-// came from.
-const msgExpenseAlreadyAsset = "the expense is already an asset"
 
 // assetToday is the calendar date of now in Germany, as midnight UTC.
 // Every date rule of the register uses it: the year an EÜR is filed for
@@ -336,12 +408,15 @@ func (a *app) handleListAssets(w http.ResponseWriter, r *http.Request) error {
 		return err
 	})
 	if err != nil {
-		return assetError(err, "")
+		return assetError(err, nil)
 	}
 
+	currentYear := assetToday(a.now()).Year()
 	out := make([]assetJSON, len(list))
 	for i, item := range list {
-		out[i] = toAssetJSON(item)
+		if out[i], err = toAssetJSON(item, currentYear); err != nil {
+			return err
+		}
 	}
 
 	return api.Write(w, http.StatusOK, map[string]any{"assets": out})
@@ -357,7 +432,8 @@ func (a *app) handleCreateAsset(w http.ResponseWriter, r *http.Request) error {
 	if err := api.Decode(r, &req); err != nil {
 		return err
 	}
-	asset, err := req.asset(assetToday(time.Now()))
+	now := a.now()
+	asset, err := req.asset(assetToday(now))
 	if err != nil {
 		return err
 	}
@@ -374,10 +450,10 @@ func (a *app) handleCreateAsset(w http.ResponseWriter, r *http.Request) error {
 		return err
 	})
 	if err != nil {
-		return assetError(err, msgExpenseAlreadyAsset)
+		return assetError(err, errExpenseAlreadyAnAsset())
 	}
 
-	return api.Write(w, http.StatusCreated, toAssetJSON(created))
+	return writeAsset(w, http.StatusCreated, created, now)
 }
 
 func (a *app) handleGetAsset(w http.ResponseWriter, r *http.Request) error {
@@ -395,7 +471,7 @@ func (a *app) handleGetAsset(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	return api.Write(w, http.StatusOK, toAssetJSON(found))
+	return writeAsset(w, http.StatusOK, found, a.now())
 }
 
 func (a *app) findAsset(ctx context.Context, c caller, id uuid.UUID) (storage.Asset, error) {
@@ -407,13 +483,16 @@ func (a *app) findAsset(ctx context.Context, c caller, id uuid.UUID) (storage.As
 		return err
 	})
 
-	return found, assetError(err, "")
+	return found, assetError(err, nil)
 }
 
-// handleUpdateAsset answers PUT /api/v1/assets/{id}. The repository
-// refuses with 409 once the first schedule year of the stored asset, or
-// of the replacement, has ended in Germany at now, and for a disposed
-// asset. An expense another asset came from is a 409 of its own.
+// handleUpdateAsset answers PUT /api/v1/assets/{id}. A disposed asset is
+// 409 asset_disposed. Once the first schedule year of the stored asset,
+// or of the replacement, has ended in Germany at now, it is 409
+// asset_year_ended. Both come before the expense checks, whose 409 is
+// expense_already_an_asset. The repository's Update stays the guard of
+// the first two; a conflict it finds after these checks passed is a
+// plain 409 conflict (a concurrent change).
 func (a *app) handleUpdateAsset(w http.ResponseWriter, r *http.Request) error {
 	c, ok, err := a.assetsReady(w, r, true)
 	if !ok {
@@ -428,7 +507,7 @@ func (a *app) handleUpdateAsset(w http.ResponseWriter, r *http.Request) error {
 	if err := api.Decode(r, &req); err != nil {
 		return err
 	}
-	now := time.Now()
+	now := a.now()
 	asset, err := req.asset(assetToday(now))
 	if err != nil {
 		return err
@@ -438,19 +517,25 @@ func (a *app) handleUpdateAsset(w http.ResponseWriter, r *http.Request) error {
 
 	var updated storage.Asset
 	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
+		stored, err := a.repos.Assets.FindByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if conflict := assetEditConflict(stored, asset, assetToday(now).Year()); conflict != nil {
+			return conflict
+		}
 		if err := a.checkAssetExpense(ctx, asset); err != nil {
 			return err
 		}
-		var err error
 		updated, err = a.repos.Assets.Update(ctx, asset, now)
 
 		return err
 	})
 	if err != nil {
-		return assetError(err, "the first schedule year of the asset has ended or it is disposed, record a disposal instead")
+		return assetError(err, nil)
 	}
 
-	return api.Write(w, http.StatusOK, toAssetJSON(updated))
+	return writeAsset(w, http.StatusOK, updated, now)
 }
 
 // assetDisposalRequest is the body of POST /api/v1/assets/{id}/disposal.
@@ -474,6 +559,7 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 
+	now := a.now()
 	p := map[string]string{}
 	yearEnded := false
 	disposedOn, err := time.Parse(assetDateLayout, req.DisposedOn)
@@ -481,7 +567,7 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 		p["disposed_on"] = "must be a date such as 2026-12-01"
 	} else {
 		var problem string
-		if problem, yearEnded = disposalDateRule(disposedOn, time.Now()); problem != "" {
+		if problem, yearEnded = disposalDateRule(disposedOn, now); problem != "" {
 			p["disposed_on"] = problem
 		}
 	}
@@ -499,7 +585,7 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 			return err
 		}
 		if current.DisposedOn != nil {
-			return storage.ErrConflict
+			return errAssetDisposed()
 		}
 		// A date the asset itself refuses (before acquired_on or the
 		// opening year) is a 400 first, also when its year has ended: the
@@ -513,7 +599,8 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 			return fmt.Errorf("stored asset %s is invalid: %w", id, invalid)
 		}
 		if yearEnded {
-			return api.Conflict("the disposal date lies in a year that has ended, whose figures may already be filed")
+			return api.New(http.StatusConflict, codeAssetYearEnded,
+				"the disposal date lies in a year that has ended, whose figures may already be filed")
 		}
 
 		disposed, err = a.repos.Assets.RecordDisposal(ctx, id, disposedOn, req.ProceedsCents)
@@ -521,10 +608,11 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 		return err
 	})
 	if err != nil {
-		return assetError(err, "the asset is already disposed")
+		// RecordDisposal's only conflict is an asset disposed already.
+		return assetError(err, errAssetDisposed())
 	}
 
-	return api.Write(w, http.StatusOK, toAssetJSON(disposed))
+	return writeAsset(w, http.StatusOK, disposed, now)
 }
 
 // assetScheduleYearJSON is one year of docs/api.md's schedule.
