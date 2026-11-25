@@ -20,9 +20,12 @@ type Input struct {
 	TemplateVersion string `json:"template_version"`
 	Lang            string `json:"lang"`
 	Draft           bool   `json:"draft"`
-	Watermark       string `json:"watermark"`
-	DocumentTitle   string `json:"document_title"`
-	Title           string `json:"title"`
+	// Logo is true when the payload names a logo. The template then
+	// prints the file "logo", which only BuildSourceWithLogo writes.
+	Logo          bool   `json:"logo"`
+	Watermark     string `json:"watermark"`
+	DocumentTitle string `json:"document_title"`
+	Title         string `json:"title"`
 
 	SenderLine     string   `json:"sender_line"`
 	SellerName     string   `json:"seller_name"`
@@ -105,10 +108,14 @@ var (
 	// ErrImported is an imported document: its original PDF is the
 	// document, solobill never renders one.
 	ErrImported = errors.New("pdf: an imported document has its original pdf")
-	// ErrLogoUnsupported is a payload whose seller carries a logo. The
-	// renderer cannot print a logo yet (issue #74, part 2), and a stored
-	// PDF must never silently lack it.
-	ErrLogoUnsupported = errors.New("pdf: the renderer cannot print a logo yet")
+	// ErrLogoMismatch is logo bytes whose SHA-256 differs from the one
+	// frozen in the payload, a payload naming a logo rendered without
+	// one, or a logo given for a payload naming none. The API answers it
+	// as 409 conflict.
+	ErrLogoMismatch = errors.New("pdf: the logo does not match the payload")
+	// ErrLogoFormat is a logo that is neither a PNG nor a JPEG, or too
+	// large.
+	ErrLogoFormat = errors.New("pdf: the logo cannot be printed")
 	// ErrPayloadTooLarge is a payload whose template data exceeds
 	// Limits.DataBytes.
 	ErrPayloadTooLarge = errors.New("pdf: payload too large to render")
@@ -145,8 +152,8 @@ var draftExempt = map[string]bool{
 // be printed, ErrPayloadTooLarge, ErrUnknownTemplate, or ErrUnsupported
 // for an unknown language. The issuing code (#70) must call it before it
 // freezes a payload, so an issued document can never become
-// unrenderable. It ignores the logo: that is a renderer gap, not a
-// payload problem.
+// unrenderable. It checks that the template version can print a logo
+// the payload names, not the logo file: issuing never reads the bucket.
 func CheckPrintable(p docpayload.FrozenPayloadV1) error {
 	if p.Imported {
 		return nil
@@ -162,6 +169,9 @@ func CheckPrintable(p docpayload.FrozenPayloadV1) error {
 	lim, ok := limitsByTemplate[version]
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownTemplate, version)
+	}
+	if err := logoSupported(p, version); err != nil {
+		return err
 	}
 	pr, err := newPrinter(lim)
 	if err != nil {
@@ -189,11 +199,11 @@ func buildData(p docpayload.FrozenPayloadV1, draft bool) (Input, []byte, error) 
 	if err != nil {
 		return Input{}, nil, err
 	}
-	if p.Seller.LogoSHA256 != "" {
-		return Input{}, nil, ErrLogoUnsupported
-	}
 	version, err := templateVersion(p, draft)
 	if err != nil {
+		return Input{}, nil, err
+	}
+	if err := logoSupported(p, version); err != nil {
 		return Input{}, nil, err
 	}
 
@@ -214,6 +224,16 @@ func buildData(p docpayload.FrozenPayloadV1, draft bool) (Input, []byte, error) 
 	}
 
 	return finish(p, l, draft, version, pr)
+}
+
+// logoSupported refuses a payload that names a logo for a template
+// version without a place for one: its PDF would silently lack the logo.
+func logoSupported(p docpayload.FrozenPayloadV1, version string) error {
+	if p.Seller.LogoSHA256 != "" && !logoTemplates[version] {
+		return fmt.Errorf("%w: template %s prints no logo", ErrUnsupported, version)
+	}
+
+	return nil
 }
 
 // supported returns the labels of p's language, or ErrUnsupported for a
@@ -301,6 +321,7 @@ func build(p docpayload.FrozenPayloadV1, l labels, draft bool, version string, p
 		TemplateVersion: version,
 		Lang:            lang,
 		Draft:           draft,
+		Logo:            p.Seller.LogoSHA256 != "",
 		Watermark:       l.Watermark,
 		Title:           title,
 		SenderLine:      pr.composed("seller.address", senderLine(seller), cellSender),

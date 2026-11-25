@@ -1,7 +1,8 @@
 {
-  "template_version": "document-v1",
+  "template_version": "document-v2",
   "lang": "de",
   "draft": false,
+  "logo": false,
   "watermark": "Entwurf",
   "document_title": "Rechnungskorrektur RE-20260042-1",
   "title": "Rechnungskorrektur",

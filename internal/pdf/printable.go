@@ -94,6 +94,9 @@ const MaxPages = 200
 // limitsByTemplate pins the limits per template version.
 var limitsByTemplate = map[string]Limits{
 	"document-v1": documentV1Limits,
+	// document-v2 adds the logo outside the flow and keeps every cell of
+	// document-v1, so its limits are the same.
+	"document-v2": documentV1Limits,
 }
 
 // TemplateLimits returns the limits of a template version.

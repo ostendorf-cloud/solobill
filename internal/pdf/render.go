@@ -1,5 +1,6 @@
 // Package pdf renders a document's frozen payload into a PDF with Typst
-// (issue #74). It implements httpapi.DocumentRenderer.
+// (issue #74). It implements httpapi.DocumentRenderer and
+// docissue.PayloadChecker.
 //
 // The renderer formats and never computes: every figure is printed as
 // the payload holds it. Rendering is reproducible: the same payload and
@@ -18,7 +19,9 @@ package pdf
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -35,7 +38,7 @@ import (
 
 // CurrentTemplateVersion is the template a new document is issued
 // with. The issuing code freezes it into FrozenPayloadV1.TemplateVersion.
-const CurrentTemplateVersion = "document-v1"
+const CurrentTemplateVersion = "document-v2"
 
 // PDFStandard is the standard Typst enforces: PDF/A-3b, archivable, and
 // the base of a later ZUGFeRD file which needs PDF/A-3 attachments.
@@ -59,6 +62,14 @@ var assets embed.FS
 // forever.
 var templates = map[string]string{
 	"document-v1": "templates/document-v1.typ",
+	"document-v2": "templates/document-v2.typ",
+}
+
+// logoTemplates are the template versions that print the seller logo.
+// document-v1 has no place for one: a payload naming it and a logo is
+// ErrUnsupported, so a stored PDF never silently lacks its logo.
+var logoTemplates = map[string]bool{
+	"document-v2": true,
 }
 
 // Errors of Render.
@@ -121,24 +132,76 @@ func New(opts Options) *Renderer {
 
 // Render decodes a stored docpayload.FrozenPayloadV1 and renders it with
 // the template version it names. draft prints the watermark and no
-// number. It is httpapi.DocumentRenderer's method.
+// number. A payload that names a logo needs RenderWithLogo.
 func (r *Renderer) Render(ctx context.Context, payload []byte, draft bool) ([]byte, error) {
+	return r.RenderWithLogo(ctx, payload, draft, nil)
+}
+
+// RenderWithLogo is Render with the bytes of the logo file the payload
+// names by SHA-256, nil when it names none. The bytes are checked
+// against that SHA-256 (ErrLogoMismatch) and must be a PNG or a JPEG
+// (ErrLogoFormat). It is httpapi.DocumentRenderer's method.
+func (r *Renderer) RenderWithLogo(ctx context.Context, payload []byte, draft bool, logo []byte) ([]byte, error) {
 	p, err := docpayload.Unmarshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("pdf: %w", err)
 	}
 
-	return r.RenderPayload(ctx, p, draft)
+	return r.RenderPayloadWithLogo(ctx, p, draft, logo)
 }
 
-// RenderPayload renders a decoded payload.
+// RenderPayload renders a decoded payload without a logo.
 func (r *Renderer) RenderPayload(ctx context.Context, p docpayload.FrozenPayloadV1, draft bool) ([]byte, error) {
-	src, err := BuildSource(p, draft)
+	return r.RenderPayloadWithLogo(ctx, p, draft, nil)
+}
+
+// RenderPayloadWithLogo renders a decoded payload with its logo bytes.
+func (r *Renderer) RenderPayloadWithLogo(ctx context.Context, p docpayload.FrozenPayloadV1, draft bool, logo []byte) ([]byte, error) {
+	src, err := BuildSourceWithLogo(p, draft, logo)
 	if err != nil {
 		return nil, err
 	}
 
 	return r.compile(ctx, src)
+}
+
+// CheckPayload implements docissue.PayloadChecker: the issuing code
+// calls it before it freezes a payload, so an issued document can always
+// be rendered later. It runs CheckPrintable and then Typst itself, the
+// authority on the layout, and reports what cannot be printed as field
+// details. The logo is left out of the Typst run: issuing never reads
+// the bucket, and the logo sits outside the flow, so it changes no cell
+// and no page break. Any other failure, such as a missing Typst binary,
+// is an error and refuses the issue.
+func (r *Renderer) CheckPayload(ctx context.Context, p docpayload.FrozenPayloadV1) (map[string]string, error) {
+	details, err := checkDetails(CheckPrintable(p))
+	if details != nil || err != nil {
+		return details, err
+	}
+
+	q := p
+	q.Seller.LogoSHA256 = ""
+	_, err = r.RenderPayload(ctx, q, false)
+
+	return checkDetails(err)
+}
+
+// checkDetails turns a refusal of a payload into field details and
+// passes every other error through.
+func checkDetails(err error) (map[string]string, error) {
+	var invalid *InvalidPayloadError
+	switch {
+	case err == nil:
+		return nil, nil
+	case errors.As(err, &invalid):
+		return invalid.Details, nil
+	case errors.Is(err, ErrPayloadTooLarge):
+		return map[string]string{"lines": "the document holds too much text to be printed"}, nil
+	case errors.Is(err, ErrTooManyPages):
+		return map[string]string{"lines": "the document needs more pages than can be printed"}, nil
+	default:
+		return nil, err
+	}
 }
 
 // Source is everything one typst compile reads besides the fonts.
@@ -147,6 +210,8 @@ type Source struct {
 	Template []byte
 	// Data is data.json, the formatted payload.
 	Data []byte
+	// Logo is the checked logo file, nil without one.
+	Logo []byte
 	// CreationTime is the PDF creation timestamp: the issue date at
 	// midnight UTC, so the bytes are the same on every render.
 	CreationTime time.Time
@@ -156,9 +221,19 @@ type Source struct {
 
 // BuildSource resolves the template and formats the payload into the
 // data file, without running Typst. The golden tests compare its Data.
+// A payload that names a logo needs BuildSourceWithLogo.
 func BuildSource(p docpayload.FrozenPayloadV1, draft bool) (Source, error) {
+	return BuildSourceWithLogo(p, draft, nil)
+}
+
+// BuildSourceWithLogo is BuildSource with the logo bytes, checked
+// against the payload's SHA-256 and the allowed formats.
+func BuildSourceWithLogo(p docpayload.FrozenPayloadV1, draft bool, logo []byte) (Source, error) {
 	in, data, err := buildData(p, draft)
 	if err != nil {
+		return Source{}, err
+	}
+	if err := checkLogo(p.Seller.LogoSHA256, logo); err != nil {
 		return Source{}, err
 	}
 	tmpl, err := assets.ReadFile(templates[in.TemplateVersion])
@@ -170,7 +245,40 @@ func BuildSource(p docpayload.FrozenPayloadV1, draft bool) (Source, error) {
 		created = t
 	}
 
-	return Source{Template: tmpl, Data: data, CreationTime: created, MaxPages: limitsByTemplate[in.TemplateVersion].Pages}, nil
+	return Source{
+		Template: tmpl, Data: data, Logo: logo, CreationTime: created,
+		MaxPages: limitsByTemplate[in.TemplateVersion].Pages,
+	}, nil
+}
+
+// maxLogoBytes bounds the logo file. The logo upload allows 512 KiB.
+const maxLogoBytes = 1 << 20
+
+// checkLogo checks the logo bytes against the SHA-256 frozen in the
+// payload. The bytes are trusted only by that hash, never by a name: no
+// hash and no bytes is no logo, anything else must match exactly and be
+// a PNG or a JPEG.
+func checkLogo(want string, logo []byte) error {
+	switch {
+	case want == "" && logo == nil:
+		return nil
+	case want == "":
+		return fmt.Errorf("%w: the payload names no logo", ErrLogoMismatch)
+	case logo == nil:
+		return fmt.Errorf("%w: the payload names logo %s and no logo was given", ErrLogoMismatch, want)
+	}
+	sum := sha256.Sum256(logo)
+	if got := hex.EncodeToString(sum[:]); got != want {
+		return fmt.Errorf("%w: the logo has SHA-256 %s, the payload names %s", ErrLogoMismatch, got, want)
+	}
+	if len(logo) > maxLogoBytes {
+		return fmt.Errorf("%w: %d bytes, at most %d", ErrLogoFormat, len(logo), maxLogoBytes)
+	}
+	if !bytes.HasPrefix(logo, []byte("\x89PNG\r\n\x1a\n")) && !bytes.HasPrefix(logo, []byte{0xFF, 0xD8, 0xFF}) {
+		return fmt.Errorf("%w: neither a PNG nor a JPEG", ErrLogoFormat)
+	}
+
+	return nil
 }
 
 // templateVersion returns the version to render: the payload's, or the
@@ -294,9 +402,8 @@ const TypstVersion = "0.14.2"
 var ErrTypstVersion = errors.New("pdf: unexpected typst version")
 
 // CheckVersion runs "typst --version" and compares it with TypstVersion.
-// Nothing calls it yet: the wiring of #74 part 2 must call it at
-// startup, because another Typst release may lay out a stored payload
-// differently.
+// cmd/solobill calls it at startup, because another Typst release may
+// lay out a stored payload differently.
 func (r *Renderer) CheckVersion(ctx context.Context) error {
 	bin, err := exec.LookPath(r.opts.Binary)
 	if err != nil {
@@ -354,6 +461,10 @@ func writeProject(dir string, src Source) error {
 	files := map[string][]byte{
 		"main.typ":  src.Template,
 		"data.json": src.Data,
+	}
+	if src.Logo != nil {
+		// The one name the template reads the logo from.
+		files["logo"] = src.Logo
 	}
 	fonts, err := fs.Glob(assets, "fonts/*.ttf")
 	if err != nil {

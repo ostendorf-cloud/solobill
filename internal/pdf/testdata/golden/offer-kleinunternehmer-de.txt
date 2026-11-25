@@ -1,0 +1,44 @@
+                                                                            Max Mustermann IT-Beratung
+
+
+
+Max Mustermann IT-Beratung · Musterstraße 1 · 12345 Musterstadt
+
+
+Mustermann Consulting GmbH                                        Angebotsnummer                                AN-20260003
+Beispielweg 7                                                     Datum                                           20.11.2026
+54321 Beispielstadt                                               Kundennummer                                       K-1001
+                                                                  Gültig bis                                      20.12.2026
+
+
+
+
+Angebot
+
+  Pos.    Beschreibung                                                Menge    Einheit           Einzelpreis           Betrag
+
+      1   Workshop Kubernetes Grundlagen                                   1   Tag             1.200,00 EUR      1.200,00 EUR
+
+      2   Reisekosten pauschal                                             1   pauschal             85,50 EUR      85,50 EUR
+
+
+
+                                                          Angebotssumme                                         1.285,50 EUR
+
+Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.
+
+Hinweise
+Wir freuen uns auf Ihre Rückmeldung.
+
+
+
+
+                                                                                                                    Seite 1 von 1
+
+Max Mustermann IT-Beratung                                            Tel. +49 000 0000000
+Musterstraße 1                                                        E-Mail rechnung@example.com
+12345 Musterstadt                                                     Web www.example.com
+Steuernummer 12/345/67890                                             Bank Musterbank
+                                                                      IBAN DE00 0000 0000 0000 0000 00
+                                                                      BIC MUSTDEXXXXX
+

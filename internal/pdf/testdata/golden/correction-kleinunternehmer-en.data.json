@@ -1,0 +1,140 @@
+{
+  "template_version": "document-v2",
+  "lang": "en",
+  "draft": false,
+  "logo": false,
+  "watermark": "Draft",
+  "document_title": "Corrected invoice RE-20260007-1",
+  "title": "Corrected invoice",
+  "sender_line": "Max Mustermann IT-Beratung · Musterstraße 1 · 12345 Musterstadt",
+  "seller_name": "Max Mustermann IT-Beratung",
+  "recipient_lines": [
+    "Mustermann Consulting GmbH",
+    "Beispielweg 7",
+    "54321 Beispielstadt"
+  ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.city"
+  ],
+  "meta": [
+    {
+      "label": "Invoice number",
+      "value": "RE-20260007-1",
+      "path": "number"
+    },
+    {
+      "label": "Date",
+      "value": "27 November 2026",
+      "path": "issue_date"
+    },
+    {
+      "label": "Date of supply",
+      "value": "18 November 2026",
+      "path": "service_period.from"
+    },
+    {
+      "label": "Customer number",
+      "value": "K-1001",
+      "path": "customer.number"
+    },
+    {
+      "label": "Due date",
+      "value": "11 December 2026",
+      "path": "due_date"
+    }
+  ],
+  "corrects_line": "This corrected invoice replaces invoice RE-20260007 of 20 November 2026.",
+  "show_vat": false,
+  "columns": {
+    "position": "No.",
+    "description": "Description",
+    "quantity": "Qty",
+    "unit": "Unit",
+    "unit_price": "Unit price",
+    "vat_rate": "VAT",
+    "amount": "Amount"
+  },
+  "lines": [
+    {
+      "position": "1",
+      "description": [
+        "Kubernetes basics workshop"
+      ],
+      "discount": "",
+      "quantity": "1",
+      "unit": "day",
+      "unit_price": "1,200.00 EUR",
+      "vat_rate": "",
+      "amount": "1,200.00 EUR"
+    }
+  ],
+  "totals": [
+    {
+      "label": "Total",
+      "value": "1,200.00 EUR",
+      "strong": true,
+      "path": "totals.grand_total_cents"
+    }
+  ],
+  "sections": [
+    {
+      "title": "",
+      "lines": [
+        "No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung)."
+      ],
+      "path": "tax_note"
+    },
+    {
+      "title": "Payment terms",
+      "lines": [
+        "Payable within 14 days without deduction."
+      ],
+      "path": "payment_terms"
+    }
+  ],
+  "footer": [
+    [
+      "Max Mustermann IT-Beratung",
+      "Musterstraße 1",
+      "12345 Musterstadt"
+    ],
+    [
+      "Phone +49 000 0000000",
+      "Email rechnung@example.com",
+      "Web www.example.com"
+    ],
+    [
+      "Tax number 12/345/67890"
+    ],
+    [
+      "Bank Musterbank",
+      "IBAN DE00 0000 0000 0000 0000 00",
+      "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
+    ]
+  ],
+  "footer_text": [],
+  "page_label": "Page",
+  "page_of_label": "of"
+}

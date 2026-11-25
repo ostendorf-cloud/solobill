@@ -1,7 +1,8 @@
 {
-  "template_version": "document-v1",
+  "template_version": "document-v2",
   "lang": "en",
   "draft": false,
+  "logo": false,
   "watermark": "Draft",
   "document_title": "Invoice RE-20260007",
   "title": "Invoice",

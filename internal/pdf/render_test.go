@@ -87,12 +87,21 @@ var fileAccess = regexp.MustCompile(
 	`\b(?:json|yaml|csv|toml|xml|cbor|read|image|plugin|eval|bytes|bibliography|embed|include|import)\b(?:\s*\("[^"]*"\))?` +
 		`|\b(?:syntaxes|theme)\s*:`)
 
-// TestTemplateFileAccess allows exactly one file access in a template:
-// json("data.json"). Any other occurrence of a file access name, called
-// or bound to another name, fails, so no data value can ever name a path
-// or become code. This is a second line: the real guard is the SHA-256
-// pin of every shipped template in TestTemplateHashes, which a review of
-// any template change has to pass.
+// allowedFileAccess is every file access a template version may make, in
+// order: data.json, and from document-v2 the logo under the fixed name
+// only internal/pdf writes.
+var allowedFileAccess = map[string][]string{
+	"document-v1": {`json("data.json")`},
+	"document-v2": {`json("data.json")`, `image("logo")`},
+}
+
+// TestTemplateFileAccess allows exactly the file accesses of
+// allowedFileAccess, each with a fixed literal path. Any other
+// occurrence of a file access name, called or bound to another name,
+// fails, so no data value can ever name a path or become code. This is a
+// second line: the real guard is the SHA-256 pin of every shipped
+// template in TestTemplateHashes, which a review of any template change
+// has to pass.
 func TestTemplateFileAccess(t *testing.T) {
 	for version, file := range templates {
 		b, err := assets.ReadFile(file)
@@ -100,7 +109,7 @@ func TestTemplateFileAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 		found := fileAccessIn(string(b))
-		if want := []string{`json("data.json")`}; !slices.Equal(found, want) {
+		if want := allowedFileAccess[version]; !slices.Equal(found, want) {
 			t.Errorf("template %s: file access %q, want exactly %q", version, found, want)
 		}
 	}
@@ -178,7 +187,7 @@ func TestCompile(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pdf, err := r.Render(context.Background(), payload, c.draft)
+			pdf, err := r.RenderWithLogo(context.Background(), payload, c.draft, c.logoOf(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -188,10 +197,11 @@ func TestCompile(t *testing.T) {
 			if !bytes.Contains(pdf, []byte("<pdfaid:part>3</pdfaid:part>")) {
 				t.Error("output does not declare PDF/A-3")
 			}
-			if !bytes.Contains(pdf, []byte(CurrentTemplateVersion)) {
-				t.Errorf("metadata does not name %s", CurrentTemplateVersion)
+			version := loadFixture(t, c.fixture).TemplateVersion
+			if !bytes.Contains(pdf, []byte(version)) {
+				t.Errorf("metadata does not name %s", version)
 			}
-			again, err := r.Render(context.Background(), payload, c.draft)
+			again, err := r.RenderWithLogo(context.Background(), payload, c.draft, c.logoOf(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -394,21 +404,6 @@ func TestLabelsPrintable(t *testing.T) {
 	pr.check("separators", " · "+string(noBreakSpace)+"%", false)
 	if len(pr.problems) > 0 {
 		t.Errorf("labels cannot be printed: %v", pr.problems)
-	}
-}
-
-func TestLogoUnsupported(t *testing.T) {
-	p := loadFixture(t, "offer-de")
-	p.Seller.LogoSHA256 = strings.Repeat("a", 64)
-	if _, err := BuildInput(p, false); !errors.Is(err, ErrLogoUnsupported) {
-		t.Errorf("BuildInput = %v, want ErrLogoUnsupported", err)
-	}
-	if _, err := New(Options{Binary: "typst"}).RenderPayload(context.Background(), p, true); !errors.Is(err, ErrLogoUnsupported) {
-		t.Errorf("draft render = %v, want ErrLogoUnsupported", err)
-	}
-	// Issuing with a logo stays possible; only rendering waits.
-	if err := CheckPrintable(p); err != nil {
-		t.Errorf("CheckPrintable = %v", err)
 	}
 }
 

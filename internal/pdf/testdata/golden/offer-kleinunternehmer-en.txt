@@ -1,0 +1,44 @@
+                                                                              Max Mustermann IT-Beratung
+
+
+
+Max Mustermann IT-Beratung · Musterstraße 1 · 12345 Musterstadt
+
+
+Mustermann Consulting GmbH                                        Offer number                                        AN-20260004
+Beispielweg 7                                                     Date                                            20 November 2026
+54321 Beispielstadt                                               Customer number                                          K-1001
+                                                                  Valid until                                     20 December 2026
+
+
+
+
+Offer
+
+   No.    Description                                                     Qty    Unit                Unit price           Amount
+
+      1   Kubernetes basics workshop                                         1   day             1,200.00 EUR         1,200.00 EUR
+
+      2   Travel expenses, flat rate                                         1   flat                85.50 EUR          85.50 EUR
+
+
+
+                                                          Offer total                                               1,285.50 EUR
+
+No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung).
+
+Notes
+We look forward to hearing from you.
+
+
+
+
+                                                                                                                          Page 1 of 1
+
+Max Mustermann IT-Beratung                                              Phone +49 000 0000000
+Musterstraße 1                                                          Email rechnung@example.com
+12345 Musterstadt                                                       Web www.example.com
+Tax number 12/345/67890                                                 Bank Musterbank
+                                                                        IBAN DE00 0000 0000 0000 0000 00
+                                                                        BIC MUSTDEXXXXX
+

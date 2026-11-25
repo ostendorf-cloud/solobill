@@ -1,0 +1,45 @@
+                                                                            Max Mustermann IT-Beratung
+
+
+
+Max Mustermann IT-Beratung · Musterstraße 1 · 12345 Musterstadt
+
+
+Mustermann Consulting GmbH                                        Rechnungsnummer                              RE-20260007-1
+Beispielweg 7                                                     Datum                                            27.11.2026
+54321 Beispielstadt                                               Leistungsdatum                                   18.11.2026
+                                                                  Kundennummer                                        K-1001
+                                                                  Zahlbar bis                                      11.12.2026
+
+
+
+
+Rechnungskorrektur
+Diese Rechnungskorrektur ersetzt die Rechnung RE-20260007 vom 20.11.2026.
+
+
+  Pos.    Beschreibung                                                Menge    Einheit           Einzelpreis           Betrag
+
+      1   Workshop Kubernetes Grundlagen                                   1   Tag             1.200,00 EUR      1.200,00 EUR
+
+
+
+                                                          Gesamtbetrag                                          1.200,00 EUR
+
+Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.
+
+Zahlungsbedingungen
+Zahlbar innerhalb von 14 Tagen ohne Abzug.
+
+
+
+
+                                                                                                                    Seite 1 von 1
+
+Max Mustermann IT-Beratung                                            Tel. +49 000 0000000
+Musterstraße 1                                                        E-Mail rechnung@example.com
+12345 Musterstadt                                                     Web www.example.com
+Steuernummer 12/345/67890                                             Bank Musterbank
+                                                                      IBAN DE00 0000 0000 0000 0000 00
+                                                                      BIC MUSTDEXXXXX
+

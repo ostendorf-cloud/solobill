@@ -25,8 +25,10 @@ import (
 // 3 percent anyway. The rows each description wraps to are counted the
 // same way, so the page count is bounded before Typst runs.
 //
-// The constants below are part of document-v1. templates/document-v1.typ
-// holds the same values; TestLayoutConstantsMatchTemplate compares them.
+// The constants below are part of document-v1, and document-v2 keeps
+// them: its logo sits outside the flow. Both templates hold the same
+// values; TestLayoutConstantsMatchTemplate compares them with the
+// current one.
 
 // widthMargin widens every measured word by 3 percent.
 const widthMargin = 1.03
