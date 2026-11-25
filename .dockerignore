@@ -9,4 +9,3 @@ web/node_modules
 web/dist
 web/coverage
 web/.eslintcache
-cmd/solobill/dist

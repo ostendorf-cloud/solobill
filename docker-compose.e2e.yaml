@@ -1,0 +1,7 @@
+# Overlay for scripts/e2e-compose.sh only: publishes Postgres on loopback,
+# so the end to end test (internal/e2e) can create its local account. Never
+# part of a plain `docker compose up --build`.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:55432:5432"

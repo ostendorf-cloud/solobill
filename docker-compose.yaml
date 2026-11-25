@@ -1,7 +1,7 @@
 # Local development only: `docker compose up --build` gives a running
-# solobill, a Postgres, and one seeded tenant to log into. Nothing here
-# is a deployment manifest; a real deployment is a later issue's concern
-# (a Helm chart, per this organisation's own convention elsewhere).
+# solobill, its frontend and its API, a Postgres, and one seeded tenant to
+# log into at http://localhost:8080. Nothing here is a deployment manifest:
+# charts/solobill is the real deployment.
 #
 # Every secret this file needs comes from a developer's own .env, never
 # from a value written into this file: see .env.example for the full
@@ -44,7 +44,7 @@ services:
   #     setUpTestAppRole applies to its own test role, for the same
   #     reason - plus a standing default-privileges rule. A new table
   #     gets its own grant file; this file is not edited for it. This is
-  #     the role the "solobill" service's DATABASE_USER /
+  #     the role the "api" service's DATABASE_USER /
   #     DATABASE_PASSWORD point at; it is the only role that ever runs
   #     this application's own queries.
   #
@@ -77,7 +77,7 @@ services:
       start_period: 10s
 
   # One-shot: applies db/migrations as the bootstrap superuser, then
-  # exits. "solobill" below waits for this to exit 0
+  # exits. "api" below waits for this to exit 0
   # (service_completed_successfully), not merely for postgres to be
   # healthy, so the tables and row level security policies are always
   # there before the application ever opens a connection.
@@ -124,7 +124,7 @@ services:
   # later migration creates after it ran, but only for SELECT and INSERT,
   # and not on a fresh database, where every migration runs before it:
   # so every grant file grants every privilege its tables need, SELECT
-  # and INSERT included. "solobill" below waits on this service, not merely on
+  # and INSERT included. "api" below waits on this service, not merely on
   # "migrate", so the application itself never opens a connection
   # before these grants exist either.
   #
@@ -169,7 +169,7 @@ services:
   # development only, never in the cluster, where the bucket user and key
   # come from the infrastructure repository and OpenBao. solobill itself
   # is wired to it by issue #75, which adds the S3_* variables to the
-  # "solobill" service.
+  # "api" service.
   seaweedfs:
     image: chrislusf/seaweedfs:4.55@sha256:7ca46aeae2f223b37e5d91593c17ab37738eec6df6ab69b48a0487f7643342b9
     restart: unless-stopped
@@ -201,10 +201,15 @@ services:
         | awk '{print $$1}' | grep -qx solobill
         || echo "s3.bucket.create -name solobill" | weed shell -master=seaweedfs:9333
 
-  solobill:
+  # The API image (the Dockerfile's "api" stage, solobill-api). No port is
+  # published: the browser reaches it only through the frontend below,
+  # which forwards /api/ here, so cookies and the CSRF check see one origin
+  # exactly as behind the Ingress.
+  api:
     build:
       context: .
       dockerfile: Dockerfile
+      target: api
     restart: unless-stopped
     depends_on:
       grant-app-role:
@@ -212,6 +217,10 @@ services:
     environment:
       LISTEN_ADDR: ":8080"
       LOG_LEVEL: info
+      # The typst binary the api stage installs: issuing documents and the
+      # PDF download work locally. The compose root filesystem is
+      # writable, so the renderer's temporary directory needs no volume.
+      PDF_TYPST_BINARY: /usr/local/bin/typst
       # No credentials here: DatabaseDSN (internal/config) assembles them
       # from DATABASE_USER/DATABASE_PASSWORD below, matching DATABASE_URL's
       # own contract (connection URL only, see internal/config.Config).
@@ -264,6 +273,29 @@ services:
       S3_USE_PATH_STYLE: "true"
       S3_REQUIRE_VERSIONING: "false"
       S3_OBJECT_LOCK: "false"
+
+  # The frontend image (the Dockerfile's "frontend" stage,
+  # solobill-frontend): the Vue app through govue's frontend in app mode.
+  # FRONTEND_DEV_API_PROXY turns on govue's development proxy, which
+  # forwards /api/ to the api service above, so the browser talks to one
+  # origin, http://localhost:8080, as the Ingress gives it in production.
+  # The chart never sets it. One limit of that proxy: it forwards a request
+  # body of at most 1 MiB (govue's frontend.DevAPIProxyMaxBody), so a
+  # receipt upload above that answers 413 here, never in the cluster.
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      LISTEN_ADDR: ":8080"
+      LOG_LEVEL: info
+      FRONTEND_DEV_API_PROXY: "http://api:8080"
+      # Plain HTTP on localhost: no Strict-Transport-Security header.
+      ALLOW_PLAIN_HTTP: "true"
     ports:
       # Bound to loopback only: "8080:8080" alone binds every interface,
       # which on a shared network (coffee shop wifi, office LAN) would

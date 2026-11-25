@@ -7,15 +7,20 @@ on:
 permissions: {}
 
 jobs:
-  # The image is built once per platform, each on that platform's own
-  # native GitHub-hosted runner, amd64 on ubuntu-latest and arm64 on
-  # ubuntu-24.04-arm, rather than cross-compiled through QEMU. Each leg
-  # pushes its own image by digest only, with no tag attached, so the two
-  # legs never race for a tag; image-merge below is the one place a tag
-  # is written, assembling both digests into one manifest list.
+  # The two images, solobill-api and solobill-frontend (the Dockerfile's
+  # "api" and "frontend" stages), released under one tag and deployed
+  # together by the one chart. Each image is built once per platform, each
+  # on that platform's own native GitHub-hosted runner, amd64 on
+  # ubuntu-latest and arm64 on ubuntu-24.04-arm, rather than cross-compiled
+  # through QEMU. Each leg pushes its image by digest only, with no tag
+  # attached, so the legs never race for a tag; image-merge below is the
+  # one place a tag is written, assembling both digests of one image into
+  # one manifest list. internal/envsync fails when the image list differs
+  # from the Dockerfile's or the chart's.
   image-build:
     strategy:
       matrix:
+        image: [api, frontend]
         platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64
@@ -28,7 +33,9 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE: ghcr.io/${{ github.repository }}
+      # Matches the image repositories charts/solobill/values.yaml defaults
+      # to: internal/envsync fails when the two differ.
+      IMAGE: ghcr.io/${{ github.repository_owner }}/solobill-${{ matrix.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -51,6 +58,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: .
+          target: ${{ matrix.image }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
 
@@ -63,7 +71,7 @@ jobs:
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: image-digests-${{ steps.platform.outputs.pair }}
+          name: image-digests-${{ matrix.image }}-${{ steps.platform.outputs.pair }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -71,19 +79,23 @@ jobs:
 
   image-merge:
     needs: image-build
+    strategy:
+      matrix:
+        image: [api, frontend]
     runs-on: ubuntu-latest
     # Metadata only: download the digests, assemble and push one
     # manifest list, inspect it back. No build.
     timeout-minutes: 5
     permissions:
       packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/solobill-${{ matrix.image }}
     steps:
       - name: Resolve the image tags
         id: tags
         env:
           TAG_NAME: ${{ github.event.release.tag_name }}
           PRERELEASE: ${{ github.event.release.prerelease }}
-          IMAGE: ghcr.io/${{ github.repository }}
         run: |
           version="${TAG_NAME#v}"
           tags="${IMAGE}:${version}"
@@ -100,7 +112,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           path: /tmp/digests
-          pattern: image-digests-*
+          pattern: image-digests-${{ matrix.image }}-*
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
@@ -113,7 +125,6 @@ jobs:
 
       - name: Create and push the multi-platform manifest list
         env:
-          IMAGE: ghcr.io/${{ github.repository }}
           TAGS: ${{ steps.tags.outputs.tags }}
         working-directory: /tmp/digests
         run: |
@@ -136,7 +147,6 @@ jobs:
 
       - name: Verify the manifest list covers both platforms
         env:
-          IMAGE: ghcr.io/${{ github.repository }}
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           platforms="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" \
