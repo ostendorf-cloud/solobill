@@ -10,6 +10,7 @@ import {
   GovueHeader,
   GovueLanguageSwitch,
   GovueSkipLink,
+  GovueThemeSwitch,
   GovueToastHost,
 } from '@ostendorf-cloud/govue'
 import { computed, ref, watch } from 'vue'
@@ -78,12 +79,18 @@ async function logout(): Promise<void> {
 <template>
   <GovueSkipLink>{{ t('common.skipToContent') }}</GovueSkipLink>
 
-  <GovueHeader v-if="!bare" theme-switch>
+  <GovueHeader v-if="!bare">
     <template #brand>
       <RouterLink :to="homeLocation(route)" class="text-text">{{ t('common.appName') }}</RouterLink>
     </template>
 
     <AppNav v-if="me" :role="me.role" />
+
+    <!-- One cycle button at every width: system, light, dark. The choice is
+         kept by govue's useTheme under its default storage key. -->
+    <template #theme>
+      <GovueThemeSwitch cycle />
+    </template>
 
     <template #actions>
       <GovueLanguageSwitch
