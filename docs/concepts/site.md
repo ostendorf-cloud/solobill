@@ -17,12 +17,14 @@ The app itself is described in [solobill.md](solobill.md).
 - An unconfirmed entry is gone 48 hours after its request.
 - Every mail after the confirmation carries a working unsubscribe link.
 - The site deploys, scales and fails independently of the app and never reads app data.
-- Every page says the product is in development. No capability is claimed as available.
+- A capability is called available only when it exists in the app's code. All else is planned.
+- A login button at the top right leads into the app at `app.solobill.de`.
 
 ## Non goals
 
-- A signup, a login or any link into the app from the site.
-- Prices, a checkout or a terms page.
+- A signup flow. The app has none today, so the button never promises a signup.
+- Prices, a checkout or a promise of free use. The page only says prices follow before the start.
+- Terms of use (AGB) and a data processing agreement (AVV) for the app. Separate issues.
 - Sending the launch notice or product news. This concept covers collecting and confirming.
 - A newsletter tool, HTML mail or mail tracking.
 - A cookie banner. The site sets no cookie.
@@ -44,8 +46,34 @@ The app itself is described in [solobill.md](solobill.md).
 - 2026-11-25: each preview image is labelled as a preview.
 - 2026-11-25: confirmation mail from `noreply@solobill.de` through the SMTP service of
   `ostendorf.tech`.
-- 2026-11-25: the owner sets SPF, DKIM and DMARC for `solobill.de` in the infrastructure repository.
 - 2026-11-25: API host wish: `api.solobill.de` if it works, else `/api` on each host.
+- 2026-11-25: operator of `solobill.de` is the provider of `ostendorf.tech`, same provider data.
+- 2026-11-25: imprint e-mail `info@solobill.de`. The other provider data as on `ostendorf.tech`.
+- 2026-11-25: the imprint has a dispute resolution section: neither obliged nor willing.
+- 2026-11-25: the imprint has the MStV paragraph 18 section 2 section, same person.
+- 2026-11-25: imprint and privacy text are written fresh for this domain. No sentence is copied.
+- 2026-11-25: the `ostendorf.tech` imprint, privacy policy and terms are the model for structure.
+- 2026-11-25: the app is open to everyone at `app.solobill.de`, each user with an own login.
+- 2026-11-25: a self signup becomes a goal of the app, replacing the "later" in solobill.md.
+- 2026-11-25: the page shows a login button at the top right, like other SaaS landing pages.
+- 2026-11-25: until a signup exists, the button says "Anmelden" and serves existing accounts.
+- 2026-11-25: UWG paragraph 5: what exists in the app today may be called available.
+- 2026-11-25: everything else is called planned. Each statement is checked against the code.
+- 2026-11-25: no promise of free use. The page notes that prices follow before the start.
+- 2026-11-25: unsubscribe deletes the address at once. No suppression hash is kept.
+- 2026-11-25: confirmed entries are deleted 12 months after the launch mail.
+- 2026-11-25: an address that signs up again is entered again like a new one.
+- 2026-11-25: no IP address is stored. Proof of consent is request time, confirmation time and
+  consent text version.
+- 2026-11-25: hosting as on `ostendorf.tech`: own hardware in Germany, no hosting provider.
+- 2026-11-25: there is no processor for hosting.
+- 2026-11-25: the privacy text names the SMTP service of `ostendorf.tech` as the mail sender.
+- 2026-11-25: the site reuses the colour seed of the app in `web/src/theme/`.
+- 2026-11-25: the site uses the logo of the app. None exists yet. A wordmark logo is its own issue.
+- 2026-11-25: terms of use (AGB) and a data processing agreement (AVV) for the app are own issues.
+- 2026-11-25: AGB and AVV exist before a public registration opens.
+- 2026-11-25: the AGB of `ostendorf.tech` (sound engineering) do not apply to solobill.
+- 2026-11-25: option B stays the recommendation. ADR 0003 stays `proposed` until the owner decides.
 
 ## Approach
 
@@ -76,8 +104,12 @@ The app itself is described in [solobill.md](solobill.md).
 
 - `unconfirmed`: created by a request with consent. One confirmation mail, no advertising in it.
 - `confirmed`: the confirm link was used within 48 hours. The consent proof is recorded.
-- `unsubscribed`: the unsubscribe link was used. What stays depends on an open question below.
-- `deleted`: the row is gone. Unconfirmed rows go after 48 hours, others per the retention answer.
+- Consent proof: request time, confirmation time, consent text version. No IP address.
+- `unsubscribed`: the unsubscribe link was used. The row is deleted in the same step.
+- No suppression hash or other trace of an unsubscribed address stays.
+- `deleted`: the row is gone. Unconfirmed rows go after 48 hours.
+- Confirmed rows go 12 months after the launch mail.
+- An address that was deleted can sign up again and starts as `unconfirmed`.
 - A request for a known address answers like one for a new address. No enumeration.
 - Only the confirmation mail ever goes to an unconfirmed address. A test proves it.
 - A per address limit caps confirmation mails, so the form cannot flood a third party.
@@ -96,7 +128,9 @@ The app itself is described in [solobill.md](solobill.md).
 - An expired confirm token is refused at once, whether or not its row is purged yet.
 - `site-api` deletes unconfirmed rows past their expiry on a fixed interval.
 - The interval is short against 48 hours, so a row outlives its expiry by at most that interval.
-- Confirmed and unsubscribed rows follow the retention answer below.
+- An unsubscribe deletes its row at once. The purge does not wait for it.
+- The same job deletes confirmed rows 12 months after the launch mail.
+- The launch mail time is recorded, so the job knows when the 12 months start.
 
 ### Mail path
 
@@ -109,10 +143,24 @@ The app itself is described in [solobill.md](solobill.md).
 ### Frontend
 
 - `GovueHeader` with the language switch in link mode and the theme switch, `GovueFooter`.
-- Light and dark mode. Formal German through govue's i18n.
+- A login button at the top right links to `app.solobill.de`. Label "Anmelden", "Log in".
+- Light and dark mode from the app's colour seed. Formal German through govue's i18n.
+- Every claim of the copy is either backed by code in the app or phrased as planned.
+- The pull request of the copy lists each "available" claim with the code that backs it.
 - The waitlist form is govue's waitlist form with the site's consent text and privacy link.
 - Result pages: check your inbox, confirmed, unsubscribed, link expired. Both languages.
 - Umami analytics through govue `analytics`, cookie free.
+
+### Legal pages
+
+- Imprint and privacy text for `solobill.de`, in German and English, through govue legal routes.
+- Model for structure and facts: `ImprintView.vue` and `PrivacyView.vue` of `ostendorf.tech`.
+- The texts are written fresh. No sentence of `ostendorf.tech` is copied.
+- Imprint: provider data as on `ostendorf.tech`, e-mail `info@solobill.de`.
+- Imprint sections: contact, VAT ID, MStV paragraph 18 section 2, dispute resolution.
+- Privacy: own hardware in Germany, server logs, Umami, rate limits, waitlist, mail sender.
+- Privacy: the waitlist facts above, consent as legal basis if confirmed (open question).
+- No terms page on the site. The app's AGB and AVV are separate issues.
 
 ## API host
 
@@ -220,33 +268,22 @@ bce0810 and Go 1.27.4 `net/http`.
 
 ## Open questions
 
-- Operator of `solobill.de`: same business as `ostendorf.tech`? Name, address, VAT ID.
-  Owner: owner. Next: answer in #154.
-- Imprint "carries over": provider data only, with an own text? Owner: owner. Next: answer in #154.
-- Imprint sections: dispute resolution wording, MStV paragraph 18 section 2.
-  Owner: owner. Next: answer in #154.
-- UWG paragraph 5: exact framing of "in development" and "planned". Owner: owner.
-  Next: answer in #154.
-- May the page link to a login or say anything is usable today? Owner: owner. Next: answer in #154.
-- "Free during development": free for whom without self signup? Invite only? Price disclaimer?
-  Owner: owner. Next: answer in #154.
-- Legal basis: consent under Art. 6(1)(a) GDPR, assumed. Owner: owner. Next: confirm in #154.
-- Retention of a confirmed entry after launch. Owner: owner. Next: answer in #154.
-- Unsubscribe: delete, or keep a minimal proof? Owner: owner. Next: answer in #154.
-- Proof of consent: request time, confirmation time, consent text version, IP address?
-  Owner: owner. Next: answer in #154.
-- Hosting facts: cluster location, provider, access logs and their retention.
-  Owner: owner. Next: answer in #154.
-- Is the SMTP provider a processor to name in the privacy text? Owner: owner. Next: answer in #154.
-- Brand: logo and theme of the site. Reuse the seed of `web/src/theme/`?
-  Owner: owner. Next: answer in #154.
+- Self signup: the app has none today, only invites, local accounts and OIDC.
+  Owner: owner. Next: a signup issue, then the button may promise a signup.
+- Users beyond a Kleinunternehmer: who may sign up, and which tax setups the app must serve.
+  Owner: owner. Next: decide with the signup issue and #28.
+- Trademark check of the name solobill. Owner: owner. Next: check before the site goes live.
+- Who sets SPF, DKIM and DMARC for `solobill.de` in the infrastructure repository, and when.
+  Owner: owner. Next: name it in the site chart issue's list for the infrastructure repository.
 - Domain: is `solobill.de` registered, is its DNS in the infrastructure repository?
   Owner: owner. Next: answer in #154.
-- Is the name checked against trademarks? Owner: owner. Next: answer in #154.
 - Issue #28 (audience, price) shapes the page copy. Owner: owner. Next: settle #28 before the copy.
+- Legal basis: consent under Art. 6(1)(a) GDPR, assumed and not confirmed.
+  Owner: owner. Next: confirm in #154.
 - `website-conventions` says "no dispute resolution".
   The owner rule of 2026-11-22 says there is one.
   Owner: maintainer. Next: skill update proposed separately.
 - API host: option A or B. Owner: owner. Next: decide on ADR 0003 in #154.
 - The govue issue number of `GovueWaitlistForm`. Owner: maintainer. Next: link it here.
 - The passkey RP id configured for the app today. Owner: owner. Next: read it from the deployment.
+- Issue numbers of the wordmark logo, AGB and AVV issues. Owner: maintainer. Next: link them here.

@@ -1,6 +1,7 @@
 # 0003 The APIs are served under /api on each host
 
 - Status: proposed
+- Decider: the owner. Not decided yet.
 - Date: 2026-11-25
 - Issues: #149, #151, #153, #154
 
