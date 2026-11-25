@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync"
 	"testing"
@@ -55,6 +56,80 @@ func newAssetFixtureWith(t *testing.T, extras assetExtras) profileFixture {
 	t.Cleanup(func() { assetExtrasByTest.Delete(t) })
 
 	return newProfileFixture(t)
+}
+
+// assetClock is the injected clock of an asset test, Deps.Now. A test
+// moves it with set.
+type assetClock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func (c *assetClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.at
+}
+
+func (c *assetClock) set(at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.at = at
+}
+
+// newAssetFixtureAt is newAssetFixture with the asset routes reading
+// clock instead of the wall clock.
+func newAssetFixtureAt(t *testing.T, clock *assetClock) profileFixture {
+	t.Helper()
+
+	assetExtrasByTest.Store(t, assetExtras{})
+	t.Cleanup(func() { assetExtrasByTest.Delete(t) })
+
+	app := buildTestAppClocks(t, 1000, nil, clock.now)
+	tenant := app.store.addTenant(storage.Tenant{Slug: "acme", Name: "acme"})
+
+	return profileFixture{
+		app:    app,
+		tenant: tenant,
+		owner:  profileLogin(t, app, tenant, "owner@acme.test", storage.AccountRoleOwner),
+	}
+}
+
+func berlinTime(t *testing.T, year int, month time.Month, d, hour, minute, sec int) time.Time {
+	t.Helper()
+
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return time.Date(year, month, d, hour, minute, sec, 0, loc)
+}
+
+// assetErrorCode is the code of an error answer.
+func assetErrorCode(t *testing.T, rec *httptest.ResponseRecorder) any {
+	t.Helper()
+
+	e, _ := profileDecodeMap(t, rec)["error"].(map[string]any)
+
+	return e["code"]
+}
+
+// wantBookValue checks the derived fields of an asset JSON. A wantYear
+// of 0 is null.
+func wantBookValue(t *testing.T, where string, got map[string]any, wantCents, wantYear int, wantEditable bool) {
+	t.Helper()
+
+	var year any
+	if wantYear != 0 {
+		year = float64(wantYear)
+	}
+	if got["book_value_cents"] != float64(wantCents) || got["book_value_year"] != year || got["editable"] != wantEditable {
+		t.Errorf("%s: book_value_cents %v, book_value_year %v, editable %v, want %d, %v, %v",
+			where, got["book_value_cents"], got["book_value_year"], got["editable"], wantCents, year, wantEditable)
+	}
 }
 
 func fakeAssetsOf(t *testing.T, f profileFixture) *fakeAssets {
@@ -318,7 +393,7 @@ func TestAssetsRejectInvalidBodies(t *testing.T) {
 	}
 
 	f := newAssetFixture(t)
-	for _, field := range []string{"imported", "disposed_on", "id", "tenant_id"} {
+	for _, field := range []string{"imported", "disposed_on", "id", "tenant_id", "book_value_cents", "book_value_year", "editable"} {
 		body := laptopBody()
 		body[field] = "2026-04-01"
 		if rec := f.do(t, f.owner, http.MethodPost, assetsPath, body); rec.Code != http.StatusBadRequest {
@@ -465,8 +540,8 @@ func TestAssetsDisposal(t *testing.T) {
 	// The owner's rule: a disposal dated in an ended year is a 409, like
 	// a PUT. Last year's figures may already be filed.
 	for _, date := range []string{fmt.Sprintf("%d-12-31", year-1), fmt.Sprintf("%d-06-30", year-1)} {
-		if rec := f.do(t, f.owner, http.MethodPost, path, map[string]any{"disposed_on": date}); rec.Code != http.StatusConflict {
-			t.Errorf("disposal on %s: status = %d, want 409, body = %s", date, rec.Code, rec.Body.String())
+		if rec := f.do(t, f.owner, http.MethodPost, path, map[string]any{"disposed_on": date}); rec.Code != http.StatusConflict || assetErrorCode(t, rec) != "asset_year_ended" {
+			t.Errorf("disposal on %s: status = %d, want 409 asset_year_ended, body = %s", date, rec.Code, rec.Body.String())
 		}
 	}
 
@@ -478,8 +553,8 @@ func TestAssetsDisposal(t *testing.T) {
 		t.Errorf("disposed = %v", got)
 	}
 
-	if rec := f.do(t, f.owner, http.MethodPost, path, map[string]any{"disposed_on": thisJanuary}); rec.Code != http.StatusConflict {
-		t.Errorf("second disposal status = %d, want 409", rec.Code)
+	if rec := f.do(t, f.owner, http.MethodPost, path, map[string]any{"disposed_on": thisJanuary}); rec.Code != http.StatusConflict || assetErrorCode(t, rec) != "asset_disposed" {
+		t.Errorf("second disposal status = %d, want 409 asset_disposed", rec.Code)
 	}
 
 	// The schedule stops in January: 40000 for last year, and by the end
@@ -570,9 +645,10 @@ func TestAssetsDisposedAssetIsNotEdited(t *testing.T) {
 	}
 }
 
-// TestAssetsExpenseConflictHasItsOwnMessage: a PUT that links an expense
-// another asset came from is a 409 that says so, not the closed year text.
-func TestAssetsExpenseConflictHasItsOwnMessage(t *testing.T) {
+// TestAssetsExpenseConflictHasItsOwnCode: a PUT that links an expense
+// another asset came from is a 409 with its own code, not the closed
+// year's.
+func TestAssetsExpenseConflictHasItsOwnCode(t *testing.T) {
 	t.Parallel()
 
 	paid := time.Date(assetTestToday().Year(), 1, 1, 0, 0, 0, 0, time.UTC)
@@ -603,9 +679,8 @@ func TestAssetsExpenseConflictHasItsOwnMessage(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409, body = %s", rec.Code, rec.Body.String())
 	}
-	e2, _ := profileDecodeMap(t, rec)["error"].(map[string]any)
-	if e2["message"] != "the expense is already an asset" {
-		t.Errorf("message = %v, want the expense conflict", e2["message"])
+	if code := assetErrorCode(t, rec); code != "expense_already_an_asset" {
+		t.Errorf("code = %v, want expense_already_an_asset", code)
 	}
 }
 
@@ -767,8 +842,8 @@ func TestAssetsExpenseLink(t *testing.T) {
 				t.Errorf("expense_id = %v, want %s", got, tt.expense)
 			}
 			// One expense becomes at most one asset.
-			if rec := f.do(t, f.owner, http.MethodPost, assetsPath, body); rec.Code != http.StatusConflict {
-				t.Errorf("second asset for the expense: status = %d, want 409", rec.Code)
+			if rec := f.do(t, f.owner, http.MethodPost, assetsPath, body); rec.Code != http.StatusConflict || assetErrorCode(t, rec) != "expense_already_an_asset" {
+				t.Errorf("second asset for the expense: status = %d, code %v, want 409 expense_already_an_asset", rec.Code, assetErrorCode(t, rec))
 			}
 		})
 	}
@@ -803,5 +878,272 @@ func TestAssetsOpeningBookValue(t *testing.T) {
 	}
 	if got != "2026:28000 2027:14000 " {
 		t.Errorf("schedule = %q", got)
+	}
+}
+
+// TestAssetsBookValueAtTheBerlinYearBoundary moves the injected clock
+// over New Year in Berlin. Until 31 December 23:59:59 the laptop of
+// docs/api.md is worth its cost and is editable. From 1 January 00:00,
+// which is still 31 December in UTC, it is worth the closing book value
+// of 2026 and a PUT is refused.
+func TestAssetsBookValueAtTheBerlinYearBoundary(t *testing.T) {
+	t.Parallel()
+
+	clock := &assetClock{at: berlinTime(t, 2026, time.December, 31, 23, 59, 59)}
+	f := newAssetFixtureAt(t, clock)
+
+	created := createAsset(t, f, laptopBody())
+	wantBookValue(t, "POST", created, 149900, 0, true)
+	id, _ := created["id"].(string)
+
+	readBoth := func(where string, wantCents, wantYear int, wantEditable bool) {
+		t.Helper()
+
+		wantBookValue(t, where+" GET", profileDecodeMap(t, f.do(t, f.owner, http.MethodGet, assetsPath+"/"+id, nil)), wantCents, wantYear, wantEditable)
+		list, _ := profileDecodeMap(t, f.do(t, f.owner, http.MethodGet, assetsPath, nil))["assets"].([]any)
+		if len(list) != 1 {
+			t.Fatalf("%s list = %v, want one asset", where, list)
+		}
+		first, _ := list[0].(map[string]any)
+		wantBookValue(t, where+" list", first, wantCents, wantYear, wantEditable)
+	}
+
+	readBoth("31 Dec 23:59:59", 149900, 0, true)
+
+	clock.set(berlinTime(t, 2027, time.January, 1, 0, 0, 0))
+	if got := clock.now().UTC(); got.Year() != 2026 {
+		t.Fatalf("1 January 00:00 Berlin is %v in UTC, want still 2026", got)
+	}
+	readBoth("1 Jan 00:00", 108261, 2026, false)
+
+	rec := f.do(t, f.owner, http.MethodPut, assetsPath+"/"+id, laptopBody())
+	if rec.Code != http.StatusConflict || assetErrorCode(t, rec) != "asset_year_ended" {
+		t.Errorf("PUT at 1 Jan 00:00: status %d, code %v, want 409 asset_year_ended", rec.Code, assetErrorCode(t, rec))
+	}
+}
+
+// TestAssetsBookValueOfEachKind reads the derived fields of assets stored
+// directly, at 1 June 2027 in Berlin. The figures are worked out in
+// internal/afa's TestCurrentBookValue.
+func TestAssetsBookValueOfEachKind(t *testing.T) {
+	t.Parallel()
+
+	clock := &assetClock{at: berlinTime(t, 2027, time.June, 1, 12, 0, 0)}
+	f := newAssetFixtureAt(t, clock)
+	fake := fakeAssetsOf(t, f)
+	day := func(s string) time.Time {
+		d, err := time.Parse(time.DateOnly, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return d
+	}
+	life := int32(36)
+	opening2026, opening2027 := int64(42000), int64(12000)
+	year2026, year2027 := int32(2026), int32(2027)
+	disposedOn, disposedThisYear := day("2026-01-31"), day("2027-03-01")
+	const noRest = -1
+
+	tests := []struct {
+		name         string
+		input        storage.Asset
+		wantCents    int
+		wantYear     int
+		wantEditable bool
+		wantRest     int
+	}{
+		{"acquired this year", storage.Asset{
+			Name: "Laptop", AcquiredOn: day("2027-03-10"), CostBasisCents: 149900,
+			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
+		}, 149900, 0, true, noRest},
+		{"gwg of last year", storage.Asset{
+			Name: "Chair", AcquiredOn: day("2026-05-01"), CostBasisCents: 80000,
+			Method: storage.DepreciationLowValue, Group: storage.AssetGroupOfficeEquipment,
+		}, 0, 2026, false, noRest},
+		{"sammelposten of last year", storage.Asset{
+			Name: "Shelf", AcquiredOn: day("2026-05-01"), CostBasisCents: 100000,
+			Method: storage.DepreciationPool, Group: storage.AssetGroupOfficeEquipment,
+		}, 80000, 2026, false, noRest},
+		// A disposal does not reduce the pool (section 6 Abs. 2a Satz 3
+		// EStG): the value follows the schedule and there is no rest.
+		{"sammelposten disposed this year", storage.Asset{
+			Name: "Cabinet", AcquiredOn: day("2026-05-01"), CostBasisCents: 100000,
+			Method: storage.DepreciationPool, Group: storage.AssetGroupOfficeEquipment,
+			DisposedOn: &disposedThisYear,
+		}, 80000, 2026, false, noRest},
+		{"disposed in 2026", storage.Asset{
+			Name: "Phone", AcquiredOn: day("2025-01-15"), CostBasisCents: 120000,
+			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
+			DisposedOn: &disposedOn,
+		}, 0, 2026, false, 76667},
+		// 2 of 36 months: 2778 handed out, 47222 left.
+		{"acquired and disposed this year", storage.Asset{
+			Name: "Monitor", AcquiredOn: day("2027-02-01"), CostBasisCents: 50000,
+			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
+			DisposedOn: &disposedThisYear,
+		}, 0, 2027, false, 47222},
+		{"imported with 2026's opening value", storage.Asset{
+			Name: "Old desk", AcquiredOn: day("2024-07-01"), CostBasisCents: 72000,
+			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
+			OpeningBookValueCents: &opening2026, OpeningBookValueYear: &year2026, Imported: true,
+		}, 14000, 2026, false, noRest},
+		{"imported with this year's opening value", storage.Asset{
+			Name: "Old lamp", AcquiredOn: day("2024-07-01"), CostBasisCents: 72000,
+			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
+			OpeningBookValueCents: &opening2027, OpeningBookValueYear: &year2027, Imported: true,
+		}, 12000, 0, true, noRest},
+	}
+
+	for _, tt := range tests {
+		stored := fake.put(tt.input)
+		got := profileDecodeMap(t, f.do(t, f.owner, http.MethodGet, assetsPath+"/"+stored.ID.String(), nil))
+		wantBookValue(t, tt.name, got, tt.wantCents, tt.wantYear, tt.wantEditable)
+		var wantRest any
+		if tt.wantRest != noRest {
+			wantRest = float64(tt.wantRest)
+		}
+		if got["disposal_rest_cents"] != wantRest {
+			t.Errorf("%s: disposal_rest_cents %v, want %v", tt.name, got["disposal_rest_cents"], wantRest)
+		}
+	}
+}
+
+// TestAssetsListSurvivesAnAssetAFARefuses stores a GWG above the limit,
+// which no request can create. The list still answers 200: that row has
+// null derived figures and editable false, the others are complete.
+func TestAssetsListSurvivesAnAssetAFARefuses(t *testing.T) {
+	t.Parallel()
+
+	clock := &assetClock{at: berlinTime(t, 2027, time.June, 1, 12, 0, 0)}
+	f := newAssetFixtureAt(t, clock)
+	fake := fakeAssetsOf(t, f)
+	acquired := time.Date(2027, 2, 1, 0, 0, 0, 0, time.UTC)
+	bad := fake.put(storage.Asset{
+		Name: "Broken", AcquiredOn: acquired, CostBasisCents: 80001,
+		Method: storage.DepreciationLowValue, Group: storage.AssetGroupOfficeEquipment,
+	})
+	good := fake.put(storage.Asset{
+		Name: "Chair", AcquiredOn: acquired, CostBasisCents: 80000,
+		Method: storage.DepreciationLowValue, Group: storage.AssetGroupOfficeEquipment,
+	})
+
+	rec := f.do(t, f.owner, http.MethodGet, assetsPath, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+	rows, _ := profileDecodeMap(t, rec)["assets"].([]any)
+	byID := map[string]map[string]any{}
+	for _, row := range rows {
+		m, _ := row.(map[string]any)
+		id, _ := m["id"].(string)
+		byID[id] = m
+	}
+	if len(byID) != 2 {
+		t.Fatalf("list = %v, want both assets", rows)
+	}
+
+	broken := byID[bad.ID.String()]
+	for _, k := range []string{"book_value_cents", "book_value_year", "disposal_rest_cents"} {
+		if v, ok := broken[k]; !ok || v != nil {
+			t.Errorf("refused row %s = %v (present %v), want null", k, v, ok)
+		}
+	}
+	if broken["editable"] != false || broken["name"] != "Broken" {
+		t.Errorf("refused row = %v, want editable false and its stored fields", broken)
+	}
+	wantBookValue(t, "good row", byID[good.ID.String()], 80000, 0, true)
+
+	// The single read answers the same way.
+	one := f.do(t, f.owner, http.MethodGet, assetsPath+"/"+bad.ID.String(), nil)
+	if one.Code != http.StatusOK || profileDecodeMap(t, one)["book_value_cents"] != nil {
+		t.Errorf("GET refused asset: status %d, body %s, want 200 with null book value", one.Code, one.Body.String())
+	}
+}
+
+// TestAssetsLostRaceFallbacks: the repository refuses a write after every
+// check before it passed, as only a concurrent writer can cause. Each
+// route still answers its own code.
+func TestAssetsLostRaceFallbacks(t *testing.T) {
+	t.Parallel()
+
+	f := newAssetFixture(t)
+	created := createAsset(t, f, func() map[string]any {
+		b := laptopBody()
+		b["acquired_on"] = assetThisYear()
+
+		return b
+	}())
+	id, _ := created["id"].(string)
+	fakeAssetsOf(t, f).loseRaces()
+
+	body := laptopBody()
+	body["acquired_on"] = assetThisYear()
+	for _, tc := range []struct {
+		name, method, path string
+		body               map[string]any
+		wantCode           string
+	}{
+		// The unique index assets_expense_once is the only conflict of an
+		// INSERT.
+		{"POST", http.MethodPost, assetsPath, body, "expense_already_an_asset"},
+		// RecordDisposal's only conflict is a disposal recorded meanwhile.
+		{"disposal", http.MethodPost, assetsPath + "/" + id + "/disposal", map[string]any{"disposed_on": assetThisYear()}, "asset_disposed"},
+		// The cause of an UPDATE that matched no row is unknown here.
+		{"PUT", http.MethodPut, assetsPath + "/" + id, body, "conflict"},
+	} {
+		rec := f.do(t, f.owner, tc.method, tc.path, tc.body)
+		if rec.Code != http.StatusConflict || assetErrorCode(t, rec) != tc.wantCode {
+			t.Errorf("%s: status %d, code %v, want 409 %s", tc.name, rec.Code, assetErrorCode(t, rec), tc.wantCode)
+		}
+	}
+}
+
+// TestAssetsUpdateConflictCodes: each reason a PUT is refused with 409
+// has its own code. A disposed asset whose year has also ended is
+// asset_disposed: the disposal goes first.
+func TestAssetsUpdateConflictCodes(t *testing.T) {
+	t.Parallel()
+
+	f := newAssetFixture(t)
+	fake := fakeAssetsOf(t, f)
+	life := int32(36)
+	lastYear, _ := time.Parse(time.DateOnly, assetLastYear())
+	thisYear, _ := time.Parse(time.DateOnly, assetThisYear())
+	stored := func(acquired time.Time, disposed bool) string {
+		a := storage.Asset{
+			TenantID: f.tenant.ID, Name: "Desk", AcquiredOn: acquired, CostBasisCents: 120000,
+			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
+		}
+		if disposed {
+			a.DisposedOn = &acquired
+		}
+
+		return fake.put(a).ID.String()
+	}
+	body := func(acquired string) map[string]any {
+		b := laptopBody()
+		b["acquired_on"] = acquired
+
+		return b
+	}
+
+	tests := []struct {
+		name     string
+		id       string
+		body     map[string]any
+		wantCode string
+	}{
+		{"stored year ended", stored(lastYear, false), body(assetThisYear()), "asset_year_ended"},
+		{"replacement in an ended year", stored(thisYear, false), body(assetLastYear()), "asset_year_ended"},
+		{"disposed this year", stored(thisYear, true), body(assetThisYear()), "asset_disposed"},
+		{"disposed and year ended", stored(lastYear, true), body(assetThisYear()), "asset_disposed"},
+	}
+
+	for _, tt := range tests {
+		rec := f.do(t, f.owner, http.MethodPut, assetsPath+"/"+tt.id, tt.body)
+		if rec.Code != http.StatusConflict || assetErrorCode(t, rec) != tt.wantCode {
+			t.Errorf("%s: status %d, code %v, want 409 %s, body = %s", tt.name, rec.Code, assetErrorCode(t, rec), tt.wantCode, rec.Body.String())
+		}
 	}
 }

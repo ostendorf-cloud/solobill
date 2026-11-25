@@ -88,6 +88,9 @@ func (r *expenseRepository) List(ctx context.Context, filter storage.ExpenseFilt
 	if filter.Category != nil {
 		params.Category = pgtype.Text{String: string(*filter.Category), Valid: true}
 	}
+	if filter.IsAsset != nil {
+		params.IsAsset = pgtype.Bool{Bool: *filter.IsAsset, Valid: true}
+	}
 
 	rows, err := sqlcgen.New(tx).ListExpenses(ctx, params)
 	if err != nil {

@@ -246,6 +246,7 @@ WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
     AND ($2::date IS NULL OR paid_on < $2::date)
     AND ($3::text IS NULL OR state = $3::text)
     AND ($4::text IS NULL OR category = $4::text)
+    AND ($5::boolean IS NULL OR is_asset = $5::boolean)
 ORDER BY paid_on NULLS LAST, created_at, id
 `
 
@@ -254,6 +255,7 @@ type ListExpensesParams struct {
 	PaidBefore pgtype.Date
 	State      pgtype.Text
 	Category   pgtype.Text
+	IsAsset    pgtype.Bool
 }
 
 // ListExpenses filters on the half open date range of one year of paid_on
@@ -266,6 +268,7 @@ func (q *Queries) ListExpenses(ctx context.Context, arg ListExpensesParams) ([]E
 		arg.PaidBefore,
 		arg.State,
 		arg.Category,
+		arg.IsAsset,
 	)
 	if err != nil {
 		return nil, err

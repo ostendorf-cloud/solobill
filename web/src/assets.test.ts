@@ -2,11 +2,12 @@ import { ApiError, ErrorCode } from '@ostendorf-cloud/govue'
 import { describe, expect, it } from 'vitest'
 
 import {
+  assetConflict,
   assetFieldErrors,
+  bookValueNote,
   editBlock,
   germanToday,
   germanYear,
-  isExpenseTaken,
   type Asset,
 } from './assets'
 import deAssets from './i18n/locales/de/assets.json'
@@ -26,6 +27,10 @@ const asset: Asset = {
   disposed_on: null,
   disposal_proceeds_cents: null,
   imported: false,
+  book_value_cents: 149900,
+  book_value_year: null,
+  disposal_rest_cents: null,
+  editable: true,
   created_at: '',
   updated_at: '',
 }
@@ -40,30 +45,48 @@ describe('germanYear and germanToday', () => {
 })
 
 describe('editBlock', () => {
-  const now = new Date('2026-11-21T10:00:00Z')
-
-  it('is null in the acquisition year', () => {
-    expect(editBlock(asset, now)).toBeNull()
+  it('follows the editable flag of the server, not the dates', () => {
+    // An acquisition long ago with the flag set stays editable: the browser
+    // has no date rule of its own.
+    expect(editBlock({ ...asset, acquired_on: '2020-01-01' })).toBeNull()
+    expect(editBlock({ ...asset, editable: false })).toBe('yearEnded')
   })
 
-  it('is yearEnded once the year of acquisition has ended in Germany', () => {
-    expect(editBlock(asset, new Date('2026-12-31T23:00:00Z'))).toBe('yearEnded')
-    expect(editBlock({ ...asset, acquired_on: '2025-12-31' }, now)).toBe('yearEnded')
+  it('names the disposal of a disposed asset', () => {
+    expect(editBlock({ ...asset, editable: false, disposed_on: '2026-05-01' })).toBe('disposed')
+  })
+})
+
+describe('bookValueNote', () => {
+  const t = (key: string, named?: Record<string, unknown>) =>
+    named ? `${key}:${JSON.stringify(named)}` : key
+
+  it('names the year the value closes, or that no year has ended', () => {
+    expect(bookValueNote({ ...asset, book_value_year: 2026 }, t)).toBe(
+      'assets.bookValue.atEndOf:{"year":2026}',
+    )
+    expect(bookValueNote(asset, t)).toBe('assets.bookValue.beforeDepreciation')
   })
 
-  it('reads the opening year of an imported asset', () => {
-    const imported = {
+  it('names the disposal year of a disposed asset with a rest', () => {
+    const gone = {
       ...asset,
-      acquired_on: '2020-01-01',
-      opening_book_value_cents: 1000,
-      opening_book_value_year: 2026,
+      disposed_on: '2026-05-01',
+      book_value_cents: 0,
+      book_value_year: 2026,
+      disposal_rest_cents: 76667,
     }
-    expect(editBlock(imported, now)).toBeNull()
-    expect(editBlock({ ...imported, opening_book_value_year: 2025 }, now)).toBe('yearEnded')
+    expect(bookValueNote(gone, t)).toBe('assets.bookValue.disposedIn:{"year":2026}')
+    // A Sammelposten has no rest: its value follows the schedule.
+    expect(bookValueNote({ ...gone, book_value_cents: 80000, disposal_rest_cents: null }, t)).toBe(
+      'assets.bookValue.atEndOf:{"year":2026}',
+    )
   })
 
-  it('is disposed for a disposed asset', () => {
-    expect(editBlock({ ...asset, disposed_on: '2026-05-01' }, now)).toBe('disposed')
+  it('says the value is not available when the server sent none', () => {
+    expect(bookValueNote({ ...asset, book_value_cents: null }, t)).toBe(
+      'assets.bookValue.unavailable',
+    )
   })
 })
 
@@ -107,17 +130,22 @@ describe('assetFieldErrors', () => {
   })
 })
 
-describe('isExpenseTaken', () => {
-  it('tells the 409 by its text', () => {
-    const taken = new ApiError({
-      code: ErrorCode.conflict,
-      status: 409,
-      message: 'the expense is already an asset',
-    })
-    const closed = new ApiError({ code: ErrorCode.conflict, status: 409, message: 'closed' })
-    expect(isExpenseTaken(taken)).toBe(true)
-    expect(isExpenseTaken(closed)).toBe(false)
-    expect(isExpenseTaken(new Error('x'))).toBe(false)
+describe('assetConflict', () => {
+  const failure = (status: number, code: string) =>
+    new ApiError({ code, status, message: 'the expense is already an asset' })
+
+  it.each([
+    ['asset_disposed', 'disposed'],
+    ['asset_year_ended', 'yearEnded'],
+    ['expense_already_an_asset', 'expenseTaken'],
+    [ErrorCode.conflict, 'other'],
+  ] as const)('tells the 409 %s by its code', (code, want) => {
+    expect(assetConflict(failure(409, code))).toBe(want)
+  })
+
+  it('is null for anything but a 409, whatever the message says', () => {
+    expect(assetConflict(failure(400, 'expense_already_an_asset'))).toBeNull()
+    expect(assetConflict(new Error('x'))).toBeNull()
   })
 })
 

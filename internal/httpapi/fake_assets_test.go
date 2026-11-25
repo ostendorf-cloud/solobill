@@ -20,6 +20,17 @@ import (
 type fakeAssets struct {
 	mu     sync.Mutex
 	assets []storage.Asset
+	// lostRace makes Create, Update and RecordDisposal answer
+	// storage.ErrConflict although every check before them passed: a
+	// concurrent writer won, which only a race produces in production.
+	lostRace bool
+}
+
+func (f *fakeAssets) loseRaces() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.lostRace = true
 }
 
 func (f *fakeAssets) index(id uuid.UUID) int {
@@ -49,7 +60,7 @@ func (f *fakeAssets) Create(_ context.Context, a storage.Asset) (storage.Asset, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if f.expenseTaken(a) {
+	if f.lostRace || f.expenseTaken(a) {
 		return storage.Asset{}, storage.ErrConflict
 	}
 	a.ID = uuid.New()
@@ -117,7 +128,7 @@ func (f *fakeAssets) Update(_ context.Context, a storage.Asset, now time.Time) (
 	if stored.DisposedOn != nil || fakeFirstScheduleYear(stored) < openYear || fakeFirstScheduleYear(a) < openYear {
 		return storage.Asset{}, storage.ErrConflict
 	}
-	if f.expenseTaken(a) {
+	if f.lostRace || f.expenseTaken(a) {
 		return storage.Asset{}, storage.ErrConflict
 	}
 
@@ -137,7 +148,7 @@ func (f *fakeAssets) RecordDisposal(_ context.Context, id uuid.UUID, disposedOn 
 	if i < 0 {
 		return storage.Asset{}, storage.ErrNotFound
 	}
-	if f.assets[i].DisposedOn != nil {
+	if f.lostRace || f.assets[i].DisposedOn != nil {
 		return storage.Asset{}, storage.ErrConflict
 	}
 	f.assets[i].DisposedOn = &disposedOn

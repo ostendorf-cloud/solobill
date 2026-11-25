@@ -448,6 +448,22 @@ func parseBookingFilter(q url.Values, kind category.Kind) (bookingFilter, error)
 	return f, nil
 }
 
+// parseIsAssetFilter reads the expense list's is_asset, true or false.
+// Other income has no asset flag, so it is not part of bookingFilter.
+func parseIsAssetFilter(q url.Values) (*bool, error) {
+	raw := q.Get("is_asset")
+	switch raw {
+	case "":
+		return nil, nil
+	case "true", "false":
+		v := raw == "true"
+
+		return &v, nil
+	default:
+		return nil, masterDataInvalid(map[string]any{"is_asset": "must be true or false"})
+	}
+}
+
 // expensesReady answers 501 while a repository the expense routes need is
 // not wired.
 func (a *app) expensesReady() bool {
@@ -482,11 +498,17 @@ func (a *app) handleListExpenses(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	isAsset, err := parseIsAssetFilter(r.URL.Query())
+	if err != nil {
+		return err
+	}
 
 	var list []storage.Expense
 	err = a.inTenant(r.Context(), c.tenantID, func(ctx context.Context) error {
 		var err error
-		list, err = a.repos.Expenses.List(ctx, storage.ExpenseFilter{Year: f.year, State: f.state, Category: f.category})
+		list, err = a.repos.Expenses.List(ctx, storage.ExpenseFilter{
+			Year: f.year, State: f.state, Category: f.category, IsAsset: isAsset,
+		})
 
 		return err
 	})

@@ -1,8 +1,10 @@
-// Shared pieces of the asset views: the types of the API answers, the hint
-// whether an asset can still be edited and the translation of the server's
-// field reasons. The browser never computes a schedule or a book value: the
-// schedule comes from GET /api/v1/assets/{id}/schedule and is shown as it
-// arrives. Typed amounts become integer cents through money.ts.
+// Shared pieces of the asset views: the types of the API answers, the reason
+// an asset cannot be edited, the 409 codes and the translation of the server's
+// field reasons. The browser never computes a schedule, a book value or
+// whether an asset is editable: the asset JSON carries book_value_cents,
+// book_value_year and editable, and the schedule comes from
+// GET /api/v1/assets/{id}/schedule. Typed amounts become integer cents through
+// money.ts.
 import { isApiError } from '@ostendorf-cloud/govue'
 
 import { translateDetails } from './fieldErrors'
@@ -30,6 +32,18 @@ export interface Asset {
   disposed_on: string | null
   disposal_proceeds_cents: number | null
   imported: boolean
+  /** The closing book value of the last schedule year that has ended, the
+   *  value before any depreciation while none has, 0 from the disposal year
+   *  on. Computed by the server. null when the server could not compute it. */
+  book_value_cents: number | null
+  /** The schedule year book_value_cents closes, or the disposal year. null
+   *  while none has ended. */
+  book_value_year: number | null
+  /** The book value left at the end of the disposal year, null unless the
+   *  asset is disposed and not a Sammelposten. */
+  disposal_rest_cents: number | null
+  /** Whether a PUT would be accepted now. Decided by the server. */
+  editable: boolean
   created_at: string
   updated_at: string
 }
@@ -68,35 +82,35 @@ export function germanToday(now: Date = new Date()): string {
   }).format(now)
 }
 
-/** firstScheduleYear is the year the schedule starts in: the opening year of
- *  an imported asset, the year of acquisition otherwise. */
-export function firstScheduleYear(asset: Asset): number {
-  return asset.opening_book_value_year ?? Number.parseInt(asset.acquired_on.slice(0, 4), 10)
-}
-
 export type EditBlock = 'disposed' | 'yearEnded'
 
 /** editBlock tells why an asset cannot be edited any more, or null while it
- *  can. It only drives the disabled state and the reason text: the server
- *  stays the authority and answers 409 to a PUT it refuses. */
-export function editBlock(asset: Asset, now: Date = new Date()): EditBlock | null {
-  if (asset.disposed_on !== null) {
-    return 'disposed'
+ *  can. It reads the server's editable flag and takes no clock: a disposed
+ *  asset names the disposal, any other blocked asset the ended year. */
+export function editBlock(asset: Asset): EditBlock | null {
+  if (asset.editable) {
+    return null
   }
-  if (firstScheduleYear(asset) < germanYear(now)) {
-    return 'yearEnded'
-  }
-  return null
+  return asset.disposed_on === null ? 'yearEnded' : 'disposed'
 }
 
-/** MESSAGE_EXPENSE_TAKEN is the 409 text of internal/httpapi/routes_assets.go
- *  for an expense another asset already came from. The other 409 of a PUT
- *  (a closed year or a disposal) has a different text and the same code. */
-export const MESSAGE_EXPENSE_TAKEN = 'the expense is already an asset'
+/** AssetConflict is the reason of a 409 of the asset routes, read from its
+ *  code in internal/httpapi/routes_assets.go. 'other' is a plain conflict: the
+ *  asset changed meanwhile. */
+export type AssetConflict = 'disposed' | 'yearEnded' | 'expenseTaken' | 'other'
 
-/** isExpenseTaken tells the 409 "the expense is already an asset". */
-export function isExpenseTaken(error: unknown): boolean {
-  return isApiError(error) && error.status === 409 && error.message === MESSAGE_EXPENSE_TAKEN
+const CONFLICT_OF_CODE: Record<string, AssetConflict> = {
+  asset_disposed: 'disposed',
+  asset_year_ended: 'yearEnded',
+  expense_already_an_asset: 'expenseTaken',
+}
+
+/** assetConflict tells the reason of a 409, or null for any other error. */
+export function assetConflict(error: unknown): AssetConflict | null {
+  if (!isApiError(error) || error.status !== 409) {
+    return null
+  }
+  return CONFLICT_OF_CODE[error.code] ?? 'other'
 }
 
 /** isRegimeMissing tells the 400 "no VAT regime period covers the payment
@@ -106,6 +120,21 @@ export function isRegimeMissing(error: unknown): boolean {
 }
 
 type Translate = (key: string, named?: Record<string, unknown>) => string
+
+/** bookValueNote says what the server's book value stands for: missing, the
+ *  disposal year, the end of book_value_year, or the value before any
+ *  depreciation. */
+export function bookValueNote(asset: Asset, t: Translate): string {
+  if (asset.book_value_cents === null) {
+    return t('assets.bookValue.unavailable')
+  }
+  if (asset.disposal_rest_cents !== null && asset.book_value_year !== null) {
+    return t('assets.bookValue.disposedIn', { year: asset.book_value_year })
+  }
+  return asset.book_value_year === null
+    ? t('assets.bookValue.beforeDepreciation')
+    : t('assets.bookValue.atEndOf', { year: asset.book_value_year })
+}
 
 /** FIELD_OF maps the API's field names to the form's. */
 const FIELD_OF: Record<string, string> = {

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// AssetDetailView shows one asset and its depreciation schedule per year
-// (GET /api/v1/assets/{id} and /schedule). The schedule is computed by the
-// server and only shown here. The owner edits the asset while its first
-// schedule year is open (the button is disabled afterwards, with the reason,
-// and a 409 of the server is handled anyway) and records a disposal with a
-// date.
+// AssetDetailView shows one asset, its current book value and its
+// depreciation schedule per year (GET /api/v1/assets/{id} and /schedule).
+// Every figure is computed by the server and only shown here. The owner edits
+// the asset while the server's editable flag is set (the button is disabled
+// otherwise, with the reason, and a 409 of the server is handled anyway) and
+// records a disposal with a date.
 import {
   isApiError,
   useToasts,
@@ -22,7 +22,15 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { apiClient } from '../api'
-import { assetFieldErrors, editBlock, germanToday, type Asset, type Schedule } from '../assets'
+import {
+  assetConflict,
+  assetFieldErrors,
+  bookValueNote,
+  editBlock,
+  germanToday,
+  type Asset,
+  type Schedule,
+} from '../assets'
 import AssetFormDialog from '../components/AssetFormDialog.vue'
 import UnverifiedNote from '../components/UnverifiedNote.vue'
 import type { Category } from '../expenses'
@@ -49,9 +57,8 @@ const disposalError = ref('')
 const disposing = ref(false)
 
 const isOwner = computed(() => me.value?.role === 'owner')
-// Computed from the loaded asset and the clock when the asset loads, not
-// ticking over New Year. That is fine: it is only a hint, and the server's 409
-// is the authority.
+// The server's editable flag as of the last load. It does not tick over New
+// Year: the server's 409 stays the authority.
 const block = computed(() => (asset.value ? editBlock(asset.value) : null))
 const lineLabels = computed(
   () => new Map(categories.value.map((c) => [c.key, c.label_de] as const)),
@@ -200,7 +207,11 @@ async function confirmDisposal(): Promise<void> {
     }
     if (isApiError(error) && error.status === 403) {
       disposalError.value = t('common.errors.forbidden')
-    } else if (isApiError(error) && error.status === 409) {
+    } else if (assetConflict(error) === 'disposed') {
+      disposalError.value = t('assets.disposal.conflictDisposed')
+    } else if (assetConflict(error) === 'yearEnded') {
+      disposalError.value = t('assets.disposal.conflictYearEnded')
+    } else if (assetConflict(error) !== null) {
       disposalError.value = t('assets.disposal.conflict')
     } else if (isApiError(error) && error.status === 400) {
       disposalErrors.value = assetFieldErrors(error.details, t, locale.value)
@@ -256,6 +267,15 @@ async function confirmDisposal(): Promise<void> {
             <dd>{{ formatCents(asset.cost_basis_cents, locale) }}</dd>
           </div>
           <div>
+            <dt class="text-sm text-text-muted">{{ t('assets.columns.bookValue') }}</dt>
+            <dd data-testid="book-value">
+              <template v-if="asset.book_value_cents !== null">
+                {{ formatCents(asset.book_value_cents, locale) }}
+              </template>
+              <span class="text-sm text-text-muted">{{ bookValueNote(asset, t) }}</span>
+            </dd>
+          </div>
+          <div>
             <dt class="text-sm text-text-muted">{{ t('assets.columns.method') }}</dt>
             <dd>{{ t(`assets.method.${asset.method}`) }}</dd>
           </div>
@@ -284,6 +304,12 @@ async function confirmDisposal(): Promise<void> {
           <div v-if="asset.disposed_on">
             <dt class="text-sm text-text-muted">{{ t('assets.detail.disposedOn') }}</dt>
             <dd>{{ asset.disposed_on }}</dd>
+          </div>
+          <div v-if="asset.disposal_rest_cents !== null">
+            <dt class="text-sm text-text-muted">{{ t('assets.detail.disposalRest') }}</dt>
+            <dd data-testid="disposal-rest">
+              {{ formatCents(asset.disposal_rest_cents, locale) }}
+            </dd>
           </div>
           <div v-if="asset.disposal_proceeds_cents !== null">
             <dt class="text-sm text-text-muted">{{ t('assets.detail.proceeds') }}</dt>

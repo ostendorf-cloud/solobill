@@ -13,12 +13,12 @@
   "openFor": "Open {name}",
   "back": "Back to the assets",
   "unverifiedNote": "For a small business owner the limits for low value assets (800 EUR), the pool (250 to 1,000 EUR) and the immediate expense (250 EUR) are applied to the gross price. This reading is not verified. Check it with your tax adviser.",
-  "bookValueMissing": "The list does not show a current book value. The schedule of an asset shows the book value of every year.",
   "columns": {
     "name": "Name",
     "acquiredOn": "Acquired on",
     "cost": "Cost",
     "method": "Method",
+    "bookValue": "Current book value",
     "state": "State",
     "actions": "Actions",
     "year": "Year",
@@ -44,7 +44,19 @@
   },
   "state": {
     "active": "In use",
-    "disposed": "Disposed"
+    "disposed": "Disposed",
+    "editable": "Editable"
+  },
+  "bookValue": {
+    "atEndOf": "at 31 December {year}",
+    "beforeDepreciation": "before any depreciation",
+    "disposedIn": "disposed in {year}",
+    "unavailable": "not available, the stored data is inconsistent"
+  },
+  "conflict": {
+    "disposed": "The asset is disposed and can no longer be edited.",
+    "yearEnded": "The first year of the schedule has ended, or the new date lies in a year that has ended. Record a disposal for a later change.",
+    "other": "The asset was changed meanwhile. Close the dialog and load it again."
   },
   "detail": {
     "loadError": "The asset could not be loaded.",
@@ -54,6 +66,7 @@
     "usefulLife": "Useful life in months",
     "openingBookValue": "Book value at 1 January {year}",
     "disposedOn": "Disposed on",
+    "disposalRest": "Book value left at disposal",
     "proceeds": "Proceeds",
     "scheduleTitle": "Depreciation schedule",
     "scheduleCaption": "Depreciation schedule per year",
@@ -91,7 +104,6 @@
     "cancel": "Cancel",
     "saved": "The asset is saved.",
     "saveError": "The asset could not be saved. Check the marked fields.",
-    "conflictEdit": "The asset can no longer be edited, or the new date lies in a year that has ended. Record a disposal for a later change.",
     "expenseTaken": "An asset exists for this expense already."
   },
   "disposal": {
@@ -103,7 +115,9 @@
     "confirm": "Record the disposal",
     "cancel": "Cancel",
     "done": "The disposal is recorded.",
-    "conflict": "The disposal was refused: the asset is disposed already, or the date lies in a year that has ended.",
+    "conflict": "The disposal was refused: the asset was changed meanwhile. Load it again.",
+    "conflictDisposed": "The disposal was refused: the asset is disposed already.",
+    "conflictYearEnded": "The disposal was refused: the date lies in a year that has ended.",
     "error": "The disposal could not be recorded. Check the marked field."
   },
   "reasons": {

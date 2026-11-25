@@ -75,4 +75,6 @@ type ExpenseFilter struct {
 	Year     *int
 	State    *BookingState
 	Category *category.Key
+	// IsAsset filters on the asset flag.
+	IsAsset *bool
 }

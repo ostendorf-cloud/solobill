@@ -19,10 +19,10 @@ import { useRouter } from 'vue-router'
 
 import { apiClient } from '../api'
 import {
+  assetConflict,
   assetFieldErrors,
   germanYear,
   GROUPS,
-  isExpenseTaken,
   isRegimeMissing,
   METHODS,
   type Asset,
@@ -85,7 +85,8 @@ const groupOptions = computed(() =>
 )
 
 /** offered are the booked, non storno expenses with the asset flag that are
- *  not an asset yet. */
+ *  not an asset yet. The server already narrows the list to booked expenses
+ *  with the flag. */
 const offered = computed(() =>
   expenses.value.filter(
     (e) =>
@@ -110,7 +111,7 @@ async function loadExpenses(): Promise<void> {
   try {
     const [list, regimes] = await Promise.all([
       apiClient.get<{ expenses: Expense[] }>('/expenses', {
-        query: { year: year.value, state: 'booked' },
+        query: { year: year.value, state: 'booked', is_asset: 'true' },
         signal: abort.signal,
       }),
       periods.value.length > 0
@@ -307,13 +308,12 @@ async function save(): Promise<void> {
       return
     }
     errors.value = fieldErrorsOf(error)
-    if (isApiError(error) && error.status === 409) {
-      if (!editing.value || isExpenseTaken(error)) {
-        errors.value = { expense: t('assets.form.expenseTaken') }
-        saveError.value = t('assets.form.expenseTaken')
-      } else {
-        saveError.value = t('assets.form.conflictEdit')
-      }
+    const conflict = assetConflict(error)
+    if (conflict === 'expenseTaken') {
+      errors.value = { expense: t('assets.form.expenseTaken') }
+      saveError.value = t('assets.form.expenseTaken')
+    } else if (conflict !== null) {
+      saveError.value = t(`assets.conflict.${conflict}`)
     } else {
       saveError.value = saveErrorText(error, t, 'assets.form.saveError')
     }

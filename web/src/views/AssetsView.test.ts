@@ -6,6 +6,7 @@ import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { apiClient } from '../api'
+import { germanYear } from '../assets'
 import { de, en } from '../i18n/locales'
 import { clearSession, me, sessionFailed } from '../session'
 import AssetsView from './AssetsView.vue'
@@ -34,6 +35,10 @@ const laptop = {
   disposed_on: null,
   disposal_proceeds_cents: null,
   imported: false,
+  book_value_cents: 149900,
+  book_value_year: null,
+  disposal_rest_cents: null,
+  editable: true,
   created_at: '2026-11-20T10:00:00Z',
   updated_at: '2026-11-20T10:00:00Z',
 }
@@ -46,6 +51,20 @@ const phone = {
   expense_id: null,
   cost_basis_cents: 59900,
   disposed_on: '2026-05-01',
+  // Figures the server sent. The view shows them and checks nothing.
+  book_value_cents: 0,
+  book_value_year: 2026,
+  disposal_rest_cents: 12345,
+  editable: false,
+}
+const desk = {
+  ...laptop,
+  id: 'a-3',
+  name: 'Desk',
+  expense_id: null,
+  book_value_cents: 54321,
+  book_value_year: 2025,
+  editable: false,
 }
 
 function expense(id: string, over: Record<string, unknown> = {}) {
@@ -85,7 +104,7 @@ function apiError(
 }
 
 function mockApi(
-  list: unknown = { assets: [laptop, phone] },
+  list: unknown = { assets: [laptop, phone, desk] },
   expenses: unknown[] = [
     expense('e-1', { supplier: 'Taken Shop' }),
     expense('e-2', { supplier: 'Laptop Shop' }),
@@ -156,20 +175,41 @@ describe('AssetsView', () => {
     me.value = { email: 'a@b.test', name: 'Ada', role: 'owner', csrf_token: 'csrf' }
   })
 
-  it('lists date, cost and method as the server returns them and claims no book value', async () => {
+  it('lists date, cost, method and the current book value as the server returns them', async () => {
     mockApi()
     renderView()
 
     const table = await screen.findByRole('table', { name: 'List of assets' })
+    expect(within(table).getByRole('columnheader', { name: 'Current book value' })).toBeVisible()
     const rows = within(table).getAllByRole('row')
     expect(within(rows[1]).getByRole('rowheader', { name: 'Laptop' })).toBeVisible()
     expect(within(rows[1]).getByText('2026-03-10')).toBeVisible()
-    expect(within(rows[1]).getByText('1,499.00 EUR')).toBeVisible()
+    // Cost and book value: the same figure before any depreciation.
+    expect(within(rows[1]).getAllByText('1,499.00 EUR')).toHaveLength(2)
+    expect(within(rows[1]).getByText('before any depreciation')).toBeVisible()
     expect(within(rows[1]).getByText('Linear')).toBeVisible()
+    expect(within(rows[1]).getByText('Editable')).toBeVisible()
     expect(within(rows[2]).getByText('Low value asset (GWG)')).toBeVisible()
+    // A disposed asset is out of the register: 0 from the disposal year on.
+    expect(within(rows[2]).getByText('0.00 EUR')).toBeVisible()
+    expect(within(rows[2]).getByText('disposed in 2026')).toBeVisible()
     expect(within(rows[2]).getByText('Disposed')).toBeVisible()
-    expect(screen.queryByRole('columnheader', { name: /book value/i })).toBeNull()
-    expect(screen.getByText(/does not show a current book value/)).toBeVisible()
+    expect(within(rows[2]).queryByText('Editable')).toBeNull()
+    expect(within(rows[3]).getByText('543.21 EUR')).toBeVisible()
+    expect(within(rows[3]).getByText('at 31 December 2025')).toBeVisible()
+    expect(screen.queryByText(/does not show a current book value/)).toBeNull()
+  })
+
+  it('says so when the server sent no book value for a row', async () => {
+    mockApi({ assets: [{ ...desk, book_value_cents: null, book_value_year: null }] })
+    renderView()
+
+    const row = (await screen.findByRole('rowheader', { name: 'Desk' })).closest('tr')
+    expect(row).not.toBeNull()
+    expect(
+      within(row as HTMLElement).getByText('not available, the stored data is inconsistent'),
+    ).toBeVisible()
+    expect(within(row as HTMLElement).getAllByText('1,499.00 EUR')).toHaveLength(1)
   })
 
   it('shows the German strings and number format', async () => {
@@ -177,7 +217,11 @@ describe('AssetsView', () => {
     renderView('de')
 
     expect(await screen.findByRole('heading', { name: 'Anlagen' })).toBeVisible()
-    expect(await screen.findByText('1.499,00 EUR')).toBeVisible()
+    expect((await screen.findAllByText('1.499,00 EUR')).length).toBeGreaterThan(0)
+    expect(screen.getByText('543,21 EUR')).toBeVisible()
+    expect(screen.getByText('zum 31. Dezember 2025')).toBeVisible()
+    expect(screen.getByText('Abgang im Jahr 2026')).toBeVisible()
+    expect(screen.getByRole('columnheader', { name: 'Aktueller Buchwert' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Anlagegut anlegen' })).toBeVisible()
   })
 
@@ -328,6 +372,11 @@ describe('AssetsView', () => {
       })
       const options = await screen.findAllByRole('option')
       expect(options.map((o) => o.textContent?.trim())).toEqual([LAPTOP_OPTION])
+      // The server narrows the list to booked expenses with the asset flag.
+      expect(apiClient.get).toHaveBeenCalledWith('/expenses', {
+        query: { year: String(germanYear()), state: 'booked', is_asset: 'true' },
+        signal: expect.any(AbortSignal),
+      })
     })
 
     it('proposes the net cost under the standard regime', async () => {
@@ -405,11 +454,9 @@ describe('AssetsView', () => {
       expect(within(dialog).getByText(/Check the marked fields/)).toBeVisible()
     })
 
-    it('says so when an asset exists for the expense already', async () => {
+    it('says so when an asset exists for the expense already, read from the code', async () => {
       mockApi()
-      vi.mocked(apiClient.post).mockRejectedValue(
-        apiError(409, ErrorCode.conflict, undefined, 'the expense is already an asset'),
-      )
+      vi.mocked(apiClient.post).mockRejectedValue(apiError(409, 'expense_already_an_asset'))
       const user = userEvent.setup()
       renderView()
       const dialog = await openCreateAndPick(user)

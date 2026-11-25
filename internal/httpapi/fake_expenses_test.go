@@ -158,6 +158,9 @@ func (r *fakeExpenseRepository) List(ctx context.Context, f storage.ExpenseFilte
 		if f.Category != nil && e.Category != *f.Category {
 			continue
 		}
+		if f.IsAsset != nil && e.IsAsset != *f.IsAsset {
+			continue
+		}
 		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool {
