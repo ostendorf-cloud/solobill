@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -168,9 +169,12 @@ func kleinunternehmerLedger() euer.Input {
 	noReceipt.FileID = nil
 	draft := expense(403, "2026-07-01", category.WorkEquipment, 999, 999, 0)
 	draft.State = storage.BookingStateDraft
+	// A storno copies the file of its original: neither has a receipt.
 	storno := expense(407, "2026-04-20", category.WorkEquipment, -2000, -2000, 0)
 	storno.StornoOfID = ptr(id(408))
 	storno.FileID = nil
+	stornoed := expense(408, "2026-04-01", category.WorkEquipment, 2000, 2000, 0)
+	stornoed.FileID = nil
 	draftIncome := income(502, "2026-09-02", category.AssetDisposal, 777, 777, 0)
 	draftIncome.State = storage.BookingStateDraft
 
@@ -185,7 +189,7 @@ func kleinunternehmerLedger() euer.Input {
 			withAsset,
 			withoutAsset,
 			expense(406, "2026-12-23", category.FeesAndInsurance, 3000, 3000, 0),
-			expense(408, "2026-04-01", category.WorkEquipment, 2000, 2000, 0),
+			stornoed,
 			storno,
 			// Paid in 2025: another year.
 			expense(409, "2025-11-30", category.WorkEquipment, 4444, 4444, 0),
@@ -321,12 +325,15 @@ func TestKleinunternehmerBoundaryAndWarnings(t *testing.T) {
 		t.Errorf("boundary =\n%v\nwant\n%v", got, want)
 	}
 
+	// The storno 407 and its original 408 lack the same receipt: one
+	// warning on the original names the storno.
 	wantWarnings := []euer.Warning{
 		{Code: euer.WarningAssetExpenseWithoutAsset, Kind: euer.SourceExpense, ID: id(405)},
 		{Code: euer.WarningMissingReceipt, Kind: euer.SourceExpense, ID: id(402)},
+		{Code: euer.WarningMissingReceipt, Kind: euer.SourceExpense, ID: id(408), RelatedIDs: []uuid.UUID{id(407)}},
 		{Code: euer.WarningUnassignedBoundaryEntry, Kind: euer.SourceExpense, ID: id(406)},
 	}
-	if !slices.Equal(r.Warnings, wantWarnings) {
+	if !reflect.DeepEqual(r.Warnings, wantWarnings) {
 		t.Errorf("warnings =\n%+v\nwant\n%+v", r.Warnings, wantWarnings)
 	}
 }
@@ -671,6 +678,51 @@ func TestASupersededPeriodNoLongerCounts(t *testing.T) {
 	wantAmounts(t, r, map[category.Key]int64{category.WorkEquipment: 10000, category.InputVAT: 1900})
 }
 
+// TestChainOfDatesInBerlin: a correction issued at 23:30 UTC on 1 March
+// is issued on 2 March in Germany. A payment of 1 March still uses the
+// original's ratio: 107.00 * 19.00 / 119.00 = 17.084..., so 17.08, not
+// the correction's 7.00.
+func TestChainOfDatesInBerlin(t *testing.T) {
+	t.Parallel()
+
+	original := standardDoc(t, 100, docpayload.VATBucket{RatePermyriad: 1900, NetCents: 10000, VATCents: 1900})
+	original.Type = storage.DocumentTypeInvoice
+	original.IssuedAt = ptr(time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC))
+	correction := standardDoc(t, 110, docpayload.VATBucket{RatePermyriad: 700, NetCents: 10000, VATCents: 700})
+	correction.Type = storage.DocumentTypeCorrection
+	correction.CorrectionSeq = ptr(int32(1))
+	correction.IssuedAt = ptr(time.Date(2026, 3, 1, 23, 30, 0, 0, time.UTC))
+	draft := standardDoc(t, 120)
+	draft.Type = storage.DocumentTypeCorrection
+	draft.State = storage.DocumentStateDraft
+
+	chain, err := euer.ChainOf([]storage.Document{original, correction, draft}, []storage.Payment{pay(101, 100, "2026-03-01", 10700)})
+	if err != nil {
+		t.Fatalf("ChainOf: %v", err)
+	}
+	if len(chain.Members) != 2 || chain.Members[1].IssuedOn != day("2026-03-02") {
+		t.Fatalf("members = %+v, want the correction issued on 2 March", chain.Members)
+	}
+
+	r := compute(t, euer.Input{
+		Year:    2026,
+		Periods: []storage.VATRegimePeriod{period(1, "2026-01-01", storage.VATRegimeStandard)},
+		Chains:  []euer.Chain{chain},
+	})
+	wantAmounts(t, r, map[category.Key]int64{category.IncomeTaxable: 8992, category.VATReceived: 1708})
+
+	// A correction without its sequence is no chain.
+	correction.CorrectionSeq = nil
+	if _, err := euer.ChainOf([]storage.Document{original, correction}, nil); err == nil {
+		t.Error("a correction without a sequence was accepted")
+	}
+	// Nor is a chain without its original.
+	correction.CorrectionSeq = ptr(int32(1))
+	if _, err := euer.ChainOf([]storage.Document{correction}, nil); err == nil {
+		t.Error("a chain without its original was accepted")
+	}
+}
+
 func TestCheckAssignment(t *testing.T) {
 	t.Parallel()
 
@@ -709,5 +761,108 @@ func TestLoadRange(t *testing.T) {
 	from, to := euer.LoadRange(2026)
 	if from != day("2025-12-22") || to != day("2027-01-10") {
 		t.Errorf("LoadRange(2026) = %s to %s", from.Format(time.DateOnly), to.Format(time.DateOnly))
+	}
+}
+
+// TestTheCommutingLinesCarryTheirOperator: Zeile 72 and 73 keep the
+// amount as it goes into the field, with the operator the form prints,
+// and raise no missing receipt: they are computed figures. Zeile 70
+// without a receipt still warns.
+func TestTheCommutingLinesCarryTheirOperator(t *testing.T) {
+	t.Parallel()
+
+	commute := expense(401, "2026-12-31", category.CarCommuteCosts, 120000, 120000, 0)
+	commute.FileID = nil
+	allowance := expense(402, "2026-12-31", category.CarCommuteAllowance, 90000, 90000, 0)
+	allowance.FileID = nil
+	fuel := expense(403, "2026-05-02", category.CarOtherActualCosts, 5000, 5000, 0)
+	fuel.FileID = nil
+
+	r := compute(t, euer.Input{
+		Year:     2026,
+		Periods:  []storage.VATRegimePeriod{period(1, "2025-01-01", storage.VATRegimeKleinunternehmer)},
+		Expenses: []storage.Expense{commute, allowance, fuel},
+	})
+
+	wantAmounts(t, r, map[category.Key]int64{
+		category.CarCommuteCosts:     120000,
+		category.CarCommuteAllowance: 90000,
+		category.CarOtherActualCosts: 5000,
+	})
+	for key, want := range map[category.Key]struct{ kz, op string }{
+		category.CarCommuteCosts:     {"142", "-"},
+		category.CarCommuteAllowance: {"176", "+"},
+		category.CarOtherActualCosts: {"146", ""},
+	} {
+		if l := line(t, r, key); l.Kennzahl != want.kz || l.Operator != want.op {
+			t.Errorf("%q = Kz %q operator %q, want %q %q", key, l.Kennzahl, l.Operator, want.kz, want.op)
+		}
+	}
+
+	var missing []uuid.UUID
+	for _, w := range r.Warnings {
+		if w.Code == euer.WarningMissingReceipt {
+			missing = append(missing, w.ID)
+		}
+	}
+	if !slices.Equal(missing, []uuid.UUID{id(403)}) {
+		t.Errorf("missing receipts = %v, want only the fuel 403", missing)
+	}
+}
+
+// TestAStornoOfAnotherYearNamesItsOriginal: the original of 1 December
+// 2025 counts in 2025, its storno of 2 February 2026 in 2026. Neither has
+// a receipt. The 2026 report warns on the storno and names the original.
+func TestAStornoOfAnotherYearNamesItsOriginal(t *testing.T) {
+	t.Parallel()
+
+	original := expense(401, "2025-12-01", category.WorkEquipment, 3000, 3000, 0)
+	original.FileID = nil
+	storno := expense(402, "2026-02-02", category.WorkEquipment, -3000, -3000, 0)
+	storno.FileID = nil
+	storno.StornoOfID = ptr(id(401))
+
+	r := compute(t, euer.Input{
+		Year:     2026,
+		Periods:  []storage.VATRegimePeriod{period(1, "2025-01-01", storage.VATRegimeKleinunternehmer)},
+		Expenses: []storage.Expense{original, storno},
+	})
+
+	want := []euer.Warning{{Code: euer.WarningMissingReceipt, Kind: euer.SourceExpense, ID: id(402), RelatedIDs: []uuid.UUID{id(401)}}}
+	if !reflect.DeepEqual(r.Warnings, want) {
+		t.Errorf("warnings = %+v, want %+v", r.Warnings, want)
+	}
+	wantAmounts(t, r, map[category.Key]int64{category.WorkEquipment: -3000})
+}
+
+// TestAReversalAfterARegimeSwitchLeavesTheOriginalLine: 50.00 EUR paid
+// as a Kleinunternehmer in March go to Zeile 12. The owner switches to
+// the Regelbesteuerung on 1 July and reverses the March payment on 1
+// August as a recording mistake, then records it again. The reversal
+// leaves Zeile 12, where the payment went: Zeile 12 is 50.00 - 50.00 =
+// 0.00. The new payment of 1 August counts under the new regime: 50.00 on
+// Zeile 15, no VAT in a Kleinunternehmer invoice.
+func TestAReversalAfterARegimeSwitchLeavesTheOriginalLine(t *testing.T) {
+	t.Parallel()
+
+	r := compute(t, euer.Input{
+		Year: 2026,
+		Periods: []storage.VATRegimePeriod{
+			period(1, "2025-01-01", storage.VATRegimeKleinunternehmer),
+			period(2, "2026-07-01", storage.VATRegimeStandard),
+		},
+		Chains: []euer.Chain{kuChain(200, "2026-02-20", 5000,
+			pay(201, 200, "2026-03-01", 5000),
+			reversal(202, 200, 201, "2026-08-01", -5000),
+			pay(203, 200, "2026-08-01", 5000),
+		)},
+	})
+
+	wantAmounts(t, r, map[category.Key]int64{
+		category.IncomeKleinunternehmer: 0,
+		category.IncomeTaxable:          5000,
+	})
+	if got := sourceAmounts(line(t, r, category.IncomeKleinunternehmer)); !maps.Equal(got, map[uuid.UUID]int64{id(201): 5000, id(202): -5000}) {
+		t.Errorf("Zeile 12 sources = %v, want 201 and its reversal 202", got)
 	}
 }

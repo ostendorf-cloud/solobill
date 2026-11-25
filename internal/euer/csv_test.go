@@ -76,6 +76,16 @@ func TestWriteCSV(t *testing.T) {
 			AmountCents: -7,
 			Sources:     []euer.Source{{Kind: euer.SourceExpense, ID: id(3), Date: time.Time{}, AmountCents: -7}},
 		},
+		{
+			Key: category.CarCommuteCosts, Zeile: 72, Kennzahl: "142", Operator: "-", LabelDE: "Fahrtkosten",
+			AmountCents: 120000,
+			Sources:     []euer.Source{{Kind: euer.SourceExpense, ID: id(4), AmountCents: 120000}},
+		},
+		{
+			Key: category.CarCommuteAllowance, Zeile: 73, Kennzahl: "176", Operator: "+", LabelDE: "Entfernungspauschale",
+			AmountCents: 90000,
+			Sources:     []euer.Source{{Kind: euer.SourceExpense, ID: id(5), AmountCents: 90000}},
+		},
 	}}
 
 	var buf strings.Builder
@@ -91,9 +101,11 @@ func TestWriteCSV(t *testing.T) {
 	}
 	want := [][]string{
 		euer.CSVHeader,
-		{"euer.z12", "12", "111", "Betriebseinnahmen als Kleinunternehmer", "225,00", "payment", id(1).String(), "237,50"},
-		{"euer.z12", "12", "111", "Betriebseinnahmen als Kleinunternehmer", "225,00", "payment", id(2).String(), "-12,50"},
-		{"euer.z65.d", "65", "", "'=cmd|' /C calc'!A0", "-0,07", "expense", id(3).String(), "-0,07"},
+		{"euer.z12", "12", "111", "", "Betriebseinnahmen als Kleinunternehmer", "225,00", "payment", id(1).String(), "237,50"},
+		{"euer.z12", "12", "111", "", "Betriebseinnahmen als Kleinunternehmer", "225,00", "payment", id(2).String(), "-12,50"},
+		{"euer.z65.d", "65", "", "", "'=cmd|' /C calc'!A0", "-0,07", "expense", id(3).String(), "-0,07"},
+		{"euer.z72", "72", "142", "minus", "Fahrtkosten", "1200,00", "expense", id(4).String(), "1200,00"},
+		{"euer.z73", "73", "176", "plus", "Entfernungspauschale", "900,00", "expense", id(5).String(), "900,00"},
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("rows =\n%q\nwant\n%q", rows, want)
@@ -109,7 +121,7 @@ func TestWriteCSV(t *testing.T) {
 	number := regexp.MustCompile(`^-?[0-9]+,[0-9]{2}$`)
 	for i, row := range rows[1:] {
 		for j, cell := range row {
-			if j == 4 || j == 7 {
+			if j == 5 || j == 8 {
 				if !number.MatchString(cell) {
 					t.Errorf("row %d amount cell %q is no number", i+1, cell)
 				}

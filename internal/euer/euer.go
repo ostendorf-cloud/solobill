@@ -41,6 +41,12 @@
 //   - An expense with is_asset set never counts. Its depreciation does:
 //     the year's figure of afa.Schedule for every asset of the register.
 //     Every booked asset expense without an asset row is a warning.
+//   - A reversal of a payment takes the year and the regime of the
+//     payment it reverses, so it leaves the line that payment went to.
+//   - A line keeps its amount as it goes into the field. The operator the
+//     form prints next to Zeile 72 ("-") and Zeile 73 ("+") comes from
+//     the mapping. Neither raises a missing receipt warning: both are
+//     computed figures (docs/concepts/euer-keys/80.md).
 //
 // Every figure is a computation over the owner's own entries, not tax
 // advice.
@@ -58,6 +64,7 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/afa"
 	"github.com/ostendorf-cloud/solobill/internal/category"
 	"github.com/ostendorf-cloud/solobill/internal/docchain"
+	"github.com/ostendorf-cloud/solobill/internal/docissue"
 	"github.com/ostendorf-cloud/solobill/internal/docpayload"
 	"github.com/ostendorf-cloud/solobill/internal/paymentvat"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
@@ -155,6 +162,44 @@ type Chain struct {
 	Payments []storage.Payment
 }
 
+// ChainOf builds a Chain from the issued documents of one chain, as
+// storage.DocumentRepository.Chain returns them, and the chain's whole
+// payment history. A member's issue date is its German calendar date
+// (docissue.IssueDate), the day docchain.Chain.EffectiveOn compares.
+func ChainOf(docs []storage.Document, payments []storage.Payment) (Chain, error) {
+	c := Chain{Figures: map[uuid.UUID]Figures{}, Payments: payments}
+	for _, d := range docs {
+		if d.State != storage.DocumentStateIssued {
+			continue
+		}
+		m := docchain.Member{ID: d.ID}
+		if d.IssuedAt != nil {
+			m.IssuedOn = docissue.IssueDate(*d.IssuedAt)
+		}
+		switch d.Type {
+		case storage.DocumentTypeInvoice:
+		case storage.DocumentTypeCorrection:
+			if d.CorrectionSeq == nil {
+				return Chain{}, fmt.Errorf("euer: correction %s has no sequence", d.ID)
+			}
+			m.Seq = int(*d.CorrectionSeq)
+		default:
+			continue
+		}
+		f, err := FiguresOf(d)
+		if err != nil {
+			return Chain{}, err
+		}
+		c.Members = append(c.Members, m)
+		c.Figures[d.ID] = f
+	}
+	if _, err := docchain.New(c.Members); err != nil {
+		return Chain{}, fmt.Errorf("euer: %w", err)
+	}
+
+	return c, nil
+}
+
 // Input is everything one report reads. Entries outside the year are
 // welcome: the report picks what counts in Year itself. The caller loads
 // at least every entry of LoadRange(Year) and every chain those payments
@@ -182,9 +227,13 @@ type Source struct {
 
 // Line is one figure of the report.
 type Line struct {
-	Key         category.Key
-	Zeile       int
-	Kennzahl    string
+	Key      category.Key
+	Zeile    int
+	Kennzahl string
+	// Operator is the sign the form prints next to the Kennzahl, "-",
+	// "+" or empty (MappingLine.Operator). AmountCents stays as it goes
+	// into the field.
+	Operator    string
 	Verified    bool
 	LabelDE     string
 	LabelEN     string
@@ -209,6 +258,10 @@ type Warning struct {
 	Code string
 	Kind SourceKind
 	ID   uuid.UUID
+	// RelatedIDs are further entries of the same kind the finding
+	// covers: the stornos of an original without a receipt, or the
+	// original of such a storno counted in another year.
+	RelatedIDs []uuid.UUID
 }
 
 // Period is one effective VAT regime period that touches the year.
@@ -374,12 +427,14 @@ func addPayments(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 			p := byID[s.PaymentID]
 			d := dateOnly(p.ReceivedOn)
 
-			// A reversal undoes a recording mistake of its own date: it
-			// follows the year of the payment it reverses.
-			year := 0
+			// A reversal undoes a recording mistake: it follows the year
+			// and the regime of the payment it reverses, so it leaves the
+			// line that payment went to, even across a regime switch.
+			year, regimeDay := 0, d
 			if p.ReversesPaymentID != nil {
 				orig := byID[*p.ReversesPaymentID]
-				year = yearOf(storage.EuerEntryPayment, orig.ID, dateOnly(orig.ReceivedOn))
+				regimeDay = dateOnly(orig.ReceivedOn)
+				year = yearOf(storage.EuerEntryPayment, orig.ID, regimeDay)
 			} else {
 				year = yearOf(storage.EuerEntryPayment, p.ID, d)
 				boundary(SourcePayment, storage.EuerEntryPayment, p.ID, d, p.AmountCents)
@@ -388,7 +443,7 @@ func addPayments(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 				continue
 			}
 
-			r, err := regime(d)
+			r, err := regime(regimeDay)
 			if err != nil {
 				return err
 			}
@@ -463,6 +518,7 @@ func addExpenses(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 	}
 
 	var warnings []Warning
+	var missing []storage.Expense
 	for _, e := range in.Expenses {
 		if e.State != storage.BookingStateBooked || e.PaidOn == nil {
 			continue
@@ -475,8 +531,8 @@ func addExpenses(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 			continue
 		}
 		isStorno := e.StornoOfID != nil
-		if !isStorno && e.FileID == nil {
-			warnings = append(warnings, Warning{Code: WarningMissingReceipt, Kind: SourceExpense, ID: e.ID})
+		if e.FileID == nil && (e.IsAsset || !noReceiptKeys[e.Category]) {
+			missing = append(missing, e)
 		}
 		if e.IsAsset {
 			// The register counts it, through its depreciation.
@@ -505,7 +561,48 @@ func addExpenses(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 		}
 	}
 
-	return warnings, nil
+	return append(warnings, missingReceiptWarnings(missing)...), nil
+}
+
+// noReceiptKeys are the expense keys whose amount is a computed figure,
+// not a payment, so it has no receipt: Zeile 72 (the commuting costs
+// the form subtracts) and Zeile 73 (the Entfernungspauschale it adds).
+// See docs/concepts/euer-keys/80.md.
+var noReceiptKeys = map[category.Key]bool{
+	category.CarCommuteCosts:     true,
+	category.CarCommuteAllowance: true,
+}
+
+// missingReceiptWarnings bundles the expenses of the year without a
+// receipt. A storno copies the file of its original, so an original and
+// its stornos lack the same receipt: one warning on the original names
+// its stornos in RelatedIDs. A storno whose original counts in another
+// year gets its own warning naming the original.
+func missingReceiptWarnings(missing []storage.Expense) []Warning {
+	originals := map[uuid.UUID]int{}
+	var out []Warning
+	for _, e := range missing {
+		if e.StornoOfID == nil {
+			originals[e.ID] = len(out)
+			out = append(out, Warning{Code: WarningMissingReceipt, Kind: SourceExpense, ID: e.ID})
+		}
+	}
+	for _, e := range missing {
+		if e.StornoOfID == nil {
+			continue
+		}
+		if i, ok := originals[*e.StornoOfID]; ok {
+			out[i].RelatedIDs = append(out[i].RelatedIDs, e.ID)
+
+			continue
+		}
+		out = append(out, Warning{Code: WarningMissingReceipt, Kind: SourceExpense, ID: e.ID, RelatedIDs: []uuid.UUID{*e.StornoOfID}})
+	}
+	for i := range out {
+		sort.Slice(out[i].RelatedIDs, func(a, b int) bool { return out[i].RelatedIDs[a].String() < out[i].RelatedIDs[b].String() })
+	}
+
+	return out
 }
 
 // addOtherIncome adds every booked other income entry that counts in the
@@ -614,6 +711,7 @@ func buildLines(m Mapping, b builder) ([]Line, error) {
 			Key:         c.Key,
 			Zeile:       ml.Zeile,
 			Kennzahl:    ml.Kennzahl,
+			Operator:    ml.Operator,
 			Verified:    ml.Verified,
 			LabelDE:     c.LabelDE,
 			LabelEN:     c.LabelEN,

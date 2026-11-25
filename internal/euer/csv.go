@@ -9,7 +9,7 @@ import (
 
 // CSVHeader is the header row of docs/api.md, "GET
 // /api/v1/reports/euer/{year}/csv".
-var CSVHeader = []string{"key", "zeile", "kennzahl", "label", "amount", "source_kind", "source_id", "source_amount"}
+var CSVHeader = []string{"key", "zeile", "kennzahl", "operator", "label", "amount", "source_kind", "source_id", "source_amount"}
 
 // WriteCSV writes the report as semicolon separated rows with a decimal
 // comma: one row per source, so every figure traces to its rows. The
@@ -34,6 +34,7 @@ func WriteCSV(w io.Writer, r Report) error {
 				NeutraliseCell(string(l.Key)),
 				NeutraliseCell(strconv.Itoa(l.Zeile)),
 				NeutraliseCell(l.Kennzahl),
+				NeutraliseCell(operatorWord(l.Operator)),
 				NeutraliseCell(l.LabelDE),
 				FormatAmount(l.AmountCents),
 				NeutraliseCell(string(s.Kind)),
@@ -51,6 +52,19 @@ func WriteCSV(w io.Writer, r Report) error {
 	}
 
 	return nil
+}
+
+// operatorWord spells a line's operator as "minus" or "plus": a bare "-"
+// or "+" cell would start like a formula.
+func operatorWord(op string) string {
+	switch op {
+	case "-":
+		return "minus"
+	case "+":
+		return "plus"
+	default:
+		return op
+	}
 }
 
 // NeutraliseCell prefixes a cell that a spreadsheet would read as a
