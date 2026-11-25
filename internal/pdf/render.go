@@ -50,6 +50,11 @@ const (
 	DefaultBinary         = "typst"
 	DefaultTimeout        = 30 * time.Second
 	DefaultMaxOutputBytes = 10 << 20
+	// DefaultMaxConcurrent is how many Typst processes one Renderer runs
+	// at once. A render runs with --jobs 1, one CPU, and its memory grows
+	// with the document; two keep a small pod responsive while a third
+	// request waits.
+	DefaultMaxConcurrent = 2
 )
 
 // maxStderrBytes bounds what is kept of Typst's diagnostics.
@@ -119,11 +124,17 @@ type Options struct {
 	// TempDir is where the per render directory is created. Empty is
 	// os.TempDir.
 	TempDir string
+	// MaxConcurrent bounds the Typst processes running at once, the two
+	// payload checks of an issue included. A render waits for a free
+	// slot as long as its context allows.
+	MaxConcurrent int
 }
 
-// Renderer renders payloads through typst compile.
+// Renderer renders payloads through typst compile. Build it with New.
 type Renderer struct {
 	opts Options
+	// slots holds one token per running Typst process.
+	slots chan struct{}
 }
 
 // New returns a Renderer with the zero fields of opts set to defaults.
@@ -137,8 +148,22 @@ func New(opts Options) *Renderer {
 	if opts.MaxOutputBytes <= 0 {
 		opts.MaxOutputBytes = DefaultMaxOutputBytes
 	}
+	if opts.MaxConcurrent <= 0 {
+		opts.MaxConcurrent = DefaultMaxConcurrent
+	}
 
-	return &Renderer{opts: opts}
+	return &Renderer{opts: opts, slots: make(chan struct{}, opts.MaxConcurrent)}
+}
+
+// acquire waits for a free render slot or for ctx to end. The returned
+// function frees the slot.
+func (r *Renderer) acquire(ctx context.Context) (func(), error) {
+	select {
+	case r.slots <- struct{}{}:
+		return func() { <-r.slots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("pdf: wait for a render slot: %w", ctx.Err())
+	}
 }
 
 // Render decodes a stored docpayload.FrozenPayloadV1 and renders it with
@@ -313,6 +338,12 @@ func (r *Renderer) compile(ctx context.Context, src Source) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
+
+	release, err := r.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	dir, err := os.MkdirTemp(r.opts.TempDir, "solobill-pdf-")
 	if err != nil {
