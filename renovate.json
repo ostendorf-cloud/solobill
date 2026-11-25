@@ -22,6 +22,15 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nARG PNPM_VERSION=(?<currentValue>\\S+)"
       ]
+    },
+    {
+      "description": "The Dockerfile's typst stage downloads the release of its TYPST_VERSION argument, which Renovate's Dockerfile manager does not read. This manager reads the argument under its renovate comment. The release tags carry a 'v' prefix, the argument does not.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nARG TYPST_VERSION=(?<currentValue>\\S+)"
+      ],
+      "extractVersionTemplate": "^v(?<version>.+)$"
     }
   ],
   "packageRules": [
@@ -41,6 +50,11 @@
       "description": "TypeScript stays below 7 until typescript-eslint and vue-tsc support it: typescript-eslint rejects 7.0 at import and vue-tsc 3.x needs typescript/lib/tsc, which 7 no longer exports. Remove this rule when both release 7 support.",
       "matchPackageNames": ["typescript"],
       "allowedVersions": "<7"
+    },
+    {
+      "description": "typst is pinned in mise.toml and in the Dockerfile's TYPST_VERSION. Both move in one pull request: internal/envsync's TestDockerfileTypstMatchesMise fails when they differ. Renovate cannot update the Dockerfile's TYPST_SHA256_AMD64 and TYPST_SHA256_ARM64: the image build fails on the old checksums until they are copied from the new release page by hand (docs/adr/0001-typst-pdf-engine.md).",
+      "matchDepNames": ["typst", "typst/typst"],
+      "groupName": "typst"
     }
   ]
 }
