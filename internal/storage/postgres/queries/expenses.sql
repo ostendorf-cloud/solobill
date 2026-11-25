@@ -38,6 +38,7 @@ WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
     AND (sqlc.narg(paid_before)::date IS NULL OR paid_on < sqlc.narg(paid_before)::date)
     AND (sqlc.narg(state)::text IS NULL OR state = sqlc.narg(state)::text)
     AND (sqlc.narg(category)::text IS NULL OR category = sqlc.narg(category)::text)
+    AND (sqlc.narg(is_asset)::boolean IS NULL OR is_asset = sqlc.narg(is_asset)::boolean)
 ORDER BY paid_on NULLS LAST, created_at, id;
 
 -- name: UpdateDraftExpense :one

@@ -863,6 +863,52 @@ func TestExpenseListYearBoundaryAndFilters(t *testing.T) {
 	}
 }
 
+// TestExpenseListIsAssetFilter: is_asset narrows the list to the expenses
+// with or without the asset flag, combined with the other filters.
+func TestExpenseListIsAssetFilter(t *testing.T) {
+	t.Parallel()
+
+	app := buildTestApp(t, 1000)
+	tenant := newBookingTenant(t, app, "assetflag")
+	addRegime(t, app, "2026-01-01", storage.VATRegimeKleinunternehmer)
+
+	laptop := createExpense(t, app, tenant.member, withField(kleinExpense("2026-03-10"), "is_asset", true))
+	paper := createExpense(t, app, tenant.member, kleinExpense("2026-03-11"))
+	desk := createExpense(t, app, tenant.member, withField(kleinExpense("2027-02-01"), "is_asset", true))
+	bookExpense(t, app, tenant.owner, laptop.ID)
+
+	ids := func(query string) string {
+		t.Helper()
+
+		list := listExpenses(t, app, tenant.member, query)
+		out := make([]uuid.UUID, len(list.Expenses))
+		for i, e := range list.Expenses {
+			out[i] = e.ID
+		}
+
+		return fmt.Sprint(out)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  []uuid.UUID
+	}{
+		{"?is_asset=true", []uuid.UUID{laptop.ID, desk.ID}},
+		{"?is_asset=false", []uuid.UUID{paper.ID}},
+		{"?is_asset=true&year=2026&state=booked", []uuid.UUID{laptop.ID}},
+		{"", []uuid.UUID{laptop.ID, paper.ID, desk.ID}},
+	} {
+		if got := ids(tc.query); got != fmt.Sprint(tc.want) {
+			t.Errorf("%q = %s, want %v", tc.query, got, tc.want)
+		}
+	}
+
+	for _, q := range []string{"?is_asset=yes", "?is_asset=1", "?is_asset=TRUE"} {
+		rec := tenant.member.do(t, app, http.MethodGet, "/api/v1/expenses"+q, nil)
+		masterDataWantField(t, rec, "is_asset")
+	}
+}
+
 func TestExpenseStornoDate(t *testing.T) {
 	t.Parallel()
 

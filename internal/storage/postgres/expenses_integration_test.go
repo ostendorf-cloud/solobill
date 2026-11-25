@@ -527,6 +527,41 @@ func TestExpenseRepository(t *testing.T) {
 			return nil
 		})
 	})
+
+	t.Run("the asset flag filters", func(t *testing.T) {
+		tenant, err := env.store.Tenants().Create(ctx, storage.Tenant{Slug: "exp-a-" + uuid.NewString(), Name: "Asset flag"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.inTenant(ctx, t, tenant.ID, func(ctx context.Context) error {
+			laptop := testExpense(tenant.ID, "2026-03-10")
+			laptop.IsAsset = true
+			asset, err := repo.Create(ctx, laptop)
+			if err != nil {
+				return err
+			}
+			plain, err := repo.Create(ctx, testExpense(tenant.ID, "2026-03-11"))
+			if err != nil {
+				return err
+			}
+
+			for _, flag := range []bool{true, false} {
+				want := plain.ID
+				if flag {
+					want = asset.ID
+				}
+				got, err := repo.List(ctx, storage.ExpenseFilter{IsAsset: &flag})
+				if err != nil {
+					return err
+				}
+				if len(got) != 1 || got[0].ID != want {
+					t.Errorf("List(is_asset %v) = %v, want only %s", flag, got, want)
+				}
+			}
+
+			return nil
+		})
+	})
 }
 
 // TestExpenseTablesRefuseTruncate: TRUNCATE skips row triggers, so the
