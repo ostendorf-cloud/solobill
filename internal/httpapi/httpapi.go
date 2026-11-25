@@ -112,13 +112,24 @@ const maxRateLimitKeys = 100_000
 const defaultInviteTTL = 7 * 24 * time.Hour
 
 // oidcLoginPath and oidcCallbackPath are where the OIDC routes are mounted
-// when OIDC is enabled. OIDC_REDIRECT_URL's path (see internal/config) must
-// equal oidcCallbackPath: the identity provider is told to redirect back to
-// exactly that URL, and this is the one route that answers it.
+// when OIDC is enabled. They live under /api/v1/auth/, next to the local
+// logout and password routes, so a frontend server in front of this one
+// routes only /api to it. OIDC_REDIRECT_URL's path (see internal/config)
+// must equal oidcCallbackPath: the identity provider is told to redirect
+// back to exactly that URL, and this is the one route that answers it.
+//
+// govue's login cookie and solobill's pending-invite cookie both carry
+// Path=/, so either path reaches the callback with them.
 const (
-	oidcLoginPath    = "/auth/oidc/login"
-	oidcCallbackPath = "/auth/oidc/callback"
+	oidcLoginPath    = "/api/v1/auth/oidc/login"
+	oidcCallbackPath = "/api/v1/auth/oidc/callback"
 )
+
+// legacyOIDCPrefix is the subtree the OIDC routes lived under before they
+// moved below /api. It answers a JSON 404 whether OIDC is enabled or not,
+// so an identity provider still configured with the old redirect URL
+// fails loudly instead of landing on the SPA shell with a 200.
+const legacyOIDCPrefix = "/auth/oidc"
 
 // Deps is everything NewHandler needs, constructed by cmd/solobill's main:
 // nothing in this package opens a database connection, builds a session

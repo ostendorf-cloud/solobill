@@ -52,6 +52,12 @@ func registerAuth(mux *http.ServeMux, route routeFunc, a *app) {
 	mux.Handle("POST /api/v1/invites/accept", route(a.checked(api.Handle(a.handleAcceptInvite))))
 	mux.Handle("POST /api/v1/invites/confirm", route(a.checked(api.Handle(a.handleInviteConfirm))))
 
+	// The old OIDC paths, see legacyOIDCPrefix. Registered with no method
+	// and as both the bare prefix and its subtree, so no method and no
+	// path below it falls through to the SPA catch-all.
+	mux.Handle(legacyOIDCPrefix, route(api.NotFoundHandler()))
+	mux.Handle(legacyOIDCPrefix+"/", route(api.NotFoundHandler()))
+
 	if a.oidcHandlers != nil {
 		mux.Handle("GET "+oidcLoginPath, route(a.oidcHandlers.Login()))
 		mux.Handle("GET "+oidcCallbackPath, route(a.oidcHandlers.Callback()))

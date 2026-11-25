@@ -81,6 +81,6 @@ describe('LoginView', () => {
     await renderLoginView()
 
     const link = screen.getByRole('link', { name: 'Log in with single sign-on' })
-    expect(link).toHaveAttribute('href', '/auth/oidc/login')
+    expect(link).toHaveAttribute('href', '/api/v1/auth/oidc/login')
   })
 })

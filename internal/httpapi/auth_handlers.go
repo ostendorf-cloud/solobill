@@ -495,7 +495,7 @@ type inviteOIDCStartRequest struct {
 //
 // A successful response does not itself redirect anywhere: the caller
 // (the invite-accept page) follows it with a browser navigation to GET
-// /auth/oidc/login, which an XHR/fetch response cannot trigger on its
+// /api/v1/auth/oidc/login, which an XHR/fetch response cannot trigger on its
 // own.
 func (a *app) handleInviteOIDCStart(w http.ResponseWriter, r *http.Request) error {
 	if a.loginCodec == nil {
