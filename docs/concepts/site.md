@@ -73,7 +73,8 @@ The app itself is described in [solobill.md](solobill.md).
 - 2026-11-25: terms of use (AGB) and a data processing agreement (AVV) for the app are own issues.
 - 2026-11-25: AGB and AVV exist before a public registration opens.
 - 2026-11-25: the AGB of `ostendorf.tech` (sound engineering) do not apply to solobill.
-- 2026-11-25: option B stays the recommendation. ADR 0003 stays `proposed` until the owner decides.
+- 2026-11-25: API host: option B, `/api` on each host. [ADR 0003](../adr/0003-api-host.md).
+- 2026-11-25: the owner would have liked `api.solobill.de` and follows B for its lower costs.
 
 ## Approach
 
@@ -95,7 +96,7 @@ The app itself is described in [solobill.md](solobill.md).
 
 - `solobill.de`: the site. `app.solobill.de`: the app, split into frontend and API by issue #149.
 - The site frontend answers every path except the API prefix. The ingress routes that prefix.
-- Recommended: `/api` on each host, see "API host" below and [ADR 0003](../adr/0003-api-host.md).
+- `/api` on each host, see "API host" below and [ADR 0003](../adr/0003-api-host.md).
 - `solobill.de/api/` goes to `site-api`. `app.solobill.de/api/` goes to the app API.
 - `/` redirects by language through govue. Legal routes and aliases come from govue.
 - A sitemap for `https://solobill.de` comes from the prerender. Each language has a 404 page.
@@ -226,19 +227,22 @@ bce0810 and Go 1.27.4 `net/http`.
 - Not verified: the ingress controller of the cluster merges two routes on one hostname.
 - Not verified: the browser default for a preflight cache without `Max-Age`.
 
-### Recommendation
+### Decision
 
 - Option B: `/api` on each host. Same origin for the app and for the site.
-- It removes CORS, the trust lists and the OIDC redirect change from the app.
+- Decided by the owner on 2026-11-25. He would have liked `api.solobill.de`.
+- He follows B for its costs: no CORS, no trust lists, no OIDC redirect change in the app.
 - It keeps the site independent: own host, own routes, no shared hostname with the app chart.
 - It matches issue #149 and `ostendorf.tech`.
+- Issues #149, #151, #153 and the landing issues already assume B. None of them changes.
 - Option A stays possible later. The cost is the condition list above, mostly configuration.
 - The passkey RP id does not depend on this choice. Keep it the app host.
-- The owner decides. Until then ADR 0003 is `proposed`.
 
-### What each option changes
+### Dropped option A
 
-| Issue | Option A: `api.solobill.de` | Option B: `/api` per host |
+The table keeps what option A would have changed. These changes are the reasons it lost.
+
+| Issue | Option A: `api.solobill.de` (dropped) | Option B: `/api` per host (chosen) |
 | --- | --- | --- |
 | #149 split | Ingress host `api.solobill.de` for the API, frontend alone on `app`. Client `baseUrl` and `credentials: 'include'`, `ALLOWED_ORIGINS`, CSP `connect-src`, compose with two origins, end to end test across origins. The "one origin" context line goes. | No change. |
 | #151 language URLs | The post login target cannot carry `/de/...` through OIDC `next`. The app keeps the target itself. | No change. |
@@ -265,6 +269,12 @@ bce0810 and Go 1.27.4 `net/http`.
 - One chart for app and site: the owner wants independent deployment.
 - A hosted newsletter service: a third party processor, own consent flow, and govue cannot reuse it.
 - A static host for the site: no waitlist API and no govue `frontend` headers.
+- One API host `api.solobill.de`: works, but costs the changes in "Dropped option A".
+
+## State on 2026-11-25
+
+- Merged: #153, the OIDC routes under `/api`. Merged: #162 and #163.
+- govue app mode (govue pull request 269) is merged and waits for a govue release.
 
 ## Open questions
 
@@ -283,7 +293,6 @@ bce0810 and Go 1.27.4 `net/http`.
 - `website-conventions` says "no dispute resolution".
   The owner rule of 2026-11-22 says there is one.
   Owner: maintainer. Next: skill update proposed separately.
-- API host: option A or B. Owner: owner. Next: decide on ADR 0003 in #154.
 - The govue issue number of `GovueWaitlistForm`. Owner: maintainer. Next: link it here.
 - The passkey RP id configured for the app today. Owner: owner. Next: read it from the deployment.
 - Issue numbers of the wordmark logo, AGB and AVV issues. Owner: maintainer. Next: link them here.

@@ -1,7 +1,7 @@
 # 0003 The APIs are served under /api on each host
 
-- Status: proposed
-- Decider: the owner. Not decided yet.
+- Status: accepted
+- Decider: the owner, on 2026-11-25.
 - Date: 2026-11-25
 - Issues: #149, #151, #153, #154
 
@@ -21,6 +21,8 @@
 - Same origin needs no CORS, no trusted origins and no change to the OIDC redirect target.
 - It keeps the site and the app on separate hostnames, so each chart owns its routes.
 - It is the shape issue #149 already plans, and the shape of `ostendorf.tech`.
+- The owner would have liked `api.solobill.de`. He chose `/api` per host for the costs below.
+- Issues #149, #151, #153 and the landing issues already assume this. None of them changes.
 
 ## Consequences
 
