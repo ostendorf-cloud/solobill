@@ -24,6 +24,7 @@ func TestCheckLogo(t *testing.T) {
 	png := readLogo(t)
 	gif := []byte("GIF89a\x01\x00\x01\x00")
 	large := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, maxLogoBytes)...)
+	corrupt := png[:len(png)/2]
 	cases := []struct {
 		name    string
 		want    string
@@ -37,6 +38,7 @@ func TestCheckLogo(t *testing.T) {
 		{name: "other bytes", want: sha256Hex(png), logo: append(bytes.Clone(png), 0), wantErr: ErrLogoMismatch},
 		{name: "neither png nor jpeg", want: sha256Hex(gif), logo: gif, wantErr: ErrLogoFormat},
 		{name: "too large", want: sha256Hex(large), logo: large, wantErr: ErrLogoFormat},
+		{name: "a png that does not decode", want: sha256Hex(corrupt), logo: corrupt, wantErr: ErrLogoFormat},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

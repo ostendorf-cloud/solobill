@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/ostendorf-cloud/solobill/internal/docpayload"
+	logocheck "github.com/ostendorf-cloud/solobill/internal/logo"
 )
 
 // CurrentTemplateVersion is the template a new document is issued
@@ -284,8 +285,10 @@ func checkLogo(want string, logo []byte) error {
 	if len(logo) > maxLogoBytes {
 		return fmt.Errorf("%w: %d bytes, at most %d", ErrLogoFormat, len(logo), maxLogoBytes)
 	}
-	if !bytes.HasPrefix(logo, []byte("\x89PNG\r\n\x1a\n")) && !bytes.HasPrefix(logo, []byte{0xFF, 0xD8, 0xFF}) {
-		return fmt.Errorf("%w: neither a PNG nor a JPEG", ErrLogoFormat)
+	// Again here, not only at upload: a stored logo is decoded within the
+	// pixel budget before Typst ever sees it.
+	if err := logocheck.Check(logo); err != nil {
+		return fmt.Errorf("%w: %w", ErrLogoFormat, err)
 	}
 
 	return nil

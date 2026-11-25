@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ostendorf-cloud/govue/api"
 
+	"github.com/ostendorf-cloud/solobill/internal/logo"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
@@ -118,6 +119,18 @@ func (a *app) handlePutLogo(w http.ResponseWriter, r *http.Request) error {
 	contentType := sniffContentType(up.data)
 	if contentType != contentTypePNG && contentType != contentTypeJPEG {
 		return errUnsupportedType("the logo must be a PNG or a JPEG")
+	}
+	// The magic bytes and the size bound the file, not the image: a small
+	// PNG can declare billions of pixels. Only a logo that decodes within
+	// the pixel budget is stored, so issuing, which never reads the bucket,
+	// can only freeze a printable one.
+	if err := logo.Check(up.data); err != nil {
+		reason := "the image does not decode as a PNG or a JPEG"
+		if errors.Is(err, logo.ErrDimensions) {
+			reason = fmt.Sprintf("the image must be at most %d pixels per side and %d pixels in total", logo.MaxSide, logo.MaxPixels)
+		}
+
+		return api.Invalid("the logo cannot be printed").WithDetails(map[string]any{"file": reason})
 	}
 
 	file, _, err := a.storeFile(r.Context(), c, storage.FilePurposeLogo, contentType, up,

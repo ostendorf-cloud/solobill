@@ -17,6 +17,7 @@ import (
 	"github.com/ostendorf-cloud/govue/logging"
 
 	"github.com/ostendorf-cloud/solobill/internal/docpayload"
+	logocheck "github.com/ostendorf-cloud/solobill/internal/logo"
 	"github.com/ostendorf-cloud/solobill/internal/numbering"
 	"github.com/ostendorf-cloud/solobill/internal/objectstore"
 	"github.com/ostendorf-cloud/solobill/internal/storage"
@@ -302,6 +303,14 @@ func (a *app) documentLogo(r *http.Request, c caller, payload []byte) ([]byte, e
 		logIntegrity(r, *logo, fmt.Sprintf("logo has SHA-256 %s, the payload names %s", got, want))
 
 		return nil, errLogoConflict()
+	}
+	// The upload checked it too; a logo stored before that check existed
+	// is decoded within the pixel budget here before Typst sees it.
+	if err := logocheck.Check(data); err != nil {
+		logging.FromContext(r.Context()).WarnContext(r.Context(), "stored logo cannot be printed",
+			"file_id", logo.ID, "tenant_id", c.tenantID, "reason", err.Error())
+
+		return nil, api.Conflict("the logo this document names cannot be printed")
 	}
 
 	return data, nil

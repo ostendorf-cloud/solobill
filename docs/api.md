@@ -157,9 +157,12 @@ Registered in `internal/httpapi/routes_profile_logo.go`. Owned by issue #75, thr
 - Who: owner.
 - Request: `multipart/form-data` with one part `file`. The whole request body is limited to
   512 KiB (524,288 bytes) by `http.MaxBytesReader`, multipart framing included.
-- Accepted: PNG or JPEG, checked by magic bytes.
+- Accepted: PNG or JPEG, checked by magic bytes, that decodes completely and has at most 4096
+  pixels per side and 4,194,304 pixels in total (`internal/logo`). The PDF render checks the
+  stored logo the same way again.
 - Response `200`: `{"file_id": "...", "sha256": "...", "size_bytes": 12345}`.
 - `413` over the limit. `415` for any other type. `404` when no profile exists yet.
+- `400` with `details.file` for an image that does not decode or exceeds the pixel budget.
 - `503 object_store_unavailable` for both logo routes under the condition of the file routes.
 
 ## VAT regime periods
@@ -538,8 +541,8 @@ Registered in `internal/httpapi/routes_pdf.go`. Owned by issue #74.
   bucket.
 - `400` with `details` when a draft lacks data the template needs.
 - `404` for a document of another tenant, like a missing one.
-- `409 conflict` when no logo file has the SHA-256 frozen in the payload, or its bytes no
-  longer hash to it.
+- `409 conflict` when no logo file has the SHA-256 frozen in the payload, its bytes no longer
+  hash to it, or it does not decode within the logo's pixel budget.
 - `409 conflict` for an imported document: its original PDF is the document, downloaded
   through the files routes.
 - `503 renderer_unavailable` when no renderer is configured (`PDF_TYPST_BINARY` unset) or it
