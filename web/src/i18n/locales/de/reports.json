@@ -1,1 +1,67 @@
-{}
+{
+  "nav": "EÜR",
+  "title": "EÜR {year}",
+  "lead": "Die Werte der Anlage EÜR, Zeile für Zeile, berechnet aus Ihren Buchungen.",
+  "disclaimer": "Berechnet aus Ihren Buchungen. Das ist keine Steuerberatung. Prüfen Sie jeden Wert, bevor Sie ihn übernehmen.",
+  "year": "Steuerjahr",
+  "csv": "CSV für {year} herunterladen",
+  "loading": "Der Bericht wird geladen.",
+  "loadErrorTitle": "Laden fehlgeschlagen",
+  "loadError": "Der Bericht konnte nicht geladen werden.",
+  "regimeMissing": "Für dieses Jahr ist keine Umsatzsteuer-Regelung hinterlegt. Legen Sie zuerst eine in den Einstellungen an.",
+  "archiveTitle": "Kein Bericht für {year}",
+  "archiveDescription": "Die Jahre 2023 bis 2025 sind importierte Archivjahre. Von ihnen sind nur die archivierten Dokumente vorhanden.",
+  "noMappingTitle": "Noch kein Bericht für {year}",
+  "noMappingDescription": "Für dieses Jahr gibt es noch keine Zuordnung der Zeilen.",
+  "emptyTitle": "Keine Werte",
+  "emptyDescription": "In diesem Jahr zählt keine Buchung.",
+  "tableCaption": "EÜR {year}, Zeile für Zeile",
+  "noKennzahl": "keine",
+  "lineUnverified": "nicht geprüft",
+  "showSources": "{count} Buchungen zeigen",
+  "hideSources": "Buchungen ausblenden",
+  "toggleSources": "Buchungen zu Zeile {zeile} ({count})",
+  "regimes": "Umsatzsteuer:",
+  "regimeSince": "{regime} seit {date}",
+  "regime": {
+    "kleinunternehmer": "Kleinunternehmer",
+    "standard": "Regelbesteuerung"
+  },
+  "columns": {
+    "zeile": "Zeile",
+    "kennzahl": "Kz",
+    "label": "Bezeichnung",
+    "amount": "Betrag",
+    "sources": "Buchungen"
+  },
+  "kind": {
+    "payment": "Zahlungseingang",
+    "expense": "Ausgabe",
+    "other_income": "Sonstige Einnahme",
+    "asset": "Abschreibung"
+  },
+  "mapping": {
+    "heading": "Zeilenzuordnung",
+    "label": "Zeilenzuordnung {year}:",
+    "verified": "geprüft",
+    "unverified": "nicht geprüft",
+    "unverifiedNote": "Die Zeilenzuordnung für {year} ist eine Kopie von 2025 und wurde nicht mit dem Formular {year} abgeglichen. Zeilen und Kennzahlen können abweichen."
+  },
+  "boundary": {
+    "heading": "Jahreswechsel",
+    "lead": "Buchungen vom 22. Dezember bis 10. Januar. Ohne Entscheidung zählt eine Buchung im Jahr ihres Datums. Ob die 10-Tage-Regel greift, wird hier nicht geprüft.",
+    "empty": "Keine Buchung am Jahreswechsel.",
+    "unassigned": "Zählt in {year}, keine Entscheidung",
+    "assignedTo": "{year} zugeordnet",
+    "assign": "In {year} zählen",
+    "assigned": "Die Buchung zählt jetzt in {year}.",
+    "conflict": "Die Entscheidung wurde inzwischen geändert. Der Bericht wurde neu geladen."
+  },
+  "warnings": {
+    "heading": "Hinweise",
+    "empty": "Keine Hinweise.",
+    "missing_receipt": "Ausgabe ohne Beleg (mit {count} Stornos)",
+    "asset_expense_without_asset": "Anlage-Ausgabe ohne Anlagegut im Verzeichnis",
+    "unassigned_boundary_entry": "Buchung am Jahreswechsel ohne Entscheidung"
+  }
+}
