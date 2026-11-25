@@ -67,6 +67,61 @@ COPY --from=web /src/cmd/solobill/dist/ cmd/solobill/dist/
 
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/solobill ./cmd/solobill
 
+# Typst stage: fetches the typst binary internal/pdf runs as "typst
+# compile" (docs/adr/0001-typst-pdf-engine.md). It reuses the Go stage's
+# pinned base image instead of pinning another one: it only needs curl,
+# sha256sum and tar, and nothing of it reaches the runtime image except
+# the binary and its licence files.
+#
+# The upstream archives are statically linked musl builds, so the binary
+# runs on the distroless static runtime below without a libc.
+#
+# TYPST_VERSION must equal the typst pin in mise.toml:
+# internal/envsync's TestDockerfileTypstMatchesMise fails when they
+# differ. Renovate moves TYPST_VERSION through the regex manager in
+# renovate.json, grouped with the mise.toml pin. Renovate cannot move the
+# two checksums: on every version bump they are a manual step. Copy the
+# "sha256:" digest GitHub shows for typst-x86_64-unknown-linux-musl.tar.xz
+# and typst-aarch64-unknown-linux-musl.tar.xz on the release page of the
+# new version. Never compute them from a download. Until both are
+# replaced, the old checksums fail the build below, by design.
+#
+# The 0.14.2 checksums below are the asset digests of GitHub's release
+# API for tag v0.14.2.
+FROM golang:1.27.4-bookworm@sha256:ce59b41415e2524ae99926fe1f37ce48ba8c194dcbd2a56a65436cdcefa2bd34 AS typst
+
+# renovate: datasource=github-releases depName=typst/typst
+ARG TYPST_VERSION=0.14.2
+ARG TYPST_SHA256_AMD64=a6044cbad2a954deb921167e257e120ac0a16b20339ec01121194ff9d394996d
+ARG TYPST_SHA256_ARM64=491b101aa40a3a7ea82a3f8a6232cabb4e6a7e233810082e5ac812d43fdcd47a
+ARG TARGETARCH
+
+# The archives are xz compressed, and GNU tar calls the external xz for
+# them. Installed explicitly, because whether this base image already
+# ships xz-utils is not verified. It only unpacks an archive whose
+# checksum was checked before, so its version does not matter.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fails closed: an unknown architecture, an empty checksum or a checksum
+# mismatch stops the build before anything is unpacked.
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64) triple=x86_64-unknown-linux-musl; sum="${TYPST_SHA256_AMD64}" ;; \
+      arm64) triple=aarch64-unknown-linux-musl; sum="${TYPST_SHA256_ARM64}" ;; \
+      *) echo "typst: no pinned archive for TARGETARCH '${TARGETARCH}'" >&2; exit 1 ;; \
+    esac; \
+    if [ -z "${sum}" ]; then echo "typst: no SHA-256 for ${TARGETARCH}" >&2; exit 1; fi; \
+    curl -fsSL -o /tmp/typst.tar.xz \
+      "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-${triple}.tar.xz"; \
+    echo "${sum}  /tmp/typst.tar.xz" | sha256sum -c -; \
+    mkdir /out; \
+    tar -xJf /tmp/typst.tar.xz -C /out --strip-components=1 \
+      "typst-${triple}/typst" "typst-${triple}/LICENSE" "typst-${triple}/NOTICE"; \
+    rm /tmp/typst.tar.xz; \
+    /out/typst --version
+
 # Runtime stage: gcr.io/distroless/static-debian12 carries a minimal root
 # filesystem, ca-certificates and tzdata, and nothing else - no shell, no
 # package manager, no busybox. That trust store is the reason this is
@@ -89,6 +144,12 @@ FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c
 
 COPY --from=build /out/solobill /usr/local/bin/solobill
 
+# internal/pdf runs "typst" from PATH by default (pdf.DefaultBinary).
+# /usr/local/bin is the fixed path. Typst is Apache-2.0, so its LICENSE
+# and NOTICE ship next to it.
+COPY --from=typst /out/typst /usr/local/bin/typst
+COPY --from=typst /out/LICENSE /out/NOTICE /usr/local/share/doc/typst/
+
 # Matches LISTEN_ADDR's default (":8080", internal/config.Load) and
 # ADMIN_LISTEN_ADDR's default (":8081", the same file): the public
 # listener Ingress routes to, and the administrative one it does not, see
@@ -102,6 +163,11 @@ EXPOSE 8081
 # nonroot user already resolves to, and so redundant with the image's own
 # default - kept explicit anyway, matching cve-notifier's Dockerfile.
 USER 65532:65532
+
+# Proves on every image build, for the platform being built, that the
+# final image runs typst as the non root user. Exec form, because this
+# image has no shell. The build fails when the binary cannot run.
+RUN ["/usr/local/bin/typst", "--version"]
 
 # No HEALTHCHECK: this image has no shell and no curl/wget to exec one
 # with, and unlike cve-notifier's binary, cmd/solobill has no built-in
