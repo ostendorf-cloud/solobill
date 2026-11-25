@@ -221,6 +221,14 @@ services:
       # PDF download work locally. The compose root filesystem is
       # writable, so the renderer's temporary directory needs no volume.
       PDF_TYPST_BINARY: /usr/local/bin/typst
+      # Every request reaches the API through the frontend's development
+      # proxy, so the TCP peer is always the frontend container. Trusting
+      # the private ranges a compose network is drawn from (Docker and
+      # Podman alike) lets the API key its rate limits on the
+      # X-Forwarded-For the proxy sets instead of on that one container.
+      # Local development only: the chart sets config.trustedProxies to the
+      # ingress controller's range.
+      TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
       # No credentials here: DatabaseDSN (internal/config) assembles them
       # from DATABASE_USER/DATABASE_PASSWORD below, matching DATABASE_URL's
       # own contract (connection URL only, see internal/config.Config).
@@ -281,7 +289,8 @@ services:
   # origin, http://localhost:8080, as the Ingress gives it in production.
   # The chart never sets it. One limit of that proxy: it forwards a request
   # body of at most 1 MiB (govue's frontend.DevAPIProxyMaxBody), so a
-  # receipt upload above that answers 413 here, never in the cluster.
+  # receipt upload above that answers 413 here, never in the cluster. A
+  # govue issue (filed by the coordinator) asks for a configurable bound.
   frontend:
     build:
       context: .
