@@ -23,6 +23,7 @@
   architectures. The build verifies the SHA-256 of the release archive per architecture.
 - The image build runs `typst --version` as the non root user in the final stage.
 - The Dockerfile's `TYPST_VERSION` equals the pin in `mise.toml`, enforced by `internal/envsync`.
+- So is `pdf.TypstVersion`, the constant the startup check compares the binary with.
 
 ## Consequences
 
@@ -33,6 +34,9 @@
 - The worst case payload renders to about 18 KB a page with 0.14.2 (`TestWorstCaseRender`).
 - Renovate moves the version but not the checksums. Every bump needs the two release asset
   digests copied by hand, and the image build fails until they are.
+- Every bump also needs two more manual steps: the Go constant `pdf.TypstVersion` and the golden
+  files in `internal/pdf/testdata/golden`. `internal/envsync` fails until the constant matches
+  `mise.toml`.
 - A Typst bump can change the layout of issued documents. The golden tests catch it before merge.
 
 ## Alternatives

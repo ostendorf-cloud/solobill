@@ -52,7 +52,7 @@
       "allowedVersions": "<7"
     },
     {
-      "description": "typst is pinned in mise.toml and in the Dockerfile's TYPST_VERSION. Both move in one pull request: internal/envsync's TestDockerfileTypstMatchesMise fails when they differ. Renovate cannot update the Dockerfile's TYPST_SHA256_AMD64 and TYPST_SHA256_ARM64: the image build fails on the old checksums until they are copied from the new release page by hand (docs/adr/0001-typst-pdf-engine.md).",
+      "description": "typst is pinned in mise.toml and in the Dockerfile's TYPST_VERSION. Both move in one pull request: internal/envsync's TestDockerfileTypstMatchesMise fails when they differ. Renovate cannot update the Dockerfile's TYPST_SHA256_AMD64 and TYPST_SHA256_ARM64: the image build fails on the old checksums until they are copied from the new release page by hand (docs/adr/0001-typst-pdf-engine.md). The Go constant pdf.TypstVersion in internal/pdf/render.go and the golden files in internal/pdf/testdata/golden are manual steps too: TestPDFTypstVersionMatchesMise fails until the constant is bumped.",
       "matchDepNames": ["typst", "typst/typst"],
       "groupName": "typst"
     }
