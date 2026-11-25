@@ -455,6 +455,10 @@ config:
   oidc:
     issuerUrl: ""
     clientId: ""
+    # The public URL of the callback route, registered as is at the
+    # identity provider, for example
+    # https://solobill.example.com/api/v1/auth/oidc/callback. The login
+    # starts at /api/v1/auth/oidc/login.
     redirectUrl: ""
     # Defaults to govue oidc.DefaultScopes when empty. Add the scope a
     # Keycloak client mapper maps realm roles under (commonly "roles")

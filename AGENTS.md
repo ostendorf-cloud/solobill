@@ -46,7 +46,9 @@ The global baseline already applies here and is not repeated below.
   for OIDC.
 - `internal/httpapi/` builds the HTTP server: health and metrics endpoints, the local login,
   logout, "who am I" and invite routes, the OIDC routes when `internal/auth`'s OIDC path is
-  configured, and the SPA fallback that serves the embedded Vue build for everything else. See
+  configured, and the SPA fallback that serves the embedded Vue build for everything else. The
+  OIDC routes are `/api/v1/auth/oidc/login` and `/api/v1/auth/oidc/callback`.
+  `OIDC_REDIRECT_URL` names the callback. The old `/auth/oidc/...` paths answer a JSON `404`. See
   its package doc for the middleware chain shape and how a login or invite-accept request
   resolves its tenant.
 - `internal/config/` loads solobill's configuration from the environment once, at startup, and

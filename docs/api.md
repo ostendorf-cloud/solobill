@@ -72,6 +72,27 @@ One shape for every error, written by govue's `api.WriteError`:
 | 503 | `object_store_unavailable` | File routes only: bucket unreachable, or no versioning while it is required |
 | 503 | `renderer_unavailable` | No PDF renderer configured or able to run: issue, correction and the PDF download |
 
+## OIDC login
+
+Registered in `internal/httpapi/routes_auth.go`. Moved under `/api` by issue #153.
+
+- Mounted only when `OIDC_ISSUER_URL` is set. Without OIDC both answer `404 not_found`.
+- No session is needed. These are browser navigations, not JSON calls.
+- The old paths `/auth/oidc/login` and `/auth/oidc/callback` answer `404 not_found` as JSON.
+  They do not redirect, so a stale redirect URL at the identity provider fails loudly.
+
+### `GET /api/v1/auth/oidc/login`
+
+Redirects (`303`) to the identity provider. Sets the short lived login cookie (`Path=/`,
+`SameSite=Lax`, `HttpOnly`). `?next=` takes a local path to land on after the login.
+
+### `GET /api/v1/auth/oidc/callback`
+
+The redirect URL registered at the identity provider. `OIDC_REDIRECT_URL` must name exactly this
+path, for example `https://solobill.example.com/api/v1/auth/oidc/callback`. Starts a session and
+redirects (`303`) to `/` or to `next`. A refused login answers a short plain text `400` (state,
+code or login cookie wrong) or `503` (provider or account problem), with no cause.
+
 ## Seller profile
 
 Registered in `internal/httpapi/routes_profile.go`. Owned by issue #68.
