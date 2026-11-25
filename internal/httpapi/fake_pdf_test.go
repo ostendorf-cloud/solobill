@@ -55,9 +55,19 @@ type fakePDFRenderer struct {
 	mu    sync.Mutex
 	calls []renderCall
 	err   error
+	// during, when set, runs inside the render, before it returns: a test
+	// lets a concurrent download win the race to store the PDF there.
+	during func()
 }
 
 func (r *fakePDFRenderer) RenderWithLogo(_ context.Context, payload []byte, draft bool, logo []byte) ([]byte, error) {
+	r.mu.Lock()
+	during := r.during
+	r.mu.Unlock()
+	if during != nil {
+		during()
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -80,6 +90,13 @@ func (r *fakePDFRenderer) setErr(err error) {
 	defer r.mu.Unlock()
 
 	r.err = err
+}
+
+func (r *fakePDFRenderer) setDuring(fn func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.during = fn
 }
 
 func (r *fakePDFRenderer) renders() []renderCall {

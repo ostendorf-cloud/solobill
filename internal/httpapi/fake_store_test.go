@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +48,45 @@ func newFakeStore() *fakeStore {
 }
 
 func (s *fakeStore) WithTenant(ctx context.Context, _ uuid.UUID, fn func(ctx context.Context) error) error {
-	return fn(ctx)
+	return fn(context.WithValue(ctx, fakeTxKey{}, &fakeTx{}))
+}
+
+// fakeTxKey carries the fake transaction WithTenant opened, so a fake
+// repository can model Postgres aborting it after a failed statement.
+type fakeTxKey struct{}
+
+// fakeTx is one WithTenant call. aborted is set by a fake whose write
+// failed the way Postgres fails the whole transaction (a unique
+// violation): every later statement in it fails with SQLSTATE 25P02.
+type fakeTx struct {
+	mu      sync.Mutex
+	aborted bool
+}
+
+// errFakeTxAborted is what Postgres answers to a statement in an aborted
+// transaction.
+var errFakeTxAborted = errors.New("fake: current transaction is aborted, commands ignored until end of transaction block (SQLSTATE 25P02)")
+
+// abortTx marks the transaction of ctx aborted.
+func abortTx(ctx context.Context) {
+	if tx, ok := ctx.Value(fakeTxKey{}).(*fakeTx); ok {
+		tx.mu.Lock()
+		tx.aborted = true
+		tx.mu.Unlock()
+	}
+}
+
+// txAborted reports errFakeTxAborted when the transaction of ctx is.
+func txAborted(ctx context.Context) error {
+	if tx, ok := ctx.Value(fakeTxKey{}).(*fakeTx); ok {
+		tx.mu.Lock()
+		defer tx.mu.Unlock()
+		if tx.aborted {
+			return errFakeTxAborted
+		}
+	}
+
+	return nil
 }
 
 func (s *fakeStore) Tenants() storage.TenantRepository { return &fakeTenantRepository{s} }

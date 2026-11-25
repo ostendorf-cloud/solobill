@@ -3,7 +3,9 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -103,23 +105,30 @@ func (b *fakeBucket) BucketObjectLock(context.Context) (bool, error) {
 	return b.lock, b.err
 }
 
-// fakeVersion is the one version id fakeObjects hands out on Put.
-const fakeVersion = "v1"
+// fakeVersion is the version id of the n-th Put of fakeObjects. Every
+// Put writes a new version, as a versioned bucket does, so a second Put
+// of the same key never replaces the version an earlier row recorded.
+func fakeVersion(n int) string { return fmt.Sprintf("v%d", n) }
 
 // fakeObjects is an in-memory versioned bucket. objects is the current
-// version of each key, versions the one written by Put under
-// "<key>@v1". reported overrides the size Get and GetVersion report, to
-// model a store whose metadata and body disagree.
+// version of each key, versions every version Put wrote under
+// "<key>@<version>", latest the newest version id of each key. reported
+// overrides the size Get and GetVersion report, to model a store whose
+// metadata and body disagree.
 type fakeObjects struct {
 	mu       sync.Mutex
 	objects  map[string][]byte
 	versions map[string][]byte
+	latest   map[string]string
 	reported map[string]int64
 	puts     int
 }
 
 func newFakeObjects() *fakeObjects {
-	return &fakeObjects{objects: map[string][]byte{}, versions: map[string][]byte{}, reported: map[string]int64{}}
+	return &fakeObjects{
+		objects: map[string][]byte{}, versions: map[string][]byte{},
+		latest: map[string]string{}, reported: map[string]int64{},
+	}
 }
 
 func (o *fakeObjects) Put(_ context.Context, object storage.PutObject) (storage.ObjectInfo, error) {
@@ -130,11 +139,13 @@ func (o *fakeObjects) Put(_ context.Context, object storage.PutObject) (storage.
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.objects[object.Key] = data
-	o.versions[object.Key+"@"+fakeVersion] = data
 	o.puts++
+	version := fakeVersion(o.puts)
+	o.objects[object.Key] = data
+	o.versions[object.Key+"@"+version] = data
+	o.latest[object.Key] = version
 
-	info := storage.ObjectInfo{SizeBytes: int64(len(data)), ContentType: object.ContentType, VersionID: fakeVersion}
+	info := storage.ObjectInfo{SizeBytes: int64(len(data)), ContentType: object.ContentType, VersionID: version}
 	if object.RetainUntil != nil {
 		retain := *object.RetainUntil
 		info.RetainUntil = &retain
@@ -209,14 +220,31 @@ func (o *fakeObjects) overwrite(key string, data []byte) {
 	o.objects[key] = data
 }
 
-// tamper changes the bytes of key in place, the recorded version included,
+// tamper changes the bytes of key in place, its newest version included,
 // as an admin with direct access to the storage could.
 func (o *fakeObjects) tamper(key string, data []byte) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	o.objects[key] = data
-	o.versions[key+"@"+fakeVersion] = data
+	if version, ok := o.latest[key]; ok {
+		o.versions[key+"@"+version] = data
+	}
+}
+
+// versionCount is how many versions of key Put wrote.
+func (o *fakeObjects) versionCount(key string) int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	n := 0
+	for k := range o.versions {
+		if strings.HasPrefix(k, key+"@") {
+			n++
+		}
+	}
+
+	return n
 }
 
 // tamperKeepingSize is tamper, with the store still reporting reportedSize.
@@ -247,11 +275,20 @@ type fakeFiles struct {
 
 func newFakeFiles() *fakeFiles { return &fakeFiles{files: map[uuid.UUID]storage.File{}} }
 
-func (f *fakeFiles) Create(_ context.Context, file storage.File) (storage.File, error) {
+// Create refuses a taken id with storage.ErrConflict and, like Postgres
+// after a unique violation, aborts the transaction: every later call in
+// the same WithTenant fails.
+func (f *fakeFiles) Create(ctx context.Context, file storage.File) (storage.File, error) {
+	if err := txAborted(ctx); err != nil {
+		return storage.File{}, err
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if _, dup := f.files[file.ID]; dup {
+		abortTx(ctx)
+
 		return storage.File{}, storage.ErrConflict
 	}
 	file.UploadedAt = file.UploadedAt.Truncate(time.Microsecond)
@@ -260,7 +297,11 @@ func (f *fakeFiles) Create(_ context.Context, file storage.File) (storage.File, 
 	return file, nil
 }
 
-func (f *fakeFiles) FindByID(_ context.Context, id uuid.UUID) (storage.File, error) {
+func (f *fakeFiles) FindByID(ctx context.Context, id uuid.UUID) (storage.File, error) {
+	if err := txAborted(ctx); err != nil {
+		return storage.File{}, err
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -272,7 +313,11 @@ func (f *fakeFiles) FindByID(_ context.Context, id uuid.UUID) (storage.File, err
 	return file, nil
 }
 
-func (f *fakeFiles) FindBySHA256(_ context.Context, sha256 string) ([]storage.File, error) {
+func (f *fakeFiles) FindBySHA256(ctx context.Context, sha256 string) ([]storage.File, error) {
+	if err := txAborted(ctx); err != nil {
+		return nil, err
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

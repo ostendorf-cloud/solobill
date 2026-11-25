@@ -129,6 +129,50 @@ func TestDocumentPDFRendersOnceAndServesTheStoredBytes(t *testing.T) {
 	}
 }
 
+// TestDocumentPDFLosingTheRaceServesTheStoredPDF: two first downloads
+// render at once and the other one stores first. This one's insert fails
+// on the primary key, which aborts its Postgres transaction (the fake
+// models that), so the stored row must be read in a new one. The loser's
+// Put left one more version of the key; the row names the winner's
+// version, so that one is served.
+func TestDocumentPDFLosingTheRaceServesTheStoredPDF(t *testing.T) {
+	t.Parallel()
+
+	f, renderer := newPDFFixture(t, "pdf-race")
+	id, number := f.issuedID(t)
+	fx, objects, _ := filesOf(t, f.app)
+	fileID := httpapi.DocumentPDFFileID(uuid.MustParse(id))
+	key := objectstore.Key(f.tenant.ID, fileID)
+	winner := []byte("%PDF-1.7\n% stored by the other download\n%%EOF\n")
+
+	renderer.setDuring(func() {
+		info, err := objects.Put(context.Background(), storage.PutObject{Key: key, Body: bytes.NewReader(winner), SizeBytes: int64(len(winner))})
+		if err != nil {
+			t.Errorf("winner put: %v", err)
+
+			return
+		}
+		version := info.VersionID
+		fx.files.add(storage.File{
+			ID: fileID, TenantID: f.tenant.ID, Purpose: storage.FilePurposeDocumentPDF, ObjectKey: key,
+			ObjectVersionID: &version, SHA256: sha256Of(winner), SizeBytes: int64(len(winner)),
+			ContentType: "application/pdf", OriginalFilename: number + ".pdf",
+		})
+	})
+
+	rec := f.pdf(t, f.owner, id)
+	wantPDF(t, rec, number+".pdf")
+	if !bytes.Equal(rec.Body.Bytes(), winner) {
+		t.Errorf("body = %q, want the PDF the other download stored", rec.Body.Bytes())
+	}
+	if n := len(storedPDFs(t, f.app)); n != 1 {
+		t.Errorf("stored PDFs = %d, want 1", n)
+	}
+	if n := objects.versionCount(key); n != 2 {
+		t.Errorf("versions of the key = %d, want 2: the winner's and the loser's unreferenced one", n)
+	}
+}
+
 func TestDocumentPDFOfADraftRendersLiveAndIsNeverStored(t *testing.T) {
 	t.Parallel()
 
