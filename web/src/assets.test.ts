@@ -29,6 +29,7 @@ const asset: Asset = {
   imported: false,
   book_value_cents: 149900,
   book_value_year: null,
+  disposal_rest_cents: null,
   editable: true,
   created_at: '',
   updated_at: '',
@@ -65,6 +66,27 @@ describe('bookValueNote', () => {
       'assets.bookValue.atEndOf:{"year":2026}',
     )
     expect(bookValueNote(asset, t)).toBe('assets.bookValue.beforeDepreciation')
+  })
+
+  it('names the disposal year of a disposed asset with a rest', () => {
+    const gone = {
+      ...asset,
+      disposed_on: '2026-05-01',
+      book_value_cents: 0,
+      book_value_year: 2026,
+      disposal_rest_cents: 76667,
+    }
+    expect(bookValueNote(gone, t)).toBe('assets.bookValue.disposedIn:{"year":2026}')
+    // A Sammelposten has no rest: its value follows the schedule.
+    expect(bookValueNote({ ...gone, book_value_cents: 80000, disposal_rest_cents: null }, t)).toBe(
+      'assets.bookValue.atEndOf:{"year":2026}',
+    )
+  })
+
+  it('says the value is not available when the server sent none', () => {
+    expect(bookValueNote({ ...asset, book_value_cents: null }, t)).toBe(
+      'assets.bookValue.unavailable',
+    )
   })
 })
 

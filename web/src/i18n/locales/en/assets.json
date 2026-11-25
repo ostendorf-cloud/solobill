@@ -49,7 +49,9 @@
   },
   "bookValue": {
     "atEndOf": "at 31 December {year}",
-    "beforeDepreciation": "before any depreciation"
+    "beforeDepreciation": "before any depreciation",
+    "disposedIn": "disposed in {year}",
+    "unavailable": "not available, the stored data is inconsistent"
   },
   "conflict": {
     "disposed": "The asset is disposed and can no longer be edited.",
@@ -64,6 +66,7 @@
     "usefulLife": "Useful life in months",
     "openingBookValue": "Book value at 1 January {year}",
     "disposedOn": "Disposed on",
+    "disposalRest": "Book value left at disposal",
     "proceeds": "Proceeds",
     "scheduleTitle": "Depreciation schedule",
     "scheduleCaption": "Depreciation schedule per year",

@@ -32,11 +32,16 @@ export interface Asset {
   disposed_on: string | null
   disposal_proceeds_cents: number | null
   imported: boolean
-  /** The closing book value of the last schedule year that has ended, or the
-   *  value before any depreciation while none has. Computed by the server. */
-  book_value_cents: number
-  /** The schedule year book_value_cents closes, null while none has ended. */
+  /** The closing book value of the last schedule year that has ended, the
+   *  value before any depreciation while none has, 0 from the disposal year
+   *  on. Computed by the server. null when the server could not compute it. */
+  book_value_cents: number | null
+  /** The schedule year book_value_cents closes, or the disposal year. null
+   *  while none has ended. */
   book_value_year: number | null
+  /** The book value left at the end of the disposal year, null unless the
+   *  asset is disposed and not a Sammelposten. */
+  disposal_rest_cents: number | null
   /** Whether a PUT would be accepted now. Decided by the server. */
   editable: boolean
   created_at: string
@@ -116,9 +121,16 @@ export function isRegimeMissing(error: unknown): boolean {
 
 type Translate = (key: string, named?: Record<string, unknown>) => string
 
-/** bookValueNote says what the server's book value stands for: the end of
- *  book_value_year, or the value before any depreciation. */
+/** bookValueNote says what the server's book value stands for: missing, the
+ *  disposal year, the end of book_value_year, or the value before any
+ *  depreciation. */
 export function bookValueNote(asset: Asset, t: Translate): string {
+  if (asset.book_value_cents === null) {
+    return t('assets.bookValue.unavailable')
+  }
+  if (asset.disposal_rest_cents !== null && asset.book_value_year !== null) {
+    return t('assets.bookValue.disposedIn', { year: asset.book_value_year })
+  }
   return asset.book_value_year === null
     ? t('assets.bookValue.beforeDepreciation')
     : t('assets.bookValue.atEndOf', { year: asset.book_value_year })

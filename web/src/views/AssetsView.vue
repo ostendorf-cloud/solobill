@@ -139,7 +139,9 @@ function openAsset(a: Asset): void {
             <td class="px-3 py-2 text-right">{{ formatCents(a.cost_basis_cents, locale) }}</td>
             <td class="px-3 py-2">{{ t(`assets.method.${a.method}`) }}</td>
             <td class="px-3 py-2 text-right">
-              <div>{{ formatCents(a.book_value_cents, locale) }}</div>
+              <div v-if="a.book_value_cents !== null">
+                {{ formatCents(a.book_value_cents, locale) }}
+              </div>
               <div class="text-sm text-text-muted">{{ bookValueNote(a, t) }}</div>
             </td>
             <td class="px-3 py-2">

@@ -269,7 +269,9 @@ async function confirmDisposal(): Promise<void> {
           <div>
             <dt class="text-sm text-text-muted">{{ t('assets.columns.bookValue') }}</dt>
             <dd data-testid="book-value">
-              {{ formatCents(asset.book_value_cents, locale) }}
+              <template v-if="asset.book_value_cents !== null">
+                {{ formatCents(asset.book_value_cents, locale) }}
+              </template>
               <span class="text-sm text-text-muted">{{ bookValueNote(asset, t) }}</span>
             </dd>
           </div>
@@ -302,6 +304,12 @@ async function confirmDisposal(): Promise<void> {
           <div v-if="asset.disposed_on">
             <dt class="text-sm text-text-muted">{{ t('assets.detail.disposedOn') }}</dt>
             <dd>{{ asset.disposed_on }}</dd>
+          </div>
+          <div v-if="asset.disposal_rest_cents !== null">
+            <dt class="text-sm text-text-muted">{{ t('assets.detail.disposalRest') }}</dt>
+            <dd data-testid="disposal-rest">
+              {{ formatCents(asset.disposal_rest_cents, locale) }}
+            </dd>
           </div>
           <div v-if="asset.disposal_proceeds_cents !== null">
             <dt class="text-sm text-text-muted">{{ t('assets.detail.proceeds') }}</dt>

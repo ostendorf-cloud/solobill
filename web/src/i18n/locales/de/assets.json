@@ -49,7 +49,9 @@
   },
   "bookValue": {
     "atEndOf": "zum 31. Dezember {year}",
-    "beforeDepreciation": "vor jeder Abschreibung"
+    "beforeDepreciation": "vor jeder Abschreibung",
+    "disposedIn": "Abgang im Jahr {year}",
+    "unavailable": "nicht verfügbar, die gespeicherten Daten sind widersprüchlich"
   },
   "conflict": {
     "disposed": "Das Anlagegut ist abgegangen und kann nicht mehr bearbeitet werden.",
@@ -64,6 +66,7 @@
     "usefulLife": "Nutzungsdauer in Monaten",
     "openingBookValue": "Buchwert am 1. Januar {year}",
     "disposedOn": "Abgang am",
+    "disposalRest": "Restbuchwert beim Abgang",
     "proceeds": "Erlös",
     "scheduleTitle": "Abschreibungsplan",
     "scheduleCaption": "Abschreibungsplan pro Jahr",

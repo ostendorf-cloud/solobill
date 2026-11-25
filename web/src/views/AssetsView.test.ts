@@ -37,6 +37,7 @@ const laptop = {
   imported: false,
   book_value_cents: 149900,
   book_value_year: null,
+  disposal_rest_cents: null,
   editable: true,
   created_at: '2026-11-20T10:00:00Z',
   updated_at: '2026-11-20T10:00:00Z',
@@ -51,7 +52,17 @@ const phone = {
   cost_basis_cents: 59900,
   disposed_on: '2026-05-01',
   // Figures the server sent. The view shows them and checks nothing.
-  book_value_cents: 12345,
+  book_value_cents: 0,
+  book_value_year: 2026,
+  disposal_rest_cents: 12345,
+  editable: false,
+}
+const desk = {
+  ...laptop,
+  id: 'a-3',
+  name: 'Desk',
+  expense_id: null,
+  book_value_cents: 54321,
   book_value_year: 2025,
   editable: false,
 }
@@ -93,7 +104,7 @@ function apiError(
 }
 
 function mockApi(
-  list: unknown = { assets: [laptop, phone] },
+  list: unknown = { assets: [laptop, phone, desk] },
   expenses: unknown[] = [
     expense('e-1', { supplier: 'Taken Shop' }),
     expense('e-2', { supplier: 'Laptop Shop' }),
@@ -179,11 +190,26 @@ describe('AssetsView', () => {
     expect(within(rows[1]).getByText('Linear')).toBeVisible()
     expect(within(rows[1]).getByText('Editable')).toBeVisible()
     expect(within(rows[2]).getByText('Low value asset (GWG)')).toBeVisible()
-    expect(within(rows[2]).getByText('123.45 EUR')).toBeVisible()
-    expect(within(rows[2]).getByText('at 31 December 2025')).toBeVisible()
+    // A disposed asset is out of the register: 0 from the disposal year on.
+    expect(within(rows[2]).getByText('0.00 EUR')).toBeVisible()
+    expect(within(rows[2]).getByText('disposed in 2026')).toBeVisible()
     expect(within(rows[2]).getByText('Disposed')).toBeVisible()
     expect(within(rows[2]).queryByText('Editable')).toBeNull()
+    expect(within(rows[3]).getByText('543.21 EUR')).toBeVisible()
+    expect(within(rows[3]).getByText('at 31 December 2025')).toBeVisible()
     expect(screen.queryByText(/does not show a current book value/)).toBeNull()
+  })
+
+  it('says so when the server sent no book value for a row', async () => {
+    mockApi({ assets: [{ ...desk, book_value_cents: null, book_value_year: null }] })
+    renderView()
+
+    const row = (await screen.findByRole('rowheader', { name: 'Desk' })).closest('tr')
+    expect(row).not.toBeNull()
+    expect(
+      within(row as HTMLElement).getByText('not available, the stored data is inconsistent'),
+    ).toBeVisible()
+    expect(within(row as HTMLElement).getAllByText('1,499.00 EUR')).toHaveLength(1)
   })
 
   it('shows the German strings and number format', async () => {
@@ -192,8 +218,9 @@ describe('AssetsView', () => {
 
     expect(await screen.findByRole('heading', { name: 'Anlagen' })).toBeVisible()
     expect((await screen.findAllByText('1.499,00 EUR')).length).toBeGreaterThan(0)
-    expect(screen.getByText('123,45 EUR')).toBeVisible()
+    expect(screen.getByText('543,21 EUR')).toBeVisible()
     expect(screen.getByText('zum 31. Dezember 2025')).toBeVisible()
+    expect(screen.getByText('Abgang im Jahr 2026')).toBeVisible()
     expect(screen.getByRole('columnheader', { name: 'Aktueller Buchwert' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Anlagegut anlegen' })).toBeVisible()
   })

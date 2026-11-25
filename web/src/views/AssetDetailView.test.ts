@@ -37,6 +37,7 @@ const laptop = {
   imported: false,
   book_value_cents: 149900,
   book_value_year: null,
+  disposal_rest_cents: null,
   editable: true,
   created_at: '2026-11-20T10:00:00Z',
   updated_at: '2026-11-20T10:00:00Z',
@@ -66,6 +67,9 @@ const disposedLaptop = {
   id: 'a-4',
   name: 'Gone laptop',
   disposed_on: '2026-06-01',
+  book_value_cents: 0,
+  book_value_year: 2026,
+  disposal_rest_cents: 76667,
   editable: false,
 }
 
@@ -175,6 +179,34 @@ describe('AssetDetailView', () => {
       const value = await screen.findByTestId('book-value')
       expect(value).toHaveTextContent('582.94 EUR')
       expect(value).toHaveTextContent('at 31 December 2025')
+    })
+
+    it('shows 0 and the rest at disposal for a disposed asset', async () => {
+      mockApi(disposedLaptop)
+      await renderView('a-4')
+
+      const value = await screen.findByTestId('book-value')
+      expect(value).toHaveTextContent('0.00 EUR')
+      expect(value).toHaveTextContent('disposed in 2026')
+      expect(screen.getByText('Book value left at disposal')).toBeVisible()
+      expect(screen.getByTestId('disposal-rest')).toHaveTextContent('766.67 EUR')
+    })
+
+    it('shows the rest at disposal in German', async () => {
+      mockApi(disposedLaptop)
+      await renderView('a-4', 'de')
+
+      expect(await screen.findByText('Restbuchwert beim Abgang')).toBeVisible()
+      expect(screen.getByTestId('disposal-rest')).toHaveTextContent('766,67 EUR')
+      expect(screen.getByTestId('book-value')).toHaveTextContent('Abgang im Jahr 2026')
+    })
+
+    it('shows no rest for an asset that is not disposed', async () => {
+      mockApi()
+      await renderView()
+
+      await screen.findByTestId('book-value')
+      expect(screen.queryByTestId('disposal-rest')).toBeNull()
     })
 
     it('says that no schedule year has ended yet', async () => {
