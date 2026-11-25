@@ -6,12 +6,21 @@ The global baseline already applies here and is not repeated below.
 
 ## Layout
 
-- `cmd/solobill` wires the service: `internal/config` loads and validates the environment,
-  `main.go` builds the database connection, the session store, the local and (optional) OIDC
-  authenticators, and `internal/httpapi`'s handler, then runs it through govue's `httpserver` with
-  graceful shutdown. `embed.go` embeds `dist/` (the built SPA, written by `task web:build`).
-  `dist/` sits under `cmd/` rather than `internal/` because `go:embed` resolves relative to the
-  file holding the directive.
+- solobill ships two images from one `Dockerfile`: `solobill-api` (stage `api`) and
+  `solobill-frontend` (stage `frontend`). The Ingress or HTTPRoute sends `/api` to the API and
+  every other path to the frontend, on one host, so the browser sees one origin.
+- `cmd/solobill` wires the API: `internal/config` loads and validates the environment, `main.go`
+  builds the database connection, the session store, the local and (optional) OIDC
+  authenticators, and `internal/httpapi`'s handler, then runs it through govue's `httpserver`
+  with graceful shutdown. It serves the API, health and metrics only, and embeds nothing.
+- `cmd/frontend` wires the frontend: `internal/frontendconfig` loads its environment,
+  `internal/frontendserver` builds govue's `frontend` server in app mode over the Vite build in
+  `FRONTEND_BUILD_DIR` (`/usr/share/solobill/web` in the image). It answers `index.html` for
+  every route of the Vue router, the bundle under `/assets`, a JSON `404` under `/api`, with
+  govue's security headers. `FRONTEND_DEV_API_PROXY` forwards `/api/` to the API in
+  `docker-compose.yaml` only.
+- No Vue route lives under `/assets` or `/api`: the frontend server owns both, and
+  `web/src/router/index.test.ts` fails on such a route.
 - `docs/concepts/solobill.md` is the agreed design this issue's plan implements in steps.
 - `db/migrations/` holds the dbmate migrations: `tenants`, `accounts`, `invites`, `customers`,
   `catalogue_items`, `documents`, `document_lines` and `document_numbers`, with the row level
@@ -46,7 +55,7 @@ The global baseline already applies here and is not repeated below.
   for OIDC.
 - `internal/httpapi/` builds the HTTP server: health and metrics endpoints, the local login,
   logout, "who am I" and invite routes, the OIDC routes when `internal/auth`'s OIDC path is
-  configured, and the SPA fallback that serves the embedded Vue build for everything else. The
+  configured, and a JSON `404` for every path no route matches. It serves no page. The
   OIDC routes are `/api/v1/auth/oidc/login` and `/api/v1/auth/oidc/callback`.
   `OIDC_REDIRECT_URL` names the callback. The old `/auth/oidc/...` paths answer a JSON `404`. See
   its package doc for the middleware chain shape and how a login or invite-accept request
@@ -55,13 +64,21 @@ The global baseline already applies here and is not repeated below.
   validates it fully before anything listens. Every secret follows the `_FILE`-suffix convention
   of govue's `envconf.Loader.SecretOrFile` and `RequiredSecretOrFile`, not the narrower
   `envconf.Loader.Secret`; see its package doc.
-- `Dockerfile` and `docker-compose.yaml` are the local `docker compose up --build` path: a
-  multi-stage build (Vue, then Go with the build embedded, then a distroless runtime) behind a
-  Postgres that runs with two separate roles, a superuser used only to apply `db/migrations` and
-  a restricted `NOSUPERUSER NOBYPASSRLS` role `cmd/solobill` actually connects as, so the row
+- `Dockerfile` builds both images: a Node stage for the Vue build, one Go stage per binary and
+  distroless runtimes. Only `frontend` copies the Vue build, only `api` carries typst.
+  `internal/envsync` pins that split, the image list of both workflows and the chart's image
+  names. `docker-compose.yaml` is the local `docker compose up --build` path: the `frontend`
+  service on `http://localhost:8080` forwards `/api/` to the `api` service, behind a Postgres
+  that runs with two separate roles, a superuser used only to apply `db/migrations` and a
+  restricted `NOSUPERUSER NOBYPASSRLS` role `cmd/solobill` actually connects as, so the row
   level security guarantee above still holds under compose. The full reasoning is a comment on
   `docker-compose.yaml`'s `postgres` service, not repeated here.
-- `charts/solobill/` is the real deployment: a Helm chart with no Postgres subchart, since
+- `task test:e2e` (`scripts/e2e-compose.sh`, `internal/e2e`) proves login, `GET /api/v1/me`
+  and a CSRF protected `POST` through the frontend of the compose stack. It needs Docker or
+  Podman and is not part of `task check`. `internal/httpapi`'s
+  `TestSessionAndCSRFThroughTheFrontend` proves the same in process on every test run.
+- `charts/solobill/` is the real deployment, with an API part and a frontend part and the fixed
+  `/api` routing: a Helm chart with no Postgres subchart, since
   Postgres already runs in the cluster it installs into. It takes a database connection URL,
   user and password as configuration, and documents loudly, since it has no way to enforce it,
   that the configured role must be `NOSUPERUSER NOBYPASSRLS` for the row level security
@@ -74,15 +91,19 @@ The global baseline already applies here and is not repeated below.
   English strings every view renders through. This is still a shell: no accounting feature, no
   navigation beyond these three views, by the issue's own plan.
 
-## A build needs the frontend first
+## Go and the frontend build are independent
 
-`cmd/solobill` cannot compile against an empty `dist/`, because `go:embed` fails when its
-pattern matches no file at all. `dist/` is gitignored, generated by `task web:build`.
+No Go package embeds the Vue build. `go build ./...`, `go vet ./...` and `go test ./...` work on
+a fresh checkout without Node, and no Go task depends on `web:build`.
 
-`task build` and `task test:go` both declare that dependency, so running either one through Task
-always populates the frontend first. A bare `go build ./cmd/solobill` or `go test ./cmd/...`
-outside Task fails on a fresh checkout for that reason; run `task build` or `task test:go`
-instead, or `task web:build` once by hand before reaching for the Go toolchain directly.
+- `task web:build` writes the Vue build to `web/dist`, gitignored.
+- The frontend image builds it in the `Dockerfile`'s Node stage and copies it to
+  `/usr/share/solobill/web`. `cmd/frontend` reads it from there at startup, through
+  `os.OpenRoot`, and refuses to start without `index.html`.
+- To run `cmd/frontend` locally, point `FRONTEND_BUILD_DIR` at `web/dist` after
+  `task web:build`.
+- `task build` compiles both binaries, `task build:image` builds both images
+  (`IMAGE=api` or `IMAGE=frontend` for one, `PLATFORM=linux/arm64` for another platform).
 
 ## govue's two halves move together
 

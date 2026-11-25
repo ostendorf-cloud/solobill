@@ -54,21 +54,29 @@ cp .env.example .env
 docker compose up --build
 ```
 
-This builds `Dockerfile`'s multi-stage image (the Vue frontend, then the Go binary with it
-embedded, then a distroless runtime) and starts three services: `postgres`, a one-shot `migrate`
-service that applies `db/migrations` and exits, and `solobill` itself, which waits for `migrate`
-to finish before it starts. The database comes up with a seeded `demo` tenant
-(`SEED_TENANT_SLUG`/`SEED_TENANT_NAME` in `.env.example`), so there is a tenant to use right away.
-Open `http://localhost:8080`, not `127.0.0.1`: compose configures passkeys for the relying party
-`localhost`, the one host WebAuthn allows over plain HTTP.
+This builds the two images of `Dockerfile`, the API (`api`) and the frontend (`frontend`), and
+starts `postgres`, a one-shot `migrate` service that applies `db/migrations` and exits, the
+`api`, which waits for `migrate` to finish, and the `frontend`. The database comes up with a
+seeded `demo` tenant (`SEED_TENANT_SLUG`/`SEED_TENANT_NAME` in `.env.example`), so there is a
+tenant to use right away. Open `http://localhost:8080`, not `127.0.0.1`: compose configures
+passkeys for the relying party `localhost`, the one host WebAuthn allows over plain HTTP.
 
-`solobill` never connects to Postgres as the bootstrap superuser `migrate` uses to run the
+The browser only talks to the frontend. It serves the Vue app and forwards `/api/` to the API
+container, so cookies and the CSRF check see one origin, as the Ingress gives in the cluster.
+That development proxy forwards request bodies up to 1 MiB, so a larger receipt upload answers
+`413` under compose only.
+
+The `api` never connects to Postgres as the bootstrap superuser `migrate` uses to run the
 migrations: see the comment on `docker-compose.yaml`'s `postgres` service for why there are two
 separate database roles, and `AGENTS.md` for the one-line summary.
 
-The published image `ghcr.io/ostendorf-cloud/solobill` is one manifest list for `linux/amd64` and `linux/arm64`.
+The published images `ghcr.io/ostendorf-cloud/solobill-api` and
+`ghcr.io/ostendorf-cloud/solobill-frontend` are each one manifest list for `linux/amd64` and
+`linux/arm64`.
 
 `task dev:up` and `task dev:down` wrap `docker compose up --build -d` and `docker compose down`.
+`task test:e2e` starts the stack and proves login, `GET /api/v1/me` and a CSRF protected `POST`
+through the frontend.
 
 ## Development
 
@@ -78,9 +86,8 @@ task check
 ```
 
 `task check` runs every lint, build and test target one after another; `task --list` shows them
-individually. `task web:build` has to run before `task build` or `task test:go` can compile
-`cmd/solobill`, since it embeds the frontend's output; `task build` and `task test:go` already
-declare that dependency, so running either one through Task is enough.
+individually. The Go targets do not need the frontend build: no Go package embeds it. Only the
+frontend image does, and its `Dockerfile` stage builds it.
 
 `task check` never needs a database: `task generate:check` parses `db/migrations` statically, with
 no connection, to confirm the sqlc-generated query code in `internal/storage/postgres/sqlcgen` is
