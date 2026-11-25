@@ -35,10 +35,21 @@ const laptop = {
   disposed_on: null,
   disposal_proceeds_cents: null,
   imported: false,
+  book_value_cents: 149900,
+  book_value_year: null,
+  editable: true,
   created_at: '2026-11-20T10:00:00Z',
   updated_at: '2026-11-20T10:00:00Z',
 }
-const oldDesk = { ...laptop, id: 'a-2', name: 'Old desk', acquired_on: '2024-05-02' }
+const oldDesk = {
+  ...laptop,
+  id: 'a-2',
+  name: 'Old desk',
+  acquired_on: '2024-05-02',
+  book_value_cents: 58294,
+  book_value_year: 2025,
+  editable: false,
+}
 const importedDesk = {
   ...laptop,
   id: 'a-3',
@@ -48,8 +59,15 @@ const importedDesk = {
   opening_book_value_cents: 50000,
   opening_book_value_year: 2026,
   imported: true,
+  book_value_cents: 50000,
 }
-const disposedLaptop = { ...laptop, id: 'a-4', name: 'Gone laptop', disposed_on: '2026-06-01' }
+const disposedLaptop = {
+  ...laptop,
+  id: 'a-4',
+  name: 'Gone laptop',
+  disposed_on: '2026-06-01',
+  editable: false,
+}
 
 const schedule = {
   asset_id: 'a-1',
@@ -148,6 +166,24 @@ describe('AssetDetailView', () => {
       expect(within(rows[1]).getByText('1,082.61 EUR')).toBeVisible()
       expect(within(rows[1]).getByText('AfA auf bewegliche Wirtschaftsgüter')).toBeVisible()
       expect(apiClient.get).toHaveBeenCalledWith('/assets/a-1/schedule', expect.anything())
+    })
+
+    it('shows the current book value the server sent and what it stands for', async () => {
+      mockApi(oldDesk)
+      await renderView('a-2')
+
+      const value = await screen.findByTestId('book-value')
+      expect(value).toHaveTextContent('582.94 EUR')
+      expect(value).toHaveTextContent('at 31 December 2025')
+    })
+
+    it('says that no schedule year has ended yet', async () => {
+      mockApi()
+      await renderView('a-1', 'de')
+
+      const value = await screen.findByTestId('book-value')
+      expect(value).toHaveTextContent('1.499,00 EUR')
+      expect(value).toHaveTextContent('vor jeder Abschreibung')
     })
 
     it('keeps the sign of a negative amount', async () => {
@@ -309,6 +345,25 @@ describe('AssetDetailView', () => {
       expect(await screen.findByRole('button', { name: 'Edit' })).toBeEnabled()
     })
 
+    it('follows the editable flag of the server, not its own date logic', async () => {
+      // Acquired in the open year by the dates, refused by the server.
+      mockApi({ ...laptop, editable: false })
+      await renderView()
+
+      expect(await screen.findByRole('button', { name: 'Edit' })).toBeDisabled()
+      expect(screen.getByTestId('edit-blocked')).toHaveTextContent(
+        'The first year of the schedule has ended.',
+      )
+    })
+
+    it('is enabled when the server says so, whatever the dates are', async () => {
+      mockApi({ ...oldDesk, editable: true })
+      await renderView('a-2')
+
+      expect(await screen.findByRole('button', { name: 'Edit' })).toBeEnabled()
+      expect(screen.queryByTestId('edit-blocked')).toBeNull()
+    })
+
     it('is disabled for a disposed asset with its own reason', async () => {
       mockApi(disposedLaptop)
       await renderView('a-4')
@@ -329,16 +384,16 @@ describe('AssetDetailView', () => {
       expect(screen.queryByTestId('edit-blocked')).toBeNull()
     })
 
-    it('handles a 409 of the server and says why', async () => {
+    it.each([
+      [
+        'asset_year_ended',
+        'The first year of the schedule has ended, or the new date lies in a year that has ended. Record a disposal for a later change.',
+      ],
+      ['asset_disposed', 'The asset is disposed and can no longer be edited.'],
+      [ErrorCode.conflict, 'The asset was changed meanwhile. Close the dialog and load it again.'],
+    ])('names the 409 %s of the server by its code', async (code, text) => {
       mockApi()
-      vi.mocked(apiClient.put).mockRejectedValue(
-        apiError(
-          409,
-          ErrorCode.conflict,
-          undefined,
-          'the first schedule year of the asset has ended',
-        ),
-      )
+      vi.mocked(apiClient.put).mockRejectedValue(apiError(409, code))
       const user = userEvent.setup()
       await renderView()
 
@@ -346,20 +401,14 @@ describe('AssetDetailView', () => {
       const dialog = await screen.findByRole('dialog')
       await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
-      expect(
-        await within(dialog).findByText(
-          'The asset can no longer be edited, or the new date lies in a year that has ended. Record a disposal for a later change.',
-        ),
-      ).toBeVisible()
+      expect(await within(dialog).findByText(text)).toBeVisible()
       expect(within(dialog).queryByText(/An asset exists for this expense/)).toBeNull()
       expect(screen.queryByText(/Something went wrong/)).toBeNull()
     })
 
     it('tells the separate 409 of an expense another asset uses', async () => {
       mockApi()
-      vi.mocked(apiClient.put).mockRejectedValue(
-        apiError(409, ErrorCode.conflict, undefined, 'the expense is already an asset'),
-      )
+      vi.mocked(apiClient.put).mockRejectedValue(apiError(409, 'expense_already_an_asset'))
       const user = userEvent.setup()
       await renderView()
 
@@ -494,16 +543,23 @@ describe('AssetDetailView', () => {
       )
     })
 
-    it('says so on a 409', async () => {
+    it.each([
+      ['asset_disposed', 'The disposal was refused: the asset is disposed already.'],
+      ['asset_year_ended', 'The disposal was refused: the date lies in a year that has ended.'],
+      [
+        ErrorCode.conflict,
+        'The disposal was refused: the asset was changed meanwhile. Load it again.',
+      ],
+    ])('names the 409 %s by its code', async (code, text) => {
       mockApi()
-      vi.mocked(apiClient.post).mockRejectedValue(apiError(409, ErrorCode.conflict))
+      vi.mocked(apiClient.post).mockRejectedValue(apiError(409, code))
       const user = userEvent.setup()
       await renderView()
 
       const dialog = await openDisposal(user)
       await user.click(within(dialog).getByRole('button', { name: 'Record the disposal' }))
 
-      expect(await within(dialog).findByText(/The disposal was refused/)).toBeVisible()
+      expect(await within(dialog).findByText(text)).toBeVisible()
     })
 
     it('clears the session on a 401', async () => {

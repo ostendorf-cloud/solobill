@@ -1,9 +1,8 @@
 <script setup lang="ts">
 // AssetsView lists the asset register (GET /api/v1/assets): acquisition date,
-// cost and method as the server returns them. The list route has no current
-// book value, and the browser derives none: the schedule of an asset shows
-// the book value of every year. The owner creates an asset from an expense
-// with the asset flag; every role reads.
+// cost, method, current book value and state as the server returns them. The
+// browser computes no amount and no edit rule. The owner creates an asset from
+// an expense with the asset flag; every role reads.
 import {
   GovueBadge,
   GovueButton,
@@ -18,7 +17,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import { apiClient } from '../api'
-import type { Asset } from '../assets'
+import { bookValueNote, type Asset } from '../assets'
 import AssetFormDialog from '../components/AssetFormDialog.vue'
 import UnverifiedNote from '../components/UnverifiedNote.vue'
 import { formatCents } from '../money'
@@ -87,7 +86,6 @@ function openAsset(a: Asset): void {
 <template>
   <GovuePage width="shell" :title="t('assets.title')" :lead="t('assets.lead')">
     <UnverifiedNote />
-    <p class="text-text-muted">{{ t('assets.bookValueMissing') }}</p>
 
     <div v-if="isOwner">
       <GovueButton variant="primary" @click="formOpen = true">{{ t('assets.create') }}</GovueButton>
@@ -127,6 +125,9 @@ function openAsset(a: Asset): void {
               {{ t('assets.columns.cost') }}
             </th>
             <th scope="col" class="px-3 py-2 font-medium">{{ t('assets.columns.method') }}</th>
+            <th scope="col" class="px-3 py-2 text-right font-medium">
+              {{ t('assets.columns.bookValue') }}
+            </th>
             <th scope="col" class="px-3 py-2 font-medium">{{ t('assets.columns.state') }}</th>
             <th scope="col" class="px-3 py-2 font-medium">{{ t('assets.columns.actions') }}</th>
           </tr>
@@ -137,10 +138,19 @@ function openAsset(a: Asset): void {
             <td class="px-3 py-2">{{ a.acquired_on }}</td>
             <td class="px-3 py-2 text-right">{{ formatCents(a.cost_basis_cents, locale) }}</td>
             <td class="px-3 py-2">{{ t(`assets.method.${a.method}`) }}</td>
+            <td class="px-3 py-2 text-right">
+              <div>{{ formatCents(a.book_value_cents, locale) }}</div>
+              <div class="text-sm text-text-muted">{{ bookValueNote(a, t) }}</div>
+            </td>
             <td class="px-3 py-2">
-              <GovueBadge :kind="a.disposed_on ? 'neutral' : 'success'">
-                {{ a.disposed_on ? t('assets.state.disposed') : t('assets.state.active') }}
-              </GovueBadge>
+              <div class="flex flex-wrap gap-1">
+                <GovueBadge :kind="a.disposed_on ? 'neutral' : 'success'">
+                  {{ a.disposed_on ? t('assets.state.disposed') : t('assets.state.active') }}
+                </GovueBadge>
+                <GovueBadge v-if="a.editable" kind="neutral">
+                  {{ t('assets.state.editable') }}
+                </GovueBadge>
+              </div>
             </td>
             <td class="px-3 py-2">
               <GovueButton

@@ -13,12 +13,12 @@
   "openFor": "{name} öffnen",
   "back": "Zurück zu den Anlagegütern",
   "unverifiedNote": "Die Grenzen für geringwertige Wirtschaftsgüter (800 EUR), den Sammelposten (250 bis 1.000 EUR) und den Sofortabzug (250 EUR) werden bei Kleinunternehmern auf den Bruttopreis angewendet. Diese Auslegung ist nicht geprüft. Klären Sie sie mit Ihrer Steuerberatung.",
-  "bookValueMissing": "Die Liste zeigt keinen aktuellen Buchwert. Der Plan eines Anlageguts zeigt den Buchwert jedes Jahres.",
   "columns": {
     "name": "Name",
     "acquiredOn": "Angeschafft am",
     "cost": "Kosten",
     "method": "Methode",
+    "bookValue": "Aktueller Buchwert",
     "state": "Status",
     "actions": "Aktionen",
     "year": "Jahr",
@@ -44,7 +44,17 @@
   },
   "state": {
     "active": "Im Einsatz",
-    "disposed": "Abgegangen"
+    "disposed": "Abgegangen",
+    "editable": "Bearbeitbar"
+  },
+  "bookValue": {
+    "atEndOf": "zum 31. Dezember {year}",
+    "beforeDepreciation": "vor jeder Abschreibung"
+  },
+  "conflict": {
+    "disposed": "Das Anlagegut ist abgegangen und kann nicht mehr bearbeitet werden.",
+    "yearEnded": "Das erste Jahr des Plans ist abgelaufen, oder das neue Datum liegt in einem abgelaufenen Jahr. Erfassen Sie für eine spätere Änderung einen Abgang.",
+    "other": "Das Anlagegut wurde zwischenzeitlich geändert. Schließen Sie den Dialog und laden Sie es neu."
   },
   "detail": {
     "loadError": "Das Anlagegut konnte nicht geladen werden.",
@@ -91,7 +101,6 @@
     "cancel": "Abbrechen",
     "saved": "Das Anlagegut ist gespeichert.",
     "saveError": "Das Anlagegut konnte nicht gespeichert werden. Prüfen Sie die markierten Felder.",
-    "conflictEdit": "Das Anlagegut kann nicht mehr bearbeitet werden, oder das neue Datum liegt in einem abgelaufenen Jahr. Erfassen Sie für eine spätere Änderung einen Abgang.",
     "expenseTaken": "Für diese Ausgabe gibt es schon ein Anlagegut."
   },
   "disposal": {
@@ -103,7 +112,9 @@
     "confirm": "Abgang erfassen",
     "cancel": "Abbrechen",
     "done": "Der Abgang ist erfasst.",
-    "conflict": "Der Abgang wurde abgelehnt: Das Anlagegut ist schon abgegangen oder das Datum liegt in einem abgelaufenen Jahr.",
+    "conflict": "Der Abgang wurde abgelehnt: Das Anlagegut wurde zwischenzeitlich geändert. Laden Sie es neu.",
+    "conflictDisposed": "Der Abgang wurde abgelehnt: Das Anlagegut ist schon abgegangen.",
+    "conflictYearEnded": "Der Abgang wurde abgelehnt: Das Datum liegt in einem abgelaufenen Jahr.",
     "error": "Der Abgang konnte nicht erfasst werden. Prüfen Sie das markierte Feld."
   },
   "reasons": {
