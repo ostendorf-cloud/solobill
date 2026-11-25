@@ -764,6 +764,7 @@ An asset JSON:
   "imported": false,
   "book_value_cents": 108261,
   "book_value_year": 2026,
+  "disposal_rest_cents": null,
   "editable": false,
   "created_at": "2026-11-20T10:00:00Z",
   "updated_at": "2026-11-20T10:00:00Z"
@@ -773,8 +774,12 @@ An asset JSON:
 - `method` is `linear`, `gwg`, `sammelposten` or `immediate`. No degressive method.
 - `group` is `intangible`, `office_equipment` or `other_movable`.
 - `useful_life_months` is required for `linear` and refused otherwise.
-- `book_value_cents`, `book_value_year` and `editable` are derived on every answer and never
-  stored. A request that sends them is refused. The example shows them on 1 June 2027.
+- `book_value_cents`, `book_value_year`, `disposal_rest_cents` and `editable` are derived on
+  every answer and never stored. A request that sends them is refused. The example shows them
+  on 1 June 2027.
+- A stored asset whose figures `internal/afa` refuses is still answered, in the list too. Its
+  `book_value_cents`, `book_value_year` and `disposal_rest_cents` are `null` and `editable` is
+  `false`. The server logs its id.
 
 The current book value follows this rule:
 
@@ -789,8 +794,16 @@ The current book value follows this rule:
   and for an imported asset whose schedule is empty.
 - After the schedule's last year the value stays at that year's closing value, 0 for a fully
   depreciated asset, a GWG or a dissolved Sammelposten.
-- A disposal does not set the value to 0. It follows the schedule: a linear asset keeps the rest
-  as the closing value of the disposal year, a GWG and a Sammelposten are not changed.
+- A disposal of a `linear`, `gwg` or `immediate` asset takes it out of the register. From the
+  disposal year on, `book_value_cents` is 0 and `book_value_year` is the disposal year, also
+  while that year is still open.
+- `disposal_rest_cents` is the book value left at the end of the disposal year: the schedule's
+  closing value of that year, 0 for a GWG or an immediate expense. It is `null` for an asset
+  that is not disposed and for a Sammelposten.
+- The rest is read as an expense of the disposal year (section 4 Abs. 3 Satz 4 EStG). Not
+  verified: this reading needs the owner's Steuerberater.
+- A Sammelposten is not reduced by a disposal (section 6 Abs. 2a Satz 3 EStG). Its value keeps
+  following the schedule.
 - The server computes the value from the schedule of `GET /api/v1/assets/{id}/schedule`. The
   client shows it and computes no amount.
 
