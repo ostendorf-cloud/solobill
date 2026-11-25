@@ -72,7 +72,7 @@ func withPayloadChecker(t *testing.T) {
 // every payload in CheckPayload and renders nothing.
 type checkingRenderer struct{}
 
-func (checkingRenderer) Render(context.Context, []byte, bool) ([]byte, error) {
+func (checkingRenderer) RenderWithLogo(context.Context, []byte, bool, []byte) ([]byte, error) {
 	return nil, errors.New("checkingRenderer: rendering is not supported")
 }
 

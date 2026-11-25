@@ -12,7 +12,9 @@ import (
 // result actually reached NewHandler.
 type sentinelRenderer struct{}
 
-func (sentinelRenderer) Render(context.Context, []byte, bool) ([]byte, error) { return nil, nil }
+func (sentinelRenderer) RenderWithLogo(context.Context, []byte, bool, []byte) ([]byte, error) {
+	return nil, nil
+}
 
 func init() {
 	repositoryHooks = append(repositoryHooks, func(_ *testing.T, repos *httpapi.Repositories) {

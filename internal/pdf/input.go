@@ -137,6 +137,10 @@ func (e *InvalidPayloadError) Error() string {
 // Unwrap returns the cause, if any.
 func (e *InvalidPayloadError) Unwrap() error { return e.Err }
 
+// FieldDetails returns Details, so the API answers 400 with them
+// without importing this package.
+func (e *InvalidPayloadError) FieldDetails() map[string]string { return e.Details }
+
 // draftExempt are the Validate paths a draft may fail: it has no number
 // yet and is printed with the current template.
 var draftExempt = map[string]bool{

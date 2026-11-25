@@ -830,7 +830,9 @@ func TestALostDraftAnswersConflictWithTheDraftChangedText(t *testing.T) {
 // pointer.
 type nilCheckingRenderer struct{}
 
-func (*nilCheckingRenderer) Render(context.Context, []byte, bool) ([]byte, error) { return nil, nil }
+func (*nilCheckingRenderer) RenderWithLogo(context.Context, []byte, bool, []byte) ([]byte, error) {
+	return nil, nil
+}
 
 func (*nilCheckingRenderer) CheckPayload(context.Context, docpayload.FrozenPayloadV1) (map[string]string, error) {
 	return nil, nil

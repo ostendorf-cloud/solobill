@@ -76,8 +76,10 @@ var logoTemplates = map[string]bool{
 var (
 	// ErrUnknownTemplate is a template version this build does not ship.
 	ErrUnknownTemplate = errors.New("pdf: unknown template version")
-	// ErrUnavailable is a renderer that cannot run: no Typst binary.
-	ErrUnavailable = errors.New("pdf: renderer unavailable")
+	// ErrUnavailable is a renderer that cannot run: no Typst binary. Its
+	// RendererUnavailable method lets the API answer 503 without
+	// importing this package.
+	ErrUnavailable error = unavailableError{}
 	// ErrOutputTooLarge is a PDF larger than Options.MaxOutputBytes.
 	ErrOutputTooLarge = errors.New("pdf: output too large")
 	// ErrCompile is a Typst run that failed. The wrapped message carries
@@ -92,6 +94,14 @@ var (
 	// naming the field. The issuing code refuses the issue on it.
 	ErrLayoutOverflow = errors.New("pdf: text does not fit its cell")
 )
+
+// unavailableError is ErrUnavailable's type.
+type unavailableError struct{}
+
+func (unavailableError) Error() string { return "pdf: renderer unavailable" }
+
+// RendererUnavailable marks the error for httpapi.
+func (unavailableError) RendererUnavailable() bool { return true }
 
 // overflowMessage is the template's overflow assertion in Typst's
 // diagnostics; its group is the field path.
