@@ -19,6 +19,24 @@ describe('routes', () => {
     expect(routes.at(-1)?.path).toBe('/:pathMatch(.*)*')
   })
 
+  // The frontend server (cmd/frontend, govue app mode) answers /assets and
+  // /api itself, with the bundle and a JSON 404, and the Ingress sends /api
+  // to the API. A route under either would never reach the app on a reload.
+  it('keeps every route path off the prefixes the server owns', () => {
+    const owned = ['/assets', '/api']
+    const paths = Object.values(routeModules)
+      .flat()
+      .map((r) => r.path)
+    expect(paths.length).toBeGreaterThan(0)
+    for (const path of paths) {
+      for (const prefix of owned) {
+        expect(path === prefix || path.startsWith(`${prefix}/`), `${path} is under ${prefix}`).toBe(
+          false,
+        )
+      }
+    }
+  })
+
   it('imports every route module file, and only those', () => {
     const files = Object.keys(import.meta.glob('./routes/*.ts'))
       .filter((p) => !p.endsWith('.test.ts'))

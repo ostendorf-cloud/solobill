@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/ostendorf-cloud/govue/account"
@@ -87,7 +86,6 @@ func buildAuthAppWith(t *testing.T, limits httpapi.LoginLimits, withPasskeys, pl
 		RateLimitBurst:   1000,
 		RateLimitPer:     time.Minute,
 		DefaultInviteTTL: time.Hour,
-		DistFS:           fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
 	if err != nil {
 		t.Fatalf("httpapi.NewHandler: %v", err)

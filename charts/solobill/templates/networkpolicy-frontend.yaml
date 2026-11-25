@@ -1,0 +1,59 @@
+{{- if .Values.networkPolicy.enabled -}}
+{{- $np := .Values.networkPolicy -}}
+{{- $fe := .Values.frontend -}}
+{{- $egress := $np.egress | default dict -}}
+{{- $publicPeers := include "solobill.networkPolicy.peers" (($np.ingress).public | default dict) -}}
+{{- $adminPeers := include "solobill.networkPolicy.peers" (($np.ingress).admin | default dict) -}}
+{{/*
+The same guard as the API's in templates/networkpolicy.yaml: equal ports
+would make the public rule, unscoped by default, admit the admin port from
+any source.
+*/}}
+{{- if eq (printf "%v" $fe.service.port) (printf "%v" $fe.adminPort) -}}
+{{ fail (printf "frontend.service.port and frontend.adminPort are both %v: the public ingress rule admits any source on that port by default, so the admin port would be reachable from anywhere regardless of networkPolicy.ingress.admin. Set them to different values." $fe.service.port) }}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "solobill.frontend.fullname" . }}
+  labels:
+    {{- include "solobill.frontend.labels" . | nindent 4 }}
+spec:
+  # The frontend's pods only: their app.kubernetes.io/name differs from the
+  # API's, so neither policy selects the other part.
+  podSelector:
+    matchLabels:
+      {{- include "solobill.frontend.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if $egress.enabled }}
+    - Egress
+    {{- end }}
+  ingress:
+    # The public port, scoped by the same networkPolicy.ingress.public peers
+    # as the API's: the same ingress controller or Gateway reaches both.
+    # Empty, the default, admits any source on this port.
+    - ports:
+        - protocol: TCP
+          port: {{ $fe.service.port }}
+      {{- with $publicPeers }}
+      from:
+        {{- . | nindent 8 }}
+      {{- end }}
+    {{- with $adminPeers }}
+    # The admin port, only from networkPolicy.ingress.admin's peers, the
+    # same rule and the same reasoning as the API's.
+    - ports:
+        - protocol: TCP
+          port: {{ $fe.adminPort }}
+      from:
+        {{- . | nindent 8 }}
+    {{- end }}
+  {{- if $egress.enabled }}
+  # No egress rule at all: the frontend serves its build from memory and
+  # opens no connection, not even DNS. An Egress policyType with an empty
+  # list denies every destination. Replies to the ingress rules above need
+  # no rule, NetworkPolicy applies per connection.
+  egress: []
+  {{- end }}
+{{- end -}}

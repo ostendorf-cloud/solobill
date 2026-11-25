@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/ostendorf-cloud/govue/csrf"
@@ -78,10 +77,6 @@ func buildTestAppClocks(t *testing.T, rateLimitBurst int, now, appNow func() tim
 		t.Fatalf("session.New() error = %v", err)
 	}
 
-	distFS := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")},
-	}
-
 	healthRegistry := health.New()
 	healthRegistry.Add("fixture", 0, func(context.Context) error { return nil })
 
@@ -113,7 +108,6 @@ func buildTestAppClocks(t *testing.T, rateLimitBurst int, now, appNow func() tim
 			CeilingBurst: rateLimitBurst,
 		},
 		DefaultInviteTTL: time.Hour,
-		DistFS:           distFS,
 		Now:              appNow,
 		Repositories:     repos,
 	})
@@ -183,13 +177,8 @@ func sessionCookie(t *testing.T, rec *httptest.ResponseRecorder) *http.Cookie {
 // reach the application's own Ingress-routed listener must get a plain
 // 404 for /metrics, /healthz and /readyz, never the real answer. The 404
 // comes from httpapi.go's own explicit registrations
-// (mux.Handle(path, route(api.NotFoundHandler()))), not from the SPA
-// catch-all: those three paths are registered patterns, so http.ServeMux
-// dispatches to the explicit handler ahead of "/", the same precedence
-// TestSPAFallback's "unknown api route" case relies on for /api/. Without
-// that registration the catch-all would answer instead, with a 200 and
-// the SPA shell, the exact "looks like the endpoint still exists"
-// outcome this split exists to prevent.
+// (mux.Handle(path, route(api.NotFoundHandler()))), which http.ServeMux
+// dispatches to ahead of the "/" catch-all.
 func TestPublicHandlerServesNoAdminEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -210,8 +199,7 @@ func TestPublicHandlerServesNoAdminEndpoint(t *testing.T) {
 // TestPublicHandlerServesNoAdminEndpointForEveryMethodAndSubpath proves the
 // 404 registration is not GET-only and not exact-path-only: a non-GET
 // method and a path nested under one of the three must both still get the
-// explicit 404, never the 200 the SPA catch-all would otherwise answer
-// with for an unregistered pattern.
+// explicit 404.
 func TestPublicHandlerServesNoAdminEndpointForEveryMethodAndSubpath(t *testing.T) {
 	t.Parallel()
 
@@ -312,7 +300,6 @@ func TestReadinessFailsWhenACheckFails(t *testing.T) {
 		RateLimitBurst:   100,
 		RateLimitPer:     time.Minute,
 		DefaultInviteTTL: time.Hour,
-		DistFS:           fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
 	if err != nil {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)
@@ -350,7 +337,6 @@ func TestAdminReadyzReflectsDrain(t *testing.T) {
 		RateLimitBurst:   100,
 		RateLimitPer:     time.Minute,
 		DefaultInviteTTL: time.Hour,
-		DistFS:           fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
 	if err != nil {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)
@@ -406,7 +392,6 @@ func TestSessionStoreFailureIsExposedAsAStaticMessage(t *testing.T) {
 		RateLimitBurst:   100,
 		RateLimitPer:     time.Minute,
 		DefaultInviteTTL: time.Hour,
-		DistFS:           fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
 	if err != nil {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)
@@ -928,32 +913,39 @@ func TestRateLimitedRoutes(t *testing.T) {
 	}
 }
 
-func TestSPAFallback(t *testing.T) {
+// TestUnmatchedPathAnswersJSONNotFound pins that the API serves no page:
+// the frontend image serves the Vue app, and the Ingress sends only /api
+// here. Every path no route matches, under /api/ or not and for every
+// method, answers the JSON 404 every endpoint uses, never HTML and never a
+// 200.
+func TestUnmatchedPathAnswersJSONNotFound(t *testing.T) {
 	t.Parallel()
 
 	app := buildTestApp(t, 100)
 
 	tests := []struct {
-		name        string
-		path        string
-		wantStatus  int
-		wantContent string
+		name   string
+		method string
+		path   string
 	}{
-		{name: "root", path: "/", wantStatus: http.StatusOK, wantContent: "text/html"},
-		{name: "unknown client route", path: "/invoices/42", wantStatus: http.StatusOK, wantContent: "text/html"},
-		{name: "unknown api route", path: "/api/v1/does-not-exist", wantStatus: http.StatusNotFound, wantContent: "application/json"},
+		{name: "root", method: http.MethodGet, path: "/"},
+		{name: "client route", method: http.MethodGet, path: "/documents/42"},
+		{name: "bundle file", method: http.MethodGet, path: "/assets/index.js"},
+		{name: "index file", method: http.MethodGet, path: "/index.html"},
+		{name: "unknown api route", method: http.MethodGet, path: "/api/v1/does-not-exist"},
+		{name: "unknown api route post", method: http.MethodPost, path: "/api/v1/does-not-exist"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			rec := doJSON(t, app.handler, http.MethodGet, tt.path, nil, nil, "")
-			if rec.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			rec := doJSON(t, app.handler, tt.method, tt.path, nil, nil, "")
+			if rec.Code != http.StatusNotFound {
+				t.Errorf("%s %s status = %d, want %d", tt.method, tt.path, rec.Code, http.StatusNotFound)
 			}
-			if got := rec.Header().Get("Content-Type"); !strings.Contains(got, tt.wantContent) {
-				t.Errorf("Content-Type = %q, want containing %q", got, tt.wantContent)
+			if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "application/json") {
+				t.Errorf("%s %s Content-Type = %q, want application/json", tt.method, tt.path, got)
 			}
 		})
 	}

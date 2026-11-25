@@ -1,0 +1,65 @@
+suite: API part, PDF renderer and image
+templates:
+  - templates/deployment.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  migrationJob:
+    databaseUser: solobill_migrator
+tests:
+  - it: runs the API image, not the frontend one
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/ostendorf-cloud/solobill-api:0.1.0
+
+  - it: hands the API the typst binary of its image
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PDF_TYPST_BINARY
+            value: /usr/local/bin/typst
+
+  - it: keeps the root filesystem read only and gives the renderer a writable /tmp
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts
+          value:
+            - name: tmp
+              mountPath: /tmp
+      - equal:
+          path: spec.template.spec.volumes
+          value:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+
+  - it: turns the renderer off with an empty pdf.typstBinary, /tmp stays
+    set:
+      pdf:
+        typstBinary: ""
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PDF_TYPST_BINARY
+          any: true
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 1
+
+  - it: sizes /tmp by pdf.tmpSizeLimit
+    set:
+      pdf:
+        tmpSizeLimit: 1Gi
+    asserts:
+      - equal:
+          path: spec.template.spec.volumes[0].emptyDir.sizeLimit
+          value: 1Gi

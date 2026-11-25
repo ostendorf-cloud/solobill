@@ -1,8 +1,11 @@
 // Package httpapi builds the HTTP server solobill answers requests with:
 // health and metrics endpoints, the local login, logout, "who am I" and
 // invite routes, the OIDC routes when internal/auth's OIDC path is
-// configured, and the SPA fallback that serves the embedded Vue build for
-// everything else.
+// configured, and a JSON 404 for every path no route matches.
+//
+// This server answers the API only. The Vue app is served by the frontend
+// image (cmd/frontend), and the Ingress routes /api to this server and every
+// other path to the frontend, so the browser sees one origin.
 //
 // Every dependency is constructed by cmd/solobill's main and handed to
 // NewHandler through Deps; this package builds no database connection, no
@@ -84,7 +87,6 @@ package httpapi
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -129,7 +131,9 @@ const (
 // legacyOIDCPrefix is the subtree the OIDC routes lived under before they
 // moved below /api. It answers a JSON 404 whether OIDC is enabled or not,
 // so an identity provider still configured with the old redirect URL
-// fails loudly instead of landing on the SPA shell with a 200.
+// fails loudly instead of landing on the app's index.html with a 200.
+// Behind the Ingress the path reaches the frontend, which reserves the same
+// prefix (cmd/frontend), so it answers the JSON 404 there too.
 const legacyOIDCPrefix = "/auth/oidc"
 
 // Deps is everything NewHandler needs, constructed by cmd/solobill's main:
@@ -183,11 +187,6 @@ type Deps struct {
 	// redeemable when a create-invite request does not specify its own
 	// ttl field (see createInviteRequest).
 	DefaultInviteTTL time.Duration
-
-	// DistFS is the built SPA (cmd/solobill's embedded dist/, already
-	// stripped to its own root via fs.Sub), served as the fallback for any
-	// unmatched GET that is not under /api/.
-	DistFS fs.FS
 
 	// Now is the clock the access log timestamps with, and the clock of
 	// the asset routes' date rules. Nil is time.Now; tests replace it.
@@ -247,9 +246,6 @@ func NewHandler(d Deps) (Handlers, error) {
 	if d.HealthRegistry == nil {
 		fail(errors.New("httpapi: health registry is required"))
 	}
-	if d.DistFS == nil {
-		fail(errors.New("httpapi: dist filesystem is required"))
-	}
 	if (d.OIDCHandlers == nil) != (d.LoginCodec == nil) {
 		fail(errors.New("httpapi: oidc handlers and login codec must both be set or both be nil"))
 	}
@@ -274,8 +270,8 @@ func NewHandler(d Deps) (Handlers, error) {
 		}
 	}
 
-	// A same-origin deployment, the default for this milestone (the SPA
-	// is served by this same process, see Deps.DistFS), needs no CORS
+	// A same-origin deployment, the default (the Ingress routes /api here
+	// and every other path to the frontend on the same host), needs no CORS
 	// middleware at all; middleware.NewCORS itself refuses to be built
 	// with zero origins. See the package doc.
 	var cors *middleware.CORS
@@ -307,12 +303,6 @@ func NewHandler(d Deps) (Handlers, error) {
 	metricsRegistry := metrics.NewRegistry()
 	httpMetrics := metrics.NewHTTP(metricsRegistry)
 	metricsHandler := metrics.Handler(metricsRegistry)
-
-	var spaHandler http.Handler
-	if d.DistFS != nil {
-		spaHandler, err = newSPAHandler(d.DistFS)
-		fail(err)
-	}
 
 	if err := errors.Join(problems...); err != nil {
 		return Handlers{}, fmt.Errorf("httpapi: build handler: %w", err)
@@ -369,25 +359,22 @@ func NewHandler(d Deps) (Handlers, error) {
 		register(mux, route, a)
 	}
 
-	// /metrics, /healthz and /readyz are deliberately registered here as
-	// a 404, not left to fall through to the SPA catch-all below: Admin
-	// serves the real answers instead (see the package doc's "Two
-	// handlers, two listeners" section), and the SPA fallback answers
-	// every unrecognised path outside /api/ with its own shell and a 200,
-	// which would otherwise hide the fact that nothing real is behind
-	// these three paths on this listener. Registered with no method, so
-	// every method gets the 404, not only GET, and as both the exact path
-	// and its trailing-slash subtree, so a path under it (e.g.
-	// /metrics/anything) cannot fall through to the catch-all either.
+	// /metrics, /healthz and /readyz are registered here as an explicit
+	// 404 with their own pattern: Admin serves the real answers (see the
+	// package doc's "Two handlers, two listeners" section), and the
+	// metrics of this listener name the path that was probed instead of
+	// the catch-all. Registered with no method, so every method gets the
+	// 404, and as both the exact path and its trailing-slash subtree.
 	for _, path := range [...]string{"/metrics", "/healthz", "/readyz"} {
 		mux.Handle(path, route(api.NotFoundHandler()))
 		mux.Handle(path+"/", route(api.NotFoundHandler()))
 	}
 
-	// The SPA fallback. It answers an unmatched /api/ path with the same
-	// JSON error shape every other endpoint uses, and everything else
-	// with the built Vue app, for client-side routing to take over.
-	mux.Handle("/", route(spaHandler))
+	// The catch-all. This server serves no page: the frontend image
+	// serves the Vue app, and the Ingress sends only /api here. Every path
+	// no route matches, under /api/ or not, answers the JSON error shape
+	// every other endpoint uses, never HTML.
+	mux.Handle("/", route(api.NotFoundHandler()))
 
 	// The outer chain, outermost first: see the package doc for why each
 	// position is forced. RequestID and the security middleware both call

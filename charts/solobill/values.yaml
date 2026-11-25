@@ -7,10 +7,21 @@
 # then.
 requestLimits: {}
 
+# solobill runs as two parts, each with its own Deployment, Service,
+# ServiceAccount and NetworkPolicy: the API (cmd/solobill, the image
+# solobill-api), configured by the top level values below as before, and the
+# frontend (cmd/frontend with the Vue build, the image solobill-frontend),
+# configured by the frontend block further down. The Ingress or HTTPRoute
+# sends /api to the API and every other path to the frontend, on one host,
+# so the browser sees one origin and the session cookie and the CSRF check
+# need no CORS. /healthz, /readyz and /metrics live on each part's admin
+# port, which no route ever names.
+
 replicaCount: 1
 
 image:
-  repository: ghcr.io/ostendorf-cloud/solobill
+  # The API image. publish.yaml pushes it, internal/envsync pins the name.
+  repository: ghcr.io/ostendorf-cloud/solobill-api
   # Defaults to .Chart.AppVersion when left empty.
   tag: ""
   pullPolicy: IfNotPresent
@@ -39,11 +50,12 @@ podSecurityContext:
     type: RuntimeDefault
 
 # readOnlyRootFilesystem is safe here: cmd/solobill keeps its session store in
-# memory (session.NewMemoryStore) and writes nothing to disk at runtime, the
-# database connection and any OIDC/TLS calls are all over the network, and the
-# distroless base image needs no writable path of its own either. Verified by
-# reading cmd/solobill/main.go; there is no local file write in the request
-# path this chart's Deployment exercises.
+# memory (session.NewMemoryStore), the database connection and any OIDC/TLS
+# calls are all over the network, and the distroless base image needs no
+# writable path of its own either. The one local write is the PDF renderer's
+# per render directory under os.TempDir, which the API Deployment mounts as
+# an emptyDir at /tmp (pdf.tmpSizeLimit below). The frontend writes nothing
+# at all. Both parts use these two contexts.
 securityContext:
   readOnlyRootFilesystem: true
   allowPrivilegeEscalation: false
@@ -215,15 +227,17 @@ networkPolicy:
       podSelector: {}
       ipBlock: {}
 
+# The routing is fixed and the same on every host: /api (pathType Prefix,
+# which matches /api and every path under it, never /apiary) goes to the API
+# Service on service.port, every other path to the frontend Service on
+# frontend.service.port. A host carries no paths of its own: the app calls
+# its API under /api on its own host, so any other split breaks it.
 ingress:
   enabled: false
   className: ""
   annotations: {}
   hosts:
     - host: solobill.example.com
-      paths:
-        - path: /
-          pathType: Prefix
   tls: []
 
 # Gateway API alternative to ingress above. Mutually exclusive with it (see
@@ -245,11 +259,11 @@ httpRoute:
   # kubernetes-conventions.
   hostnames: []
   annotations: {}
-  # Routing is fixed to this chart's own Service on service.port: no
-  # values-driven way to add a second backend or a per-path rule, the same
-  # single-backend shape ingress.hosts already assumes. An HTTPRoute rule
-  # with no "matches" defaults to a "/" prefix match per the Gateway API
-  # spec, the same default an Ingress with one "/" path rule gives.
+  # Routing is fixed, the same split as ingress above: a PathPrefix /api
+  # rule to the API Service on service.port, and a rule with no "matches",
+  # which the Gateway API spec defaults to a "/" prefix match, to the
+  # frontend Service on frontend.service.port. The longest matching prefix
+  # wins, so /api never reaches the frontend.
   parentRefs:
     # Name of the Gateway this HTTPRoute attaches to. Required when
     # httpRoute.enabled is true.
@@ -280,6 +294,18 @@ resources:
     # place as a safety net against a genuine leak.
     memory: 256Mi
 
+# The PDF renderer of the API (internal/pdf, docs/adr/0001-typst-pdf-engine.md).
+pdf:
+  # PDF_TYPST_BINARY: the typst binary the api image installs. Empty turns
+  # the renderer off: issuing a document and the PDF download then answer
+  # 503. internal/envsync fails when this differs from the Dockerfile.
+  typstBinary: /usr/local/bin/typst
+  # The root filesystem is read only, so the API Deployment mounts an
+  # emptyDir at /tmp, os.TempDir, where the renderer writes one directory
+  # per render and removes it afterwards. The size bounds what a burst of
+  # concurrent renders may leave there.
+  tmpSizeLimit: 256Mi
+
 # Disabled by default: db/migrations is applied by this chart's own
 # migrationJob (a pre-install/pre-upgrade hook, see below) before this
 # Deployment's pods are ever created or updated, so cmd/solobill's own
@@ -309,6 +335,67 @@ readinessProbe:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# The frontend part: cmd/frontend, govue's frontend in app mode over the
+# Vue build. It answers index.html for every route of the app, the bundle
+# under /assets, and a JSON 404 under /api. It holds no secret, keeps no
+# state, opens no outbound connection and writes nothing, so it scales
+# freely and its NetworkPolicy allows no egress at all. podSecurityContext,
+# securityContext, imagePullSecrets and config.trustedProxies above apply to
+# it as well.
+frontend:
+  # Stateless, unlike the API: more than one replica is fine.
+  replicaCount: 1
+  image:
+    # publish.yaml pushes it, internal/envsync pins the name.
+    repository: ghcr.io/ostendorf-cloud/solobill-frontend
+    # Defaults to .Chart.AppVersion when left empty: both images share one
+    # release tag.
+    tag: ""
+    pullPolicy: IfNotPresent
+  serviceAccount:
+    # No RBAC: the frontend makes no Kubernetes API calls.
+    create: true
+    annotations: {}
+    name: ""
+  podAnnotations: {}
+  podLabels: {}
+  service:
+    type: ClusterIP
+    # The container port and LISTEN_ADDR together, so the two cannot drift.
+    port: 8080
+  # The admin port: /healthz, /readyz and /metrics, never routed. The
+  # container port and ADMIN_LISTEN_ADDR together. Must differ from
+  # service.port above, templates/networkpolicy-frontend.yaml fails the
+  # render otherwise.
+  adminPort: 8081
+  logLevel: "info"
+  # Per client token bucket over every request. One load of the app fetches
+  # index.html and a few dozen bundle files, so the burst stays well above
+  # one load. Keyed on the client address, so it needs config.trustedProxies
+  # behind an ingress or a gateway.
+  rateLimitBurst: 300
+  rateLimitPer: "1m"
+  resources:
+    requests:
+      # Static files from memory: the whole build is read once at startup.
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      # No CPU limit, for the same reason as the API's above.
+      memory: 128Mi
+  # Both probes target adminPort, like the API's.
+  livenessProbe:
+    initialDelaySeconds: 2
+    periodSeconds: 10
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 2
+    periodSeconds: 10
+    failureThreshold: 3
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 # Plain, non-secret configuration, mapped 1:1 from internal/config.Config
 # (see that package's own doc comment for the authoritative list). See
@@ -388,13 +475,14 @@ config:
   # it. Never set this true behind a real ingress.
   sessionAllowPlainHttp: false
 
-  # CORS allow-list. Empty, the default, is the common case where
-  # cmd/solobill serves the built SPA itself (same-origin): no CORS
-  # middleware is built at all. Set this only for a frontend served from
-  # a different origin than this API.
+  # CORS allow-list. Empty, the default, is the common case where the
+  # frontend part and the API share one host through the Ingress or
+  # HTTPRoute (same origin): no CORS middleware is built at all. Set this
+  # only for a frontend served from a different origin than this API.
   allowedOrigins: []
   # CIDRs whose X-Forwarded-For entry is trusted as the real client
   # address, for example the cluster's own ingress controller pod CIDR.
+  # Read by both parts, the API and the frontend.
   # Empty, the default, trusts only the direct TCP peer (this Service),
   # which is correct with no ingress or proxy in front of the pod.
   trustedProxies: []

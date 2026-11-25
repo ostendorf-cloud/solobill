@@ -17,17 +17,16 @@ tasks:
     cmds:
       - golangci-lint config verify
 
-  # cmd/solobill embeds web/'s build output, so its go:embed directive fails
-  # on an empty dist/ unless the frontend exists first.
+  # No Go package embeds the frontend build, so no Go target depends on
+  # web:build. Only the frontend image needs web/dist, and its Dockerfile
+  # stage builds it itself.
   lint:vet:
     desc: Go vet
-    deps: [web:build]
     cmds:
       - go vet ./...
 
   lint:golangci:
     desc: golangci-lint run
-    deps: [web:build]
     cmds:
       - golangci-lint run ./...
 
@@ -114,23 +113,38 @@ tasks:
     cmds:
       - go test -tags=integration -race -count=1 ./internal/...
 
+  # Needs Docker or Podman with compose and a .env, so it is never part of
+  # check. internal/httpapi's TestSessionAndCSRFThroughTheFrontend proves
+  # the same contract in process on every test:go run.
+  test:e2e:
+    desc: Login, GET /api/v1/me and a CSRF POST through the frontend of the compose stack
+    cmds:
+      - scripts/e2e-compose.sh
+
   build:
-    desc: Compile the solobill binary
-    deps: [web:build]
+    desc: Compile the API binary (bin/solobill) and the frontend binary (bin/frontend)
     cmds:
       - go build -o bin/solobill ./cmd/solobill
+      - go build -o bin/frontend ./cmd/frontend
 
+  # One Dockerfile, two final stages: "api" is solobill-api, "frontend" is
+  # solobill-frontend. IMAGE picks one, unset builds both, one after the
+  # other. PLATFORM, for example linux/arm64, defaults to the host platform.
   build:image:
-    desc: Build the container image, without pushing it anywhere (PLATFORM, for example linux/arm64, defaults to the host platform)
+    desc: Build the container images without pushing them (IMAGE=api or IMAGE=frontend, default both, PLATFORM optional)
+    vars:
+      IMAGES: '{{.IMAGE | default "api frontend"}}'
     cmds:
-      - docker build {{if .PLATFORM}}--platform {{.PLATFORM}} {{end}}.
+      - for: {var: IMAGES, split: " "}
+        cmd: >-
+          docker build --target {{.ITEM}} {{if .PLATFORM}}--platform {{.PLATFORM}} {{end}}
+          -t solobill-{{.ITEM}}:dev .
 
   # -short skips the slow renderer tests of internal/pdf (fuzz runs, the
   # worst case renders, the differential and boundary tests); test:pdf
   # runs them. No other package checks testing.Short().
   test:go:
     desc: Go test, without the slow renderer tests
-    deps: [web:build]
     cmds:
       - go test -race -count=1 -short ./...
 
@@ -184,7 +198,7 @@ tasks:
       - pnpm run test
 
   web:build:
-    desc: Build the SPA bundle into cmd/solobill/dist
+    desc: Build the SPA bundle into web/dist
     dir: web
     deps: [web:deps]
     cmds:
@@ -231,7 +245,7 @@ tasks:
   # deliberately not part of check, which runs with no network and no port
   # binding at all.
   dev:up:
-    desc: Build and start solobill, Postgres and the migrate step via Docker Compose
+    desc: Build and start the frontend, the API, Postgres and the migrate step via Docker Compose
     cmds:
       - docker compose up --build -d
 

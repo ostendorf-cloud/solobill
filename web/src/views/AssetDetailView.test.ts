@@ -130,12 +130,12 @@ async function renderView(id = 'a-1', locale: 'en' | 'de' = 'en') {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/assets', name: 'assets', component: { template: '<div />' } },
-      { path: '/assets/:id', name: 'asset-detail', component: AssetDetailView },
+      { path: '/fixed-assets', name: 'assets', component: { template: '<div />' } },
+      { path: '/fixed-assets/:id', name: 'asset-detail', component: AssetDetailView },
       { path: '/login', name: 'login', component: { template: '<div />' } },
     ],
   })
-  await router.push(`/assets/${id}`)
+  await router.push(`/fixed-assets/${id}`)
   await router.isReady()
   const i18n = createI18n({ legacy: false, locale, messages: { en, de } })
   const govueI18n = createGovueI18n({ i18n })
@@ -281,7 +281,7 @@ describe('AssetDetailView', () => {
       })
       const { router } = await renderView('a-1')
       await vi.waitFor(() => expect(pending['/assets/a-1']).toBeDefined())
-      await router.push('/assets/a-2')
+      await router.push('/fixed-assets/a-2')
       await vi.waitFor(() => expect(pending['/assets/a-2/schedule']).toBeDefined())
 
       pending['/assets/a-2']?.(oldDesk)

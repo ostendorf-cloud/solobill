@@ -78,7 +78,6 @@ oidc_valid="${oidc_valid},config.oidc.defaultTenantSlug=acme"
 # required parentRefs fields set and config.trustedProxies set as well.
 ingress_valid="config.trustedProxies[0]=10.0.0.0/8,ingress.enabled=true,ingress.className=nginx"
 ingress_valid="${ingress_valid},ingress.hosts[0].host=solobill.example.org"
-ingress_valid="${ingress_valid},ingress.hosts[0].paths[0].path=/,ingress.hosts[0].paths[0].pathType=Prefix"
 httproute_valid="config.trustedProxies[0]=10.0.0.0/8,httpRoute.enabled=true,httpRoute.hostnames[0]=solobill.example.org"
 httproute_valid="${httproute_valid},httpRoute.parentRefs.name=shared-gateway,httpRoute.parentRefs.namespace=gateway-system"
 
@@ -195,6 +194,7 @@ if [ "$mode" = "lint" ]; then
     "objectStore.endpoint names no scheme"
     "config.oidc.issuerUrl holds a second colon in its host"
     "config.databaseUrl is scheme-relative"
+    "frontend.service.port equals frontend.adminPort"
   )
 
   # The DEL character (U+007F), set through printf: bash's $'\x7f' next to a quoted string
@@ -240,6 +240,7 @@ if [ "$mode" = "lint" ]; then
     "${baseline},objectStore.endpoint=s3.example.svc,objectStore.bucket=solobill"
     "${baseline},config.oidc.issuerUrl=https://u:s3cr3tTOKEN@::1/realms/solobill"
     "existingSecret.name=solobill-secrets,config.databaseUrl=//u:s3cr3tTOKEN@postgres.example.svc:abc/solobill,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
+    "${baseline},frontend.adminPort=8080"
   )
 
   # The distinctive lead sentence of each guard's own fail message (see
@@ -288,6 +289,7 @@ if [ "$mode" = "lint" ]; then
     "objectStore.endpoint names no scheme this chart knows a port for"
     "config.oidc.issuerUrl has a non-numeric port in its host part"
     "config.databaseUrl is not a valid URL"
+    "frontend.service.port and frontend.adminPort are both"
   )
 
   for i in "${!guard_names[@]}"; do

@@ -17,9 +17,6 @@ set:
     className: nginx
     hosts:
       - host: solobill.example.org
-        paths:
-          - path: /
-            pathType: Prefix
 tests:
   - it: fails the render when ingress is enabled and config.trustedProxies is left empty
     template: templates/deployment.yaml
@@ -67,21 +64,46 @@ tests:
           path: spec.rules[0].host
           value: solobill.example.org
 
-  - it: points the backend at the public Service port, not the admin one, even when both are set to non-default values
+  - it: routes /api to the API and everything else to the frontend, and nothing more
+    template: templates/ingress.yaml
+    asserts:
+      - equal:
+          path: spec.rules[0].http.paths
+          value:
+            - path: /api
+              pathType: Prefix
+              backend:
+                service:
+                  name: RELEASE-NAME-solobill
+                  port:
+                    number: 8080
+            - path: /
+              pathType: Prefix
+              backend:
+                service:
+                  name: RELEASE-NAME-solobill-frontend
+                  port:
+                    number: 8080
+
+  - it: points each path at the public port of its Service, never an admin port, even with non default ports
     template: templates/ingress.yaml
     set:
       service:
         port: 9090
       adminPort: 9091
+      frontend:
+        service:
+          port: 7070
+        adminPort: 7071
     asserts:
       - equal:
           path: spec.rules[0].http.paths[0].backend.service.port.number
           value: 9090
       - equal:
-          path: spec.rules[0].http.paths[0].pathType
-          value: Prefix
+          path: spec.rules[0].http.paths[1].backend.service.port.number
+          value: 7070
 
-  - it: never routes to the admin port, regardless of how many hosts or paths are configured
+  - it: gives every host the same two paths, so no host routes /api elsewhere or reaches an admin port
     template: templates/ingress.yaml
     set:
       ingress:
@@ -89,22 +111,42 @@ tests:
         className: nginx
         hosts:
           - host: solobill.example.org
-            paths:
-              - path: /
-                pathType: Prefix
-          - host: solobill-admin.example.org
+          - host: app.example.org
+    asserts:
+      - equal:
+          path: spec.rules[1].host
+          value: app.example.org
+      - equal:
+          path: spec.rules[1].http.paths[0].path
+          value: /api
+      - equal:
+          path: spec.rules[1].http.paths[0].backend.service.name
+          value: RELEASE-NAME-solobill
+      - equal:
+          path: spec.rules[1].http.paths[1].path
+          value: /
+      - equal:
+          path: spec.rules[1].http.paths[1].backend.service.name
+          value: RELEASE-NAME-solobill-frontend
+      - notContains:
+          path: spec.rules[1].http.paths
+          content:
+            path: /healthz
+          any: true
+      - notContains:
+          path: spec.rules[1].http.paths
+          content:
+            path: /metrics
+          any: true
+
+  - it: refuses a host that still carries its own paths, the routing is fixed
+    template: templates/ingress.yaml
+    set:
+      ingress:
+        hosts:
+          - host: solobill.example.org
             paths:
               - path: /metrics
                 pathType: Exact
-              - path: /healthz
-                pathType: Exact
     asserts:
-      - equal:
-          path: spec.rules[0].http.paths[0].backend.service.port.number
-          value: 8080
-      - equal:
-          path: spec.rules[1].http.paths[0].backend.service.port.number
-          value: 8080
-      - equal:
-          path: spec.rules[1].http.paths[1].backend.service.port.number
-          value: 8080
+      - failedTemplate: {}

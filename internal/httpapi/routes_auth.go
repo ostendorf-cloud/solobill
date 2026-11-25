@@ -70,7 +70,7 @@ func registerAuth(mux *http.ServeMux, route routeFunc, a *app) {
 
 	// The old OIDC paths, see legacyOIDCPrefix. Registered with no method
 	// and as both the bare prefix and its subtree, so no method and no
-	// path below it falls through to the SPA catch-all.
+	// path below it reaches another handler.
 	mux.Handle(legacyOIDCPrefix, route(api.NotFoundHandler()))
 	mux.Handle(legacyOIDCPrefix+"/", route(api.NotFoundHandler()))
 

@@ -31,15 +31,71 @@ Create chart name and version as used by the chart label.
 {{- end -}}
 
 {{/*
-Common labels.
+Common labels of the API part. The API keeps the chart's plain name and
+fullname, and the selector it had as the single image, so an upgrade never
+has to replace its Deployment's immutable selector. The frontend part has
+its own name below.
 */}}
 {{- define "solobill.labels" -}}
 helm.sh/chart: {{ include "solobill.chart" . }}
 {{ include "solobill.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-app.kubernetes.io/component: server
+app.kubernetes.io/component: api
 app.kubernetes.io/part-of: {{ include "solobill.name" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Labels of an object that belongs to no single part: the Ingress and the
+HTTPRoute, which route to the API and the frontend alike.
+*/}}
+{{- define "solobill.release.labels" -}}
+helm.sh/chart: {{ include "solobill.chart" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/part-of: {{ include "solobill.name" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Frontend fullname: the release's fullname with "-frontend" appended.
+*/}}
+{{- define "solobill.frontend.fullname" -}}
+{{- printf "%s-frontend" (include "solobill.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Frontend selector labels. Its own app.kubernetes.io/name: the API's selector
+is name and instance, so a frontend pod sharing the name would be selected
+by the API Service and the API NetworkPolicy too. No version, for the same
+reason as solobill.selectorLabels.
+*/}}
+{{- define "solobill.frontend.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "solobill.name" . }}-frontend
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{/*
+Frontend common labels.
+*/}}
+{{- define "solobill.frontend.labels" -}}
+helm.sh/chart: {{ include "solobill.chart" . }}
+{{ include "solobill.frontend.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/component: frontend
+app.kubernetes.io/part-of: {{ include "solobill.name" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Frontend ServiceAccount name.
+*/}}
+{{- define "solobill.frontend.serviceAccountName" -}}
+{{- if .Values.frontend.serviceAccount.create -}}
+{{- default (include "solobill.frontend.fullname" .) .Values.frontend.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.frontend.serviceAccount.name -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

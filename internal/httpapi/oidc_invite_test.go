@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/ostendorf-cloud/govue/health"
@@ -71,10 +70,6 @@ func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
 		t.Fatalf("oidc.NewHandlers() error = %v", err)
 	}
 
-	distFS := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")},
-	}
-
 	healthRegistry := health.New()
 	healthRegistry.Add("fixture", 0, func(context.Context) error { return nil })
 
@@ -92,7 +87,6 @@ func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
 		RateLimitBurst:   100,
 		RateLimitPer:     time.Minute,
 		DefaultInviteTTL: time.Hour,
-		DistFS:           distFS,
 	})
 	if err != nil {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)

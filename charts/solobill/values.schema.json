@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "solobill",
   "type": "object",
-  "required": ["image", "service", "adminPort", "config", "existingSecret"],
+  "required": ["image", "service", "adminPort", "config", "existingSecret", "pdf", "frontend"],
   "properties": {
     "requestLimits": {
       "type": "object",
@@ -96,7 +96,18 @@
         "enabled": { "type": "boolean" },
         "className": { "type": "string" },
         "annotations": { "type": "object" },
-        "hosts": { "type": "array" },
+        "hosts": {
+          "type": "array",
+          "description": "The hosts of the Ingress. The routing is fixed on every host, /api to the API and every other path to the frontend, so a host carries no paths of its own.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host"],
+            "properties": {
+              "host": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
         "tls": { "type": "array" }
       }
     },
@@ -225,6 +236,100 @@
       }
     },
     "resources": { "type": "object" },
+    "pdf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["typstBinary", "tmpSizeLimit"],
+      "description": "The PDF renderer of the API part.",
+      "properties": {
+        "typstBinary": {
+          "type": "string",
+          "description": "PDF_TYPST_BINARY, the typst binary of the api image. Empty turns the renderer off: issuing and the PDF download answer 503."
+        },
+        "tmpSizeLimit": {
+          "type": "string",
+          "minLength": 1,
+          "description": "sizeLimit of the emptyDir mounted at /tmp in the API container, where the renderer writes one directory per render. The root filesystem is read only."
+        }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicaCount", "image", "service", "adminPort", "logLevel", "rateLimitBurst", "rateLimitPer"],
+      "description": "The frontend part: cmd/frontend serving the Vue build. Stateless, so more than one replica is fine. podSecurityContext, securityContext, imagePullSecrets and config.trustedProxies apply to it as well.",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository"],
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string" },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "serviceAccount": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": { "type": "boolean" },
+            "annotations": { "type": "object" },
+            "name": { "type": "string" }
+          }
+        },
+        "podAnnotations": { "type": "object" },
+        "podLabels": { "type": "object" },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "port"],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+            },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
+        "adminPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "The frontend's admin port: /healthz, /readyz and /metrics. Never routed. Must differ from frontend.service.port: templates/networkpolicy-frontend.yaml fails the render otherwise."
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"]
+        },
+        "rateLimitBurst": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "rateLimitPer": { "type": "string", "minLength": 1 },
+        "resources": { "type": "object" },
+        "livenessProbe": {
+          "type": "object",
+          "properties": {
+            "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+            "periodSeconds": { "type": "integer", "minimum": 1 },
+            "failureThreshold": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "readinessProbe": {
+          "type": "object",
+          "properties": {
+            "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+            "periodSeconds": { "type": "integer", "minimum": 1 },
+            "failureThreshold": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" }
+      }
+    },
     "startupProbe": {
       "type": "object",
       "required": ["enabled"],

@@ -1,6 +1,11 @@
 {{/*
 The ingress/httpRoute mutual-exclusion guard lives in templates/deployment.yaml,
 which always renders: see that file for why it is not duplicated here.
+
+The routing is the Ingress's: a PathPrefix /api rule to the API and a rule
+without matches, a "/" prefix per the Gateway API spec, to the frontend. The
+longest matching prefix wins, so the order of the two rules does not decide
+it. Neither names an admin port.
 */}}
 {{- if .Values.httpRoute.enabled -}}
 {{- if not .Values.httpRoute.parentRefs.name -}}
@@ -14,7 +19,7 @@ kind: HTTPRoute
 metadata:
   name: {{ include "solobill.fullname" . }}
   labels:
-    {{- include "solobill.labels" . | nindent 4 }}
+    {{- include "solobill.release.labels" . | nindent 4 }}
   {{- /* httpRoute.annotations win over the request limit hook of issue #82, see _requestlimits.tpl. */}}
   {{- with merge (deepCopy (.Values.httpRoute.annotations | default dict)) (fromYaml (include "solobill.requestLimits.annotations" .)) }}
   annotations:
@@ -32,7 +37,14 @@ spec:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - backendRefs:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
         - name: {{ include "solobill.fullname" . }}
           port: {{ .Values.service.port }}
+    - backendRefs:
+        - name: {{ include "solobill.frontend.fullname" . }}
+          port: {{ .Values.frontend.service.port }}
 {{- end -}}

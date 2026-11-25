@@ -2,6 +2,30 @@
 
 Installs [solobill](https://github.com/ostendorf-cloud/solobill) on a Kubernetes cluster.
 
+## Parts
+
+solobill runs as two parts, each with its own `Deployment`, `Service`, `ServiceAccount` and
+`NetworkPolicy`, released under one tag:
+
+| Part | Image | Objects | Values |
+| --- | --- | --- | --- |
+| API | `ghcr.io/ostendorf-cloud/solobill-api` (`cmd/solobill`, with typst) | `<release>-solobill` | top level: `image`, `resources`, probes, `config`, `pdf`, ... |
+| Frontend | `ghcr.io/ostendorf-cloud/solobill-frontend` (`cmd/frontend` with the Vue build) | `<release>-solobill-frontend` | `frontend.*` |
+
+- The API keeps the names and the selector of the former single image, so its `Deployment`
+  selector does not change on an upgrade. The frontend selects its pods by its own
+  `app.kubernetes.io/name`, `solobill-frontend`, so neither `Service` and neither
+  `NetworkPolicy` selects the other part's pods.
+- The frontend is govue's `frontend` package in app mode: `index.html` for every route of the
+  Vue router, with `Cache-Control: no-cache` and an `ETag`, the hashed bundle under `/assets`,
+  a JSON `404` under `/api`, and govue's security headers (a policy with `script-src 'self'`,
+  no inline script) on every answer. It holds no secret, keeps no state and opens no
+  connection, so it scales freely (`frontend.replicaCount`) and its `NetworkPolicy` allows no
+  egress at all.
+- The API stays at one replica (see `replicaCount` below).
+- `podSecurityContext`, `securityContext`, `imagePullSecrets` and `config.trustedProxies` apply
+  to both parts. Both run as uid `65532` with a read only root filesystem.
+
 ## Prerequisites
 
 - Kubernetes 1.27 or newer.
@@ -147,19 +171,40 @@ same way.
 
 ## External routing
 
-This chart reaches external traffic to its own `Service` two ways, chosen by
+This chart reaches external traffic to its two `Service`s two ways, chosen by
 `ingress.enabled` and `httpRoute.enabled`. Both default to `false`: a default install creates
 neither, reachable only from inside the cluster, until one is deliberately turned on. They are
 mutually exclusive: turning both on fails the install or upgrade with a readable message
 naming which one to turn off, enforced once in `templates/deployment.yaml`, the one template
 that always renders regardless of which routing flag is set.
 
+### Routing
+
+The routing is fixed and the same on every host, for the `Ingress` and the `HTTPRoute` alike:
+
+| Path | Backend | Port |
+| --- | --- | --- |
+| `/api`, `/api/...` | API `Service` | `service.port` |
+| every other path | frontend `Service` | `frontend.service.port` |
+| `/healthz`, `/readyz`, `/metrics` | never routed, admin port of each part | `adminPort`, `frontend.adminPort` |
+
+- One host, one origin: the browser loads the app and calls the API on the same origin, so the
+  session cookie (host only, `Path=/`, `Secure`, `SameSite=Lax`) and the CSRF check need no
+  CORS, no trusted origin and no change to the OIDC redirect.
+- The OIDC routes live under `/api/v1/auth/oidc`, so nothing outside `/api` goes to the API.
+  `config.oidc.redirectUrl` names `https://<host>/api/v1/auth/oidc/callback`.
+- `pathType: Prefix` and `PathPrefix` match per path element: `/api` and `/api/v1/me` reach
+  the API, `/apiary` and `/assets/...` the frontend.
+- A host carries no paths of its own: `values.schema.json` refuses a `paths` key on an
+  `ingress.hosts` entry.
+- `tests/ingress_enabled_test.yaml` and `tests/httproute_enabled_test.yaml` pin this table.
+
 ### Ingress
 
-Set `ingress.enabled: true`. `ingress.hosts` names the host and path rules, and `ingress.tls`
-carries the certificate configuration directly on the `Ingress` object: this chart owns that
-configuration. `ingress.enabled: true` also requires `config.trustedProxies`; see "Values"
-below for why.
+Set `ingress.enabled: true`. `ingress.hosts` names the hosts, each with the two paths above,
+and `ingress.tls` carries the certificate configuration directly on the `Ingress` object: this
+chart owns that configuration. `ingress.enabled: true` also requires `config.trustedProxies`;
+see "Values" below for why.
 
 ### Gateway API HTTPRoute
 
@@ -181,11 +226,9 @@ Unlike `Ingress`, an `HTTPRoute` carries no `tls` field of its own. TLS terminat
 `httpRoute.hostnames` only has to match a hostname the listener itself already serves for
 traffic to reach this `HTTPRoute` at all.
 
-Routing itself is fixed to this chart's own `Service`: no values-driven way to add a second
-backend or a per-path rule, the same single-backend assumption `ingress.hosts` already makes.
-An `HTTPRoute` rule with no `matches` defaults to a `/` prefix match per the Gateway API spec,
-the same default an `Ingress` with one `/` path rule gives, so this chart's `HTTPRoute` sets
-none explicitly.
+The `HTTPRoute` carries the routing table above as two rules: a `PathPrefix` `/api` rule to
+the API and a rule with no `matches`, a `/` prefix per the Gateway API spec, to the frontend.
+The longest matching prefix wins, so the order of the two rules does not decide it.
 
 `httpRoute.hostnames` is a list today because `HTTPRoute` itself accepts more than one
 hostname for the one set of rules above; solobill's own concept (the application on one
@@ -302,6 +345,13 @@ carry the same two labels and differ only in their component label. Deliberate: 
 DNS and PostgreSQL egress and no ingress at all, a strict subset of what the rules below allow.
 On a fresh install it runs before this object exists, being a pre-install hook; on an upgrade
 the previous release's copy of the policy applies to it.
+
+The frontend has a policy of its own, `templates/networkpolicy-frontend.yaml`, selecting its
+pods by `app.kubernetes.io/name: solobill-frontend`. Its ingress rules take the same
+`networkPolicy.ingress.public` and `networkPolicy.ingress.admin` peers on
+`frontend.service.port` and `frontend.adminPort`. With `networkPolicy.egress.enabled` it allows
+no egress at all, not even DNS: the frontend opens no connection. Everything below describes
+the API's policy.
 
 ### Ingress rules
 
@@ -560,7 +610,7 @@ None of these is a secret. The session codec key and the CSRF key stay in `exist
 | Key | Description | Default |
 | --- | --- | --- |
 | `replicaCount` | Number of pods. Fixed at `1`: `cmd/solobill`'s session store and passkey challenge store are in-memory, correct for exactly one replica. A second pod would keep its own, separate sessions, so a request load-balanced to it would see its caller as logged out. | `1` |
-| `image.repository` | Container image repository. | `ghcr.io/ostendorf-cloud/solobill` |
+| `image.repository` | The API image repository. | `ghcr.io/ostendorf-cloud/solobill-api` |
 | `image.tag` | Image tag. Defaults to the chart's `appVersion` when left empty. | `""` |
 | `image.pullPolicy` | Image pull policy. | `IfNotPresent` |
 | `imagePullSecrets` | Pull secrets for a private registry. | `[]` |
@@ -579,7 +629,7 @@ None of these is a secret. The session codec key and the CSRF key stay in `exist
 | `ingress.enabled` | Create an `Ingress`. Requires `config.trustedProxies` to be set; see that row. Mutually exclusive with `httpRoute.enabled`; see "External routing" above. | `false` |
 | `ingress.className` | `ingressClassName` to set. | `""` |
 | `ingress.annotations` | Annotations for the `Ingress`. | `{}` |
-| `ingress.hosts` | Host/path rules. | see `values.yaml` |
+| `ingress.hosts` | Hosts, each a `host` only. Every host gets the fixed `/api` and `/` paths; see "Routing" above. | see `values.yaml` |
 | `ingress.tls` | TLS configuration for the `Ingress`. | `[]` |
 | `httpRoute.enabled` | Create a Gateway API `HTTPRoute`. Mutually exclusive with `ingress.enabled`; see "External routing" above. | `false` |
 | `httpRoute.hostnames` | Hostnames the `HTTPRoute` matches. | `[]` |
@@ -604,13 +654,34 @@ None of these is a secret. The session codec key and the CSRF key stay in `exist
 | `nodeSelector` | Node selector. | `{}` |
 | `tolerations` | Tolerations. | `[]` |
 | `affinity` | Affinity rules. | `{}` |
+| `pdf.typstBinary` | `PDF_TYPST_BINARY` of the API: the typst binary of the API image. Empty turns the renderer off, issuing and the PDF download answer `503`. `internal/envsync` pins it to the `Dockerfile`. | `/usr/local/bin/typst` |
+| `pdf.tmpSizeLimit` | Size limit of the `emptyDir` mounted at `/tmp` in the API container, where the renderer writes one directory per render. The root filesystem stays read only. | `256Mi` |
+| `frontend.replicaCount` | Frontend pods. Stateless, any number works. | `1` |
+| `frontend.image.repository` | The frontend image repository. | `ghcr.io/ostendorf-cloud/solobill-frontend` |
+| `frontend.image.tag` | Frontend image tag. Defaults to the chart's `appVersion`, the same tag as the API. | `""` |
+| `frontend.image.pullPolicy` | Frontend image pull policy. | `IfNotPresent` |
+| `frontend.serviceAccount.create` | Create the frontend's own `ServiceAccount`. No RBAC, no token mounted. | `true` |
+| `frontend.serviceAccount.annotations` | Annotations for it. | `{}` |
+| `frontend.serviceAccount.name` | Its name. Empty uses the frontend fullname. | `""` |
+| `frontend.podAnnotations` | Annotations on the frontend pods. | `{}` |
+| `frontend.podLabels` | Extra labels on the frontend pods. | `{}` |
+| `frontend.service.type` | Frontend `Service` type. | `ClusterIP` |
+| `frontend.service.port` | Frontend public port, the container port and `LISTEN_ADDR` together. | `8080` |
+| `frontend.adminPort` | Frontend admin port (`/healthz`, `/readyz`, `/metrics`), the container port and `ADMIN_LISTEN_ADDR` together. Never routed. Must differ from `frontend.service.port`. | `8081` |
+| `frontend.logLevel` | `LOG_LEVEL` of the frontend. | `info` |
+| `frontend.rateLimitBurst` | `RATE_LIMIT_BURST`: requests per client address in a row. One load of the app is a few dozen requests. | `300` |
+| `frontend.rateLimitPer` | `RATE_LIMIT_PER`: the refill period of that bucket. | `1m` |
+| `frontend.resources` | Frontend requests and limits. No CPU limit. | `cpu: 10m`, `memory: 32Mi`, limit `memory: 128Mi` |
+| `frontend.livenessProbe` | `/healthz` on the admin port. | see `values.yaml` |
+| `frontend.readinessProbe` | `/readyz` on the admin port. | see `values.yaml` |
+| `frontend.nodeSelector`, `frontend.tolerations`, `frontend.affinity` | Scheduling of the frontend pods. | empty |
 | `config.listenAddr` | `LISTEN_ADDR`. | `:8080` |
 | `config.adminListenAddr` | `ADMIN_LISTEN_ADDR`. Serves `/metrics`, `/healthz` and `/readyz`; see "Metrics and probes live on their own port" above. Keep in sync with `adminPort`. | `:8081` |
 | `config.logLevel` | `LOG_LEVEL`. One of `debug`, `info`, `warn`, `error`. | `info` |
 | `config.databaseUrl` | `DATABASE_URL`. Credential-free; see "Why `config.databaseUrl` is plain" above. Required. | `""` |
 | `config.databaseUser` | `DATABASE_USER`. Required. Must be `NOSUPERUSER NOBYPASSRLS`; see "Prerequisites" above. | `""` |
 | `config.sessionAllowPlainHttp` | `SESSION_ALLOW_PLAIN_HTTP`. Keep `false` behind a TLS-terminating ingress; `true` is `docker-compose.yaml`'s own local-dev-only setting. The render fails when it is `true` with `ingress.enabled` or `httpRoute.enabled`. | `false` |
-| `config.allowedOrigins` | `ALLOWED_ORIGINS`, joined with a comma. Empty means no CORS middleware (same-origin SPA). | `[]` |
+| `config.allowedOrigins` | `ALLOWED_ORIGINS`, joined with a comma. Empty means no CORS middleware: the frontend and the API share one origin through the routing above. | `[]` |
 | `config.trustedProxies` | `TRUSTED_PROXIES`, joined with a comma. Empty trusts only the direct TCP peer. Required (and enforced with a template `fail`) when `ingress.enabled` or `httpRoute.enabled` is true: otherwise every client's `X-Forwarded-For` is ignored and the rate limiter keys every request to the proxy's own address, one shared bucket for every caller. Set it to the ingress controller's or the gateway data plane's pod or service CIDR. | `[]` |
 | `config.rateLimitBurst` | `RATE_LIMIT_BURST`, the general per client limit of every public route. | `10` |
 | `config.rateLimitPer` | `RATE_LIMIT_PER`. | `1m` |
@@ -670,6 +741,22 @@ sync by hand until this has a guard of its own.
 
 ## Upgrading
 
+From a release that ran the single image (`ghcr.io/ostendorf-cloud/solobill`, which served the
+app and the API together):
+
+- The API `Deployment` keeps its name and selector, so the upgrade rolls it in place onto
+  `solobill-api`. The frontend `Deployment`, `Service`, `ServiceAccount` and `NetworkPolicy`
+  are new objects.
+- `ingress.hosts[].paths` is gone: remove it from your values, the schema refuses it. The
+  `Ingress` or `HTTPRoute` now sends every path but `/api` to the frontend.
+- Until the frontend pods are ready, the app's pages answer `503` from the ingress controller.
+  The API keeps answering throughout.
+- The API's `app.kubernetes.io/component` label changes from `server` to `api`. A
+  `ServiceMonitor`, `PodMonitor`, `NetworkPolicy` or alert that selects `component: server`
+  stops matching: point it at `component: api` in the same change.
+- `podLabels` and `podAnnotations` apply to the API pods only. Set
+  `frontend.podLabels` and `frontend.podAnnotations` for the frontend.
+
 A plain `helm upgrade` is safe for a values change on a release already running this chart
 version or later. It is not automatically safe for an existing release upgrading onto this
 version from an earlier one: `networkPolicy.enabled` defaults to `true`, so that upgrade turns
@@ -699,9 +786,10 @@ itself: every durable fact lives in your own PostgreSQL instance, outside this r
 helm uninstall solobill
 ```
 
-Removes every ordinary object this chart created: the `Deployment`, `Service`, the
-`NetworkPolicy` if `networkPolicy.enabled` was left on, and the `Ingress` or `HTTPRoute`,
-whichever was enabled. The `ServiceAccount`, the migration Job and its
+Removes every ordinary object this chart created: both `Deployment`s and `Service`s, the
+frontend's `ServiceAccount`, both `NetworkPolicy` objects if `networkPolicy.enabled` was left
+on, and the `Ingress` or `HTTPRoute`, whichever was enabled. The API's `ServiceAccount`, the
+migration Job and its
 `ConfigMap` are all Helm
 hooks, which Helm does not track as part of the release for `helm uninstall` to remove; each is
 governed only by its own `helm.sh/hook-delete-policy` instead. The Job and its `ConfigMap` carry

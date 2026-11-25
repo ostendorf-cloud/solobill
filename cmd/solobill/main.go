@@ -1,15 +1,15 @@
-// Command solobill wires the service: configuration, the database
+// Command solobill wires the API service: configuration, the database
 // connection, session and OIDC construction, the HTTP handler, and
 // graceful shutdown. See internal/config, internal/httpapi and
 // internal/auth for what each piece actually does; this file only
-// assembles them in order.
+// assembles them in order. It serves the API, health and metrics only:
+// the Vue app is the frontend image's, cmd/frontend.
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -69,10 +69,6 @@ func main() {
 const maxSessions = 1000
 
 func run() error {
-	if err := checkEmbeddedDist(); err != nil {
-		return err
-	}
-
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		return err
@@ -144,11 +140,6 @@ func run() error {
 		return fmt.Errorf("solobill: %w", err)
 	}
 
-	spaFS, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		return fmt.Errorf("solobill: %w", err)
-	}
-
 	repos, err := buildRepositories(ctx, wireEnv{cfg: cfg, logger: logger, store: store, health: healthRegistry})
 	if err != nil {
 		return fmt.Errorf("solobill: %w", err)
@@ -178,7 +169,6 @@ func run() error {
 		RateLimitBurst:   cfg.RateLimitBurst,
 		RateLimitPer:     cfg.RateLimitPer,
 		DefaultInviteTTL: cfg.DefaultInviteTTL,
-		DistFS:           spaFS,
 		Repositories:     repos,
 	})
 	if err != nil {
@@ -395,17 +385,6 @@ func seedOwnerAccount(ctx context.Context, store ownerSeeder, tenantSlug, email,
 	})
 	if err != nil {
 		return fmt.Errorf("seed owner account %q: %w", email, err)
-	}
-
-	return nil
-}
-
-// checkEmbeddedDist proves the embedded dist directory is shaped the way
-// fs.Sub expects: a build with an empty or mis-shaped frontend build fails
-// here instead of deep inside httpapi.NewHandler.
-func checkEmbeddedDist() error {
-	if _, err := fs.Sub(distFS, "dist"); err != nil {
-		return fmt.Errorf("solobill: %w", err)
 	}
 
 	return nil

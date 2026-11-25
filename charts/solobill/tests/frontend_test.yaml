@@ -1,0 +1,221 @@
+suite: frontend part
+templates:
+  - templates/deployment-frontend.yaml
+  - templates/service-frontend.yaml
+  - templates/serviceaccount-frontend.yaml
+  - templates/service.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  migrationJob:
+    databaseUser: solobill_migrator
+tests:
+  - it: renders one Deployment of the frontend image at the chart's app version
+    template: templates/deployment-frontend.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Deployment
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-solobill-frontend
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/ostendorf-cloud/solobill-frontend:0.1.0
+
+  - it: runs non root with a read only root filesystem, no privilege escalation and every capability dropped
+    template: templates/deployment-frontend.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 65532
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          content: ALL
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false
+      - isNull:
+          path: spec.template.spec.volumes
+
+  - it: probes the admin port, never the public one
+    template: templates/deployment-frontend.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet
+          value:
+            path: /healthz
+            port: admin
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet
+          value:
+            path: /readyz
+            port: admin
+
+  - it: sets requests and a memory limit
+    template: templates/deployment-frontend.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+          value: 10m
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 128Mi
+
+  - it: derives both listen addresses from the ports, so they cannot drift
+    template: templates/deployment-frontend.yaml
+    set:
+      frontend:
+        service:
+          port: 7070
+        adminPort: 7071
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LISTEN_ADDR
+            value: ":7070"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ADMIN_LISTEN_ADDR
+            value: ":7071"
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 7070
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: admin
+            containerPort: 7071
+            protocol: TCP
+
+  - it: never sets the development proxy or plain HTTP, and holds no secret
+    template: templates/deployment-frontend.yaml
+    set:
+      config:
+        sessionAllowPlainHttp: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: FRONTEND_DEV_API_PROXY
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ALLOW_PLAIN_HTTP
+          any: true
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.valueFrom)]
+
+  - it: shares config.trustedProxies with the API
+    template: templates/deployment-frontend.yaml
+    set:
+      config:
+        trustedProxies:
+          - 10.0.0.0/8
+          - 192.168.0.0/16
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: TRUSTED_PROXIES
+            value: "10.0.0.0/8,192.168.0.0/16"
+
+  - it: scales independently of the API, which stays at one replica
+    template: templates/deployment-frontend.yaml
+    set:
+      frontend:
+        replicaCount: 3
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: selects its own pods by a name the API's selector does not match
+    template: templates/deployment-frontend.yaml
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: solobill-frontend
+            app.kubernetes.io/instance: RELEASE-NAME
+      - equal:
+          path: spec.template.metadata.labels["app.kubernetes.io/component"]
+          value: frontend
+
+  - it: renders a Service selecting the frontend pods on the public and the admin port
+    template: templates/service-frontend.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-solobill-frontend
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: solobill-frontend
+            app.kubernetes.io/instance: RELEASE-NAME
+      - equal:
+          path: spec.ports[0]
+          value:
+            port: 8080
+            targetPort: http
+            protocol: TCP
+            name: http
+
+  - it: keeps the API Service off the frontend pods
+    template: templates/service.yaml
+    asserts:
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: solobill
+            app.kubernetes.io/instance: RELEASE-NAME
+
+  - it: renders its own ServiceAccount without a token
+    template: templates/serviceaccount-frontend.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-solobill-frontend
+      - equal:
+          path: automountServiceAccountToken
+          value: false
+
+  - it: renders no ServiceAccount when told not to, and uses the named one
+    template: templates/serviceaccount-frontend.yaml
+    set:
+      frontend:
+        serviceAccount:
+          create: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: refuses an unknown frontend key
+    template: templates/deployment-frontend.yaml
+    set:
+      frontend:
+        devApiProxy: http://api:8080
+    asserts:
+      - failedTemplate: {}

@@ -1,0 +1,39 @@
+suite: API selector stays the single image's
+templates:
+  - templates/deployment.yaml
+  - templates/service.yaml
+set:
+  existingSecret:
+    name: solobill-secrets
+  config:
+    databaseUrl: "postgres://postgres.example.svc:5432/solobill?sslmode=require"
+    databaseUser: solobill_app
+  migrationJob:
+    databaseUser: solobill_migrator
+tests:
+  # spec.selector of a Deployment is immutable. The single image's chart
+  # selected by these two labels exactly, so an upgrade onto the split rolls
+  # the API in place only while they stay exactly these two.
+  - it: keeps the API Deployment's selector to exactly name and instance
+    template: templates/deployment.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-solobill
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: solobill
+            app.kubernetes.io/instance: RELEASE-NAME
+
+  - it: keeps the API Service's selector to the same two labels
+    template: templates/service.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-solobill
+      - equal:
+          path: spec.selector
+          value:
+            app.kubernetes.io/name: solobill
+            app.kubernetes.io/instance: RELEASE-NAME

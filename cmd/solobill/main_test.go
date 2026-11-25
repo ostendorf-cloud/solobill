@@ -10,20 +10,6 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
-// TestCheckEmbeddedDist proves the embedded dist directory is shaped the
-// way fs.Sub expects: a build with an empty or mis-shaped frontend build
-// fails here instead of deep inside httpapi.NewHandler. run itself needs a
-// full environment (a database, both signing keys) and a real Postgres to
-// reach meaningfully, which this package does not have in a unit test; see
-// internal/config and internal/httpapi for what is actually tested here.
-func TestCheckEmbeddedDist(t *testing.T) {
-	t.Parallel()
-
-	if err := checkEmbeddedDist(); err != nil {
-		t.Fatalf("checkEmbeddedDist() error = %v", err)
-	}
-}
-
 // panicIfTenantsCalled is a tenantSeeder whose Tenants() panics: proof
 // that seedTenant, called with an empty slug (production's default, see
 // internal/config.Config.SeedTenantSlug), returns before it ever reads

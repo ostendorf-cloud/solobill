@@ -1,6 +1,11 @@
 {{/*
 The ingress/httpRoute mutual-exclusion guard lives in templates/deployment.yaml,
 which always renders: see that file for why it is not duplicated here.
+
+The routing is fixed, the same on every host: /api to the API, every other
+path to the frontend, both on the public port of their Service, never the
+admin port. pathType Prefix matches per path element: /api and /api/v1/me
+go to the API, /apiary and /assets go to the frontend.
 */}}
 {{- if .Values.ingress.enabled -}}
 apiVersion: networking.k8s.io/v1
@@ -8,7 +13,7 @@ kind: Ingress
 metadata:
   name: {{ include "solobill.fullname" . }}
   labels:
-    {{- include "solobill.labels" . | nindent 4 }}
+    {{- include "solobill.release.labels" . | nindent 4 }}
   {{- /* ingress.annotations win over the request limit hook of issue #82, see _requestlimits.tpl. */}}
   {{- with merge (deepCopy (.Values.ingress.annotations | default dict)) (fromYaml (include "solobill.requestLimits.annotations" .)) }}
   annotations:
@@ -27,14 +32,19 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
-          {{- range .paths }}
-          - path: {{ .path }}
-            pathType: {{ .pathType }}
+          - path: /api
+            pathType: Prefix
             backend:
               service:
                 name: {{ include "solobill.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
-          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "solobill.frontend.fullname" $ }}
+                port:
+                  number: {{ $.Values.frontend.service.port }}
     {{- end }}
 {{- end -}}
