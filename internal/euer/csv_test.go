@@ -93,7 +93,12 @@ func TestWriteCSV(t *testing.T) {
 		t.Fatalf("WriteCSV: %v", err)
 	}
 
-	rd := csv.NewReader(strings.NewReader(buf.String()))
+	// The bytes EF BB BF first, so Excel reads the umlauts as UTF-8.
+	body, ok := strings.CutPrefix(buf.String(), "\xEF\xBB\xBF")
+	if !ok {
+		t.Fatalf("the csv starts with %q, want the UTF-8 byte order mark", buf.String()[:min(3, buf.Len())])
+	}
+	rd := csv.NewReader(strings.NewReader(body))
 	rd.Comma = ';'
 	rows, err := rd.ReadAll()
 	if err != nil {

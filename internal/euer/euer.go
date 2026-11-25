@@ -43,6 +43,12 @@
 //     Every booked asset expense without an asset row is a warning.
 //   - A reversal of a payment takes the year and the regime of the
 //     payment it reverses, so it leaves the line that payment went to.
+//     A storno of an expense or other income is money flowing back: it
+//     counts in the year of its own date and takes the regime of the
+//     entry it cancels (stornoRegimeDay).
+//   - A line's sum is checked for int64 overflow (ErrOverflow). A share
+//     computed in big.Rat is bounded by the amounts it splits, which
+//     paymentvat already handles as int64, so its rounding is not.
 //   - A line keeps its amount as it goes into the field. The operator the
 //     form prints next to Zeile 72 ("-") and Zeile 73 ("+") comes from
 //     the mapping. Neither raises a missing receipt warning: both are
@@ -106,6 +112,9 @@ var (
 	// year or the date of a counted entry. The API answers it as 400
 	// vat_regime_missing.
 	ErrRegimeMissing = errors.New("euer: no VAT regime period covers the date")
+	// ErrOverflow is returned when a line's sum leaves the int64 range of
+	// cents. The API answers it as 500: no figure is ever truncated.
+	ErrOverflow = errors.New("euer: an amount leaves the int64 range")
 )
 
 // RegimeMissingError names the date without a regime.
@@ -456,7 +465,7 @@ func addPayments(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 				continue
 			}
 			free := taxFree[i]
-			if taxable := s.NetCents - free; taxable != 0 || free == 0 {
+			if taxable := s.NetCents - free; taxable != 0 {
 				b.add(category.IncomeTaxable, src(taxable))
 			}
 			if free != 0 {
@@ -517,6 +526,11 @@ func addExpenses(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 		}
 	}
 
+	paidOn := map[uuid.UUID]*time.Time{}
+	for _, e := range in.Expenses {
+		paidOn[e.ID] = e.PaidOn
+	}
+
 	var warnings []Warning
 	var missing []storage.Expense
 	for _, e := range in.Expenses {
@@ -543,7 +557,7 @@ func addExpenses(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 			continue
 		}
 
-		r, err := regime(d)
+		r, err := regime(stornoRegimeDay(d, e.StornoOfID, paidOn))
 		if err != nil {
 			return nil, err
 		}
@@ -562,6 +576,29 @@ func addExpenses(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bound
 	}
 
 	return append(warnings, missingReceiptWarnings(missing)...), nil
+}
+
+// stornoRegimeDay is the day whose VAT regime splits an entry dated d.
+// For a storno it is the date of the entry it cancels: the storno row
+// carries the negated amounts of a split made under that regime, so it
+// leaves the lines the original went to, even across a regime switch.
+//
+// Unlike a payment reversal, which undoes a recording mistake and follows
+// its payment's year too, a storno is money that flowed back on its own
+// date (docs/api.md, "POST /api/v1/expenses/{id}/storno"). It counts in
+// the year of that date (section 11 EStG), or of its own assignment.
+// NOT VERIFIED: this reading of section 11 EStG and 17 UStG.
+//
+// An original not handed in falls back to d.
+func stornoRegimeDay(d time.Time, stornoOf *uuid.UUID, dates map[uuid.UUID]*time.Time) time.Time {
+	if stornoOf == nil {
+		return d
+	}
+	if orig := dates[*stornoOf]; orig != nil {
+		return dateOnly(*orig)
+	}
+
+	return d
 }
 
 // noReceiptKeys are the expense keys whose amount is a computed figure,
@@ -608,6 +645,10 @@ func missingReceiptWarnings(missing []storage.Expense) []Warning {
 // addOtherIncome adds every booked other income entry that counts in the
 // year.
 func addOtherIncome(in Input, b *builder, yearOf yearFunc, regime regimeFunc, boundary boundaryFunc) error {
+	receivedOn := map[uuid.UUID]*time.Time{}
+	for _, o := range in.OtherIncome {
+		receivedOn[o.ID] = o.ReceivedOn
+	}
 	for _, o := range in.OtherIncome {
 		if o.State != storage.BookingStateBooked || o.ReceivedOn == nil {
 			continue
@@ -617,7 +658,7 @@ func addOtherIncome(in Input, b *builder, yearOf yearFunc, regime regimeFunc, bo
 		if yearOf(storage.EuerEntryOtherIncome, o.ID, d) != in.Year {
 			continue
 		}
-		r, err := regime(d)
+		r, err := regime(stornoRegimeDay(d, o.StornoOfID, receivedOn))
 		if err != nil {
 			return err
 		}
@@ -705,7 +746,11 @@ func buildLines(m Mapping, b builder) ([]Line, error) {
 		})
 		var sum int64
 		for _, s := range sources {
-			sum += s.AmountCents
+			next, ok := addCents(sum, s.AmountCents)
+			if !ok {
+				return nil, fmt.Errorf("%w: the sum of %q", ErrOverflow, c.Key)
+			}
+			sum = next
 		}
 		lines = append(lines, Line{
 			Key:         c.Key,
@@ -830,7 +875,20 @@ func inWindowsOf(year int, d time.Time) bool {
 	return false
 }
 
+// addCents adds two amounts and reports false when the sum leaves int64.
+func addCents(a, b int64) (int64, bool) {
+	sum := a + b
+	if (b > 0 && sum < a) || (b < 0 && sum > a) {
+		return 0, false
+	}
+
+	return sum, true
+}
+
 // roundHalfAwayFromZero rounds r to whole cents, a half away from zero.
+// Its callers pass a running sum of shares, each at most the payment it
+// splits, so the result stays inside the int64 range paymentvat.Split
+// already holds the same payments in. Int64 is not checked here.
 func roundHalfAwayFromZero(r *big.Rat) int64 {
 	num := new(big.Int).Abs(r.Num())
 	den := r.Denom()

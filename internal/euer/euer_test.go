@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"reflect"
 	"slices"
 	"testing"
@@ -537,8 +538,8 @@ func TestRegimeSwitchInsideTheYear(t *testing.T) {
 		Chains: []euer.Chain{
 			// Issued and paid as a Kleinunternehmer.
 			kuChain(100, "2026-03-01", 50000, pay(101, 100, "2026-03-15", 50000)),
-			// Issued in June, paid in July after the switch: 119.00 split
-			// into 100.00 and 19.00 by the payment's date.
+			// Issued on 2 July and paid on 10 July, after the switch:
+			// 119.00 split into 100.00 and 19.00 by the payment's date.
 			{
 				Members:  []docchain.Member{{ID: id(200), IssuedOn: day("2026-07-02")}},
 				Figures:  map[uuid.UUID]euer.Figures{id(200): figures(t, std)},
@@ -761,6 +762,137 @@ func TestLoadRange(t *testing.T) {
 	from, to := euer.LoadRange(2026)
 	if from != day("2025-12-22") || to != day("2027-01-10") {
 		t.Errorf("LoadRange(2026) = %s to %s", from.Format(time.DateOnly), to.Format(time.DateOnly))
+	}
+}
+
+// TestAStornoCountsOnItsOwnDateUnderTheRegimeOfItsOriginal: the owner
+// is under the Regelbesteuerung in 2025 and a Kleinunternehmer from 1
+// January 2026.
+//
+// An expense of 119.00 EUR (100.00 net, 19.00 VAT) paid on 10 December
+// 2025 is cancelled, and the money comes back on 20 January 2026, outside
+// the turn of the year. Other income of 59.50 EUR (50.00 net, 9.50 VAT)
+// received on 3 November 2025 is cancelled on 3 February 2026.
+//
+// The stornos are money flowing back: they count in 2026, the year of
+// their own date, not in 2025 like their originals. Their amounts negate
+// a split made under the Regelbesteuerung, so they leave the same lines:
+// Zeile 51 -100.00 and Zeile 57 -19.00, Zeile 19 -50.00 and Zeile 17
+// -9.50. Under the regime of their own date they would put the gross
+// -119.00 and -59.50 on Zeilen 51 and 19.
+func TestAStornoCountsOnItsOwnDateUnderTheRegimeOfItsOriginal(t *testing.T) {
+	t.Parallel()
+
+	storno := expense(402, "2026-01-20", category.WorkEquipment, -11900, -10000, -1900)
+	storno.StornoOfID = ptr(id(401))
+	incomeStorno := income(502, "2026-02-03", category.AssetDisposal, -5950, -5000, -950)
+	incomeStorno.StornoOfID = ptr(id(501))
+
+	r := compute(t, euer.Input{
+		Year: 2026,
+		Periods: []storage.VATRegimePeriod{
+			period(1, "2025-01-01", storage.VATRegimeStandard),
+			period(2, "2026-01-01", storage.VATRegimeKleinunternehmer),
+		},
+		Expenses: []storage.Expense{
+			expense(401, "2025-12-10", category.WorkEquipment, 11900, 10000, 1900),
+			storno,
+		},
+		OtherIncome: []storage.OtherIncome{
+			income(501, "2025-11-03", category.AssetDisposal, 5950, 5000, 950),
+			incomeStorno,
+		},
+	})
+
+	wantAmounts(t, r, map[category.Key]int64{
+		category.WorkEquipment: -10000,
+		category.InputVAT:      -1900,
+		category.AssetDisposal: -5000,
+		category.VATReceived:   -950,
+	})
+	if got := sourceAmounts(line(t, r, category.WorkEquipment)); !maps.Equal(got, map[uuid.UUID]int64{id(402): -10000}) {
+		t.Errorf("Zeile 51 sources = %v, want only the storno 402", got)
+	}
+}
+
+// TestAStornoOfAnAssetExpenseRaisesNoAssetWarning: the asset expense 405
+// has no asset row and is warned. Its storno 406 carries the asset flag of
+// its original and is no acquisition of its own: no second warning.
+func TestAStornoOfAnAssetExpenseRaisesNoAssetWarning(t *testing.T) {
+	t.Parallel()
+
+	original := expense(405, "2026-03-01", category.WorkEquipment, 60000, 60000, 0)
+	original.IsAsset = true
+	storno := expense(406, "2026-03-05", category.WorkEquipment, -60000, -60000, 0)
+	storno.IsAsset = true
+	storno.StornoOfID = ptr(id(405))
+
+	r := compute(t, euer.Input{
+		Year:     2026,
+		Periods:  []storage.VATRegimePeriod{period(1, "2025-01-01", storage.VATRegimeKleinunternehmer)},
+		Expenses: []storage.Expense{original, storno},
+	})
+
+	want := []euer.Warning{{Code: euer.WarningAssetExpenseWithoutAsset, Kind: euer.SourceExpense, ID: id(405)}}
+	if !reflect.DeepEqual(r.Warnings, want) {
+		t.Errorf("warnings = %+v, want %+v", r.Warnings, want)
+	}
+	if len(r.Lines) != 0 {
+		t.Errorf("lines = %v, want none: an asset expense never counts", amounts(r))
+	}
+}
+
+// TestAPaymentWithoutNetAddsNoZeroSource: a payment of 0.00 EUR under
+// the Regelbesteuerung has no net, no tax free share and no VAT. It adds
+// no source to Zeile 15, so the line does not appear for it.
+func TestAPaymentWithoutNetAddsNoZeroSource(t *testing.T) {
+	t.Parallel()
+
+	std := standardDoc(t, 200, docpayload.VATBucket{RatePermyriad: 1900, NetCents: 10000, VATCents: 1900})
+	r := compute(t, euer.Input{
+		Year:    2026,
+		Periods: []storage.VATRegimePeriod{period(1, "2026-01-01", storage.VATRegimeStandard)},
+		Chains: []euer.Chain{{
+			Members:  []docchain.Member{{ID: id(200), IssuedOn: day("2026-02-01")}},
+			Figures:  map[uuid.UUID]euer.Figures{id(200): figures(t, std)},
+			Payments: []storage.Payment{pay(201, 200, "2026-02-05", 0)},
+		}},
+	})
+
+	if len(r.Lines) != 0 {
+		t.Errorf("lines = %v, want none for a payment of 0.00", amounts(r))
+	}
+}
+
+// TestALineSumThatLeavesInt64IsAnError: no figure is ever truncated.
+func TestALineSumThatLeavesInt64IsAnError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		a, b  int64
+		wants error
+	}{
+		{"above the maximum", math.MaxInt64, 1, euer.ErrOverflow},
+		{"below the minimum", math.MinInt64 + 1, -2, euer.ErrOverflow},
+		{"exactly the maximum", math.MaxInt64 - 1, 1, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := euer.Compute(euer.Input{
+				Year:    2026,
+				Periods: []storage.VATRegimePeriod{period(1, "2025-01-01", storage.VATRegimeKleinunternehmer)},
+				Expenses: []storage.Expense{
+					expense(401, "2026-03-01", category.WorkEquipment, tt.a, tt.a, 0),
+					expense(402, "2026-03-02", category.WorkEquipment, tt.b, tt.b, 0),
+				},
+			})
+			if !errors.Is(err, tt.wants) {
+				t.Errorf("err = %v, want %v", err, tt.wants)
+			}
+		})
 	}
 }
 

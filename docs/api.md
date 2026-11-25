@@ -874,12 +874,18 @@ Registered in `internal/httpapi/routes_reports.go`. Owned by issue #80.
   mapping, or a `{year}` that is no four digit number.
 - `400 vat_regime_missing` when no VAT regime period covers 31 December of the year or the date
   of a counted entry.
+- `500` when the sum of a line leaves the int64 range of cents. No figure is truncated.
+- A storno of an expense or other income counts in the year of its own date and leaves the lines
+  of the regime of the entry it cancels. A payment reversal follows the year and the regime of
+  the payment it reverses.
 
 ### `GET /api/v1/reports/euer/{year}/csv`
 
 - Who: any.
 - Response `200`: `text/csv; charset=utf-8`, semicolon separated, decimal comma,
   `Content-Disposition: attachment; filename="euer-<year>.csv"`.
+- The body starts with the UTF-8 byte order mark `EF BB BF`, so Excel reads the umlauts of the
+  German labels as UTF-8.
 - Columns: `key;zeile;kennzahl;operator;label;amount;source_kind;source_id;source_amount`.
 - `operator` is `minus`, `plus` or empty. A text cell that starts like a formula gets a `'`.
 - One row per source, so every figure traces to its rows.

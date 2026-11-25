@@ -11,8 +11,11 @@ import (
 // /api/v1/reports/euer/{year}/csv".
 var CSVHeader = []string{"key", "zeile", "kennzahl", "operator", "label", "amount", "source_kind", "source_id", "source_amount"}
 
+// BOM is the UTF-8 byte order mark every CSV starts with, U+FEFF.
+const BOM = "\xEF\xBB\xBF"
+
 // WriteCSV writes the report as semicolon separated rows with a decimal
-// comma: one row per source, so every figure traces to its rows. The
+// comma, after a UTF-8 byte order mark: one row per source, so every figure traces to its rows. The
 // line's amount repeats on each of its rows.
 //
 // CSV injection: a spreadsheet runs a cell that starts with "=", "+",
@@ -23,6 +26,11 @@ var CSVHeader = []string{"key", "zeile", "kennzahl", "operator", "label", "amoun
 // spreadsheet reads as a number, never as a formula. Neutralising them
 // would turn every negative figure, a refund for example, into text.
 func WriteCSV(w io.Writer, r Report) error {
+	// A UTF-8 byte order mark first: Excel reads a CSV without one in the
+	// system code page and garbles every umlaut of the German labels.
+	if _, err := io.WriteString(w, BOM); err != nil {
+		return fmt.Errorf("euer: write the csv byte order mark: %w", err)
+	}
 	cw := csv.NewWriter(w)
 	cw.Comma = ';'
 	if err := cw.Write(CSVHeader); err != nil {

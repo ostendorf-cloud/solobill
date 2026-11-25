@@ -419,7 +419,11 @@ func TestEuerReportCSV(t *testing.T) {
 		t.Errorf("Content-Disposition = %q", cd)
 	}
 
-	rd := csv.NewReader(strings.NewReader(rec.Body.String()))
+	body, ok := strings.CutPrefix(rec.Body.String(), "\xEF\xBB\xBF")
+	if !ok {
+		t.Fatal("the csv does not start with the UTF-8 byte order mark")
+	}
+	rd := csv.NewReader(strings.NewReader(body))
 	rd.Comma = ';'
 	rows, err := rd.ReadAll()
 	if err != nil {
