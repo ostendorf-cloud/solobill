@@ -31,6 +31,11 @@ type MappingLine struct {
 	// Kennzahl is empty when it was not read. The report then shows no
 	// Kennzahl rather than a guessed one.
 	Kennzahl string `json:"kennzahl"`
+	// Operator is the sign the form prints next to the Kennzahl: "-" for
+	// a line the form subtracts (Zeile 72), "+" for one it adds back
+	// (Zeile 73), empty for a plain line. The amount itself stays
+	// positive, as it goes into the field.
+	Operator string `json:"operator,omitempty"`
 	// Verified is false for a line whose Zeile or Kennzahl was not
 	// checked against the form, also inside a verified year.
 	Verified bool   `json:"verified"`
@@ -98,8 +103,8 @@ func loadMappings() (map[int]Mapping, error) {
 }
 
 // parseMapping decodes one year and checks it: a known status, every key
-// registered in internal/category, no key twice, a positive Zeile, and a
-// Kennzahl of digits or empty. An empty Kennzahl or an unverified year
+// registered in internal/category, no key twice, a positive Zeile, a
+// Kennzahl of digits or empty, and an operator of "+", "-" or none. An empty Kennzahl or an unverified year
 // needs the line to be unverified too.
 func parseMapping(data []byte) (Mapping, error) {
 	var m Mapping
@@ -125,6 +130,9 @@ func parseMapping(data []byte) (Mapping, error) {
 		}
 		if strings.Trim(l.Kennzahl, "0123456789") != "" {
 			return Mapping{}, fmt.Errorf("key %q has Kennzahl %q, not digits", l.Key, l.Kennzahl)
+		}
+		if l.Operator != "" && l.Operator != "-" && l.Operator != "+" {
+			return Mapping{}, fmt.Errorf("key %q has operator %q, not + or -", l.Key, l.Operator)
 		}
 		if l.Verified && (l.Kennzahl == "" || m.Status != StatusVerified) {
 			return Mapping{}, fmt.Errorf("key %q is marked verified without a Kennzahl or in an unverified year", l.Key)

@@ -35,35 +35,36 @@ func TestEveryKeyIsMappedInEveryYear(t *testing.T) {
 	}
 }
 
-func TestMapping2025IsVerifiedExceptTheOpenLines(t *testing.T) {
+func TestMapping2025IsVerified(t *testing.T) {
 	t.Parallel()
 
 	m, ok := MappingFor(2025)
 	if !ok || m.Status != StatusVerified || !strings.Contains(m.Source, "29 August 2025") {
 		t.Fatalf("2025 = %v %q %q, want verified against the letter of 29 August 2025", ok, m.Status, m.Source)
 	}
-	open := map[category.Key]bool{
-		category.IncomeKleinunternehmer:  true,
-		category.HomeOfficeNonDeductible: true,
-		category.HomeOfficeDeductible:    true,
-	}
 	for _, l := range m.Lines {
-		if l.Verified == open[l.Key] {
-			t.Errorf("2025 %q verified = %v", l.Key, l.Verified)
-		}
-		if open[l.Key] && l.Note == "" {
-			t.Errorf("2025 %q is open without a note", l.Key)
+		if !l.Verified || l.Kennzahl == "" {
+			t.Errorf("2025 %q verified = %v, Kennzahl %q", l.Key, l.Verified, l.Kennzahl)
 		}
 	}
-	// Zeile 65: no Kennzahl is guessed.
-	for _, k := range []category.Key{category.HomeOfficeNonDeductible, category.HomeOfficeDeductible} {
-		if l, _ := m.Line(k); l.Kennzahl != "" {
-			t.Errorf("%q shows Kennzahl %q, which was never read", k, l.Kennzahl)
-		}
+
+	// The lines the contract left open, as the form prints them
+	// (docs/concepts/euer-keys/80.md): Kz 162 in the column "nicht
+	// abziehbar" and 172 in "abziehbar", like 164 and 174 on Zeile 62;
+	// Kz 111 on the amount field of Zeile 12. And the two car lines the
+	// form prints with an operator.
+	want := map[category.Key]struct{ kz, op string }{
+		category.HomeOfficeNonDeductible: {"162", ""},
+		category.HomeOfficeDeductible:    {"172", ""},
+		category.IncomeKleinunternehmer:  {"111", ""},
+		category.CarCommuteCosts:         {"142", "-"},
+		category.CarCommuteAllowance:     {"176", "+"},
+		category.CarLeasing:              {"144", ""},
 	}
-	// Kz 111 stays as docs/concepts/euer-keys/67.md registered it.
-	if l, _ := m.Line(category.IncomeKleinunternehmer); l.Kennzahl != "111" {
-		t.Errorf("Zeile 12 Kennzahl = %q, want 111", l.Kennzahl)
+	for k, w := range want {
+		if l, _ := m.Line(k); l.Kennzahl != w.kz || l.Operator != w.op {
+			t.Errorf("%q = Kz %q operator %q, want Kz %q operator %q", k, l.Kennzahl, l.Operator, w.kz, w.op)
+		}
 	}
 }
 
@@ -80,7 +81,7 @@ func TestMapping2026IsAnUnverifiedCopyOf2025(t *testing.T) {
 	}
 	for i, l := range m26.Lines {
 		want := m25.Lines[i]
-		if l.Key != want.Key || l.Zeile != want.Zeile || l.Kennzahl != want.Kennzahl || l.Note != want.Note {
+		if l.Key != want.Key || l.Zeile != want.Zeile || l.Kennzahl != want.Kennzahl || l.Operator != want.Operator || l.Note != want.Note {
 			t.Errorf("2026 line %d = %+v, 2025 has %+v", i, l, want)
 		}
 		if l.Verified {
@@ -111,6 +112,7 @@ func TestParseMappingRefuses(t *testing.T) {
 		"letters":                             `{"tax_year": 2025, "status": "verified", "lines": [{"key": "euer.z27", "zeile": 27, "kennzahl": "1a"}]}`,
 		"verified, no kz":                     `{"tax_year": 2025, "status": "verified", "lines": [{"key": "euer.z27", "zeile": 27, "kennzahl": "", "verified": true}]}`,
 		"verified line in an unverified year": `{"tax_year": 2026, "status": "unverified", "lines": [{"key": "euer.z27", "zeile": 27, "kennzahl": "100", "verified": true}]}`,
+		"unknown operator":                    `{"tax_year": 2025, "status": "verified", "lines": [{"key": "euer.z72", "zeile": 72, "kennzahl": "142", "operator": "minus"}]}`,
 	}
 	for name, data := range tests {
 		t.Run(name, func(t *testing.T) {

@@ -4,7 +4,7 @@
   "source": "copy of 2025",
   "lines": [
     {"key": "euer.z12", "zeile": 12, "kennzahl": "111", "verified": false,
-      "note": "The read copy also prints 111 next to Zeile 10. Whether Kz 111 belongs to Zeile 10, Zeile 12 or both is not verified (docs/concepts/euer-keys/80.md)."},
+      "note": "The form prints 111 on Zeile 10 as well, there as the code field of the question whether the business ended. The amount field of Zeile 12 is Kz 111 (docs/concepts/euer-keys/80.md)."},
     {"key": "euer.z15", "zeile": 15, "kennzahl": "112", "verified": false},
     {"key": "euer.z16", "zeile": 16, "kennzahl": "103", "verified": false},
     {"key": "euer.z17", "zeile": 17, "kennzahl": "140", "verified": false},
@@ -40,10 +40,14 @@
     {"key": "euer.z62.d", "zeile": 62, "kennzahl": "174", "verified": false},
     {"key": "euer.z63.nd", "zeile": 63, "kennzahl": "165", "verified": false},
     {"key": "euer.z63.d", "zeile": 63, "kennzahl": "175", "verified": false},
-    {"key": "euer.z65.nd", "zeile": 65, "kennzahl": "", "verified": false,
-      "note": "Kz 162 or 172: which one is the non deductible part was not read. No Kennzahl is shown until the owner checks the form (docs/concepts/euer-keys/80.md)."},
-    {"key": "euer.z65.d", "zeile": 65, "kennzahl": "", "verified": false,
-      "note": "Kz 162 or 172: which one is the deductible part was not read. No Kennzahl is shown until the owner checks the form (docs/concepts/euer-keys/80.md)."},
-    {"key": "euer.z66", "zeile": 66, "kennzahl": "163", "verified": false}
+    {"key": "euer.z65.nd", "zeile": 65, "kennzahl": "162", "verified": false},
+    {"key": "euer.z65.d", "zeile": 65, "kennzahl": "172", "verified": false},
+    {"key": "euer.z66", "zeile": 66, "kennzahl": "163", "verified": false},
+    {"key": "euer.z68", "zeile": 68, "kennzahl": "144", "verified": false},
+    {"key": "euer.z69", "zeile": 69, "kennzahl": "145", "verified": false},
+    {"key": "euer.z70", "zeile": 70, "kennzahl": "146", "verified": false},
+    {"key": "euer.z71", "zeile": 71, "kennzahl": "147", "verified": false},
+    {"key": "euer.z72", "zeile": 72, "kennzahl": "142", "operator": "-", "verified": false},
+    {"key": "euer.z73", "zeile": 73, "kennzahl": "176", "operator": "+", "verified": false}
   ]
 }
