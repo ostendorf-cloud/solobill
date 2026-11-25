@@ -366,28 +366,42 @@ func (a *app) storeDocumentPDF(ctx context.Context, c caller, d storage.Document
 		file.ObjectVersionID = &version
 	}
 
-	var first *storage.File
 	err = a.inTenant(ctx, c.tenantID, func(ctx context.Context) error {
 		_, err := a.repos.Files.Create(ctx, file)
-		if !errors.Is(err, storage.ErrConflict) {
-			return err
-		}
-		existing, err := a.repos.Files.FindByID(ctx, id)
-		if err != nil {
-			return fmt.Errorf("read the PDF stored first: %w", err)
-		}
-		if err := checkStoredPDF(existing, c.tenantID); err != nil {
-			return err
-		}
-		first = &existing
 
-		return nil
+		return err
 	})
-	if err != nil {
+	if err == nil {
+		return nil, nil
+	}
+	if !errors.Is(err, storage.ErrConflict) {
 		return nil, api.Internal(fmt.Errorf("httpapi: store the PDF of document %s: %w", d.ID, err))
 	}
 
-	return first, nil
+	// Another first download stored the PDF while this one rendered. The
+	// unique violation aborted the insert's transaction, so the stored
+	// row is read in a new one. This download's Put left one more version
+	// of the key behind. It is harmless: the row names the winner's
+	// version, a versioned read never falls back to the current object,
+	// and without versioning (local development only) the current object
+	// holds the same bytes, because rendering is reproducible. Putting
+	// after the insert instead would leave a row without its object
+	// whenever the Put fails, and a files row is never deleted.
+	var first storage.File
+	err = a.inTenant(ctx, c.tenantID, func(ctx context.Context) error {
+		var err error
+		first, err = a.repos.Files.FindByID(ctx, id)
+
+		return err
+	})
+	if err != nil {
+		return nil, api.Internal(fmt.Errorf("httpapi: read the PDF of document %s stored first: %w", d.ID, err))
+	}
+	if err := checkStoredPDF(first, c.tenantID); err != nil {
+		return nil, api.Internal(err)
+	}
+
+	return &first, nil
 }
 
 // writePDF writes freshly rendered bytes with the headers every stored
