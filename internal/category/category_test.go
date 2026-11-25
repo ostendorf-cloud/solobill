@@ -182,6 +182,48 @@ func TestValid(t *testing.T) {
 	}
 }
 
+// TestCarCostKeys pins the car cost lines of #76: Zeilen 68 to 73 of
+// the 2025 form, each an expense key of #76 with both labels.
+func TestCarCostKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		key   category.Key
+		zeile int
+	}{
+		{"leasing", category.CarLeasing, 68},
+		{"taxes insurance toll", category.CarTaxesInsuranceToll, 69},
+		{"other actual costs", category.CarOtherActualCosts, 70},
+		{"private vehicle", category.CarPrivateVehicle, 71},
+		{"commute costs", category.CarCommuteCosts, 72},
+		{"commute allowance", category.CarCommuteAllowance, 73},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c, ok := category.Lookup(tt.key)
+			if !ok {
+				t.Fatalf("key %q is not registered", tt.key)
+			}
+			if got := category.Zeile(c.Key); got != tt.zeile {
+				t.Errorf("Zeile(%q) = %d, want %d", c.Key, got, tt.zeile)
+			}
+			if c.Issue != 76 {
+				t.Errorf("key %q is registered by #%d, want #76", c.Key, c.Issue)
+			}
+			if !category.Valid(c.Key, category.KindExpense) {
+				t.Errorf("key %q is no expense key", c.Key)
+			}
+			if c.LabelDE == "" || c.LabelEN == "" {
+				t.Errorf("key %q lacks a German or an English label", c.Key)
+			}
+		})
+	}
+}
+
 func TestAllReturnsACopy(t *testing.T) {
 	t.Parallel()
 

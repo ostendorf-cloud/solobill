@@ -224,9 +224,14 @@ function capture(): void {
             <th scope="row" class="px-3 py-2 font-medium">{{ rowName(e) }}</th>
             <td class="px-3 py-2">{{ categoryLabels.get(e.category) ?? e.category }}</td>
             <td class="px-3 py-2">
-              <GovueBadge :kind="e.state === 'booked' ? 'success' : 'neutral'">
-                {{ stateText(e) }}
-              </GovueBadge>
+              <div class="flex flex-wrap gap-1">
+                <GovueBadge :kind="e.state === 'booked' ? 'success' : 'neutral'">
+                  {{ stateText(e) }}
+                </GovueBadge>
+                <GovueBadge v-if="e.missing_receipt" kind="warning">
+                  {{ t('expenses.missingReceipt') }}
+                </GovueBadge>
+              </div>
             </td>
             <td class="px-3 py-2 text-right">{{ formatCents(e.gross_cents, locale) }}</td>
             <td class="px-3 py-2 text-right">{{ formatCents(e.net_cents, locale) }}</td>

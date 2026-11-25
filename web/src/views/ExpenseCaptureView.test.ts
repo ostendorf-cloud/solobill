@@ -45,6 +45,7 @@ const draft = {
   vat_cents: 0,
   category: 'euer.z51',
   file_id: 'f-1',
+  missing_receipt: false,
   is_asset: false,
   storno_of_id: null,
   imported: false,
@@ -822,6 +823,31 @@ describe('ExpenseCaptureView', () => {
       expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'Book' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'Delete draft' })).toBeNull()
+    })
+
+    it('flag a booking without a receipt', async () => {
+      mockApi({ expense: { ...booked, file_id: null, missing_receipt: true } })
+      await renderView('/expenses/capture/e-1')
+
+      expect(await screen.findByText('Receipt missing')).toBeVisible()
+      expect(screen.getByText(/booked without a receipt/)).toBeVisible()
+    })
+
+    it('flag a booking without a receipt in German', async () => {
+      mockApi({ expense: { ...booked, file_id: null, missing_receipt: true } })
+      await renderView('/expenses/capture/e-1', 'de')
+
+      expect(await screen.findByText('Beleg fehlt')).toBeVisible()
+      expect(screen.getByText(/ohne Beleg gebucht/)).toBeVisible()
+    })
+
+    it('do not flag a booking the server does not mark', async () => {
+      mockApi({ expense: booked })
+      await renderView('/expenses/capture/e-1')
+
+      await screen.findByText(/This expense is booked/)
+      expect(screen.queryByText('Receipt missing')).toBeNull()
+      expect(screen.queryByText(/booked without a receipt/)).toBeNull()
     })
 
     it('book a storno only after a confirmation with the date', async () => {

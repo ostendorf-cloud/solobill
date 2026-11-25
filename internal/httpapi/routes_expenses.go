@@ -66,12 +66,15 @@ type expenseJSON struct {
 	VATCents         int64      `json:"vat_cents"`
 	Category         string     `json:"category"`
 	FileID           *uuid.UUID `json:"file_id"`
-	IsAsset          bool       `json:"is_asset"`
-	StornoOfID       *uuid.UUID `json:"storno_of_id"`
-	Imported         bool       `json:"imported"`
-	BookedAt         *time.Time `json:"booked_at"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	// MissingReceipt is derived from state and file_id, never stored
+	// and never accepted in a request.
+	MissingReceipt bool       `json:"missing_receipt"`
+	IsAsset        bool       `json:"is_asset"`
+	StornoOfID     *uuid.UUID `json:"storno_of_id"`
+	Imported       bool       `json:"imported"`
+	BookedAt       *time.Time `json:"booked_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 func toExpenseJSON(e storage.Expense) expenseJSON {
@@ -88,6 +91,7 @@ func toExpenseJSON(e storage.Expense) expenseJSON {
 		VATCents:         e.VATCents,
 		Category:         string(e.Category),
 		FileID:           e.FileID,
+		MissingReceipt:   e.MissingReceipt(),
 		IsAsset:          e.IsAsset,
 		StornoOfID:       e.StornoOfID,
 		Imported:         e.Imported,
@@ -98,8 +102,9 @@ func toExpenseJSON(e storage.Expense) expenseJSON {
 }
 
 // expenseRequest is the body of POST and PUT: the expense JSON without
-// id, state, storno_of_id, imported, booked_at and the timestamps. Those
-// and the tenant are refused as unknown fields by the decoder.
+// id, state, missing_receipt, storno_of_id, imported, booked_at and the
+// timestamps. Those and the tenant are refused as unknown fields by the
+// decoder.
 type expenseRequest struct {
 	PaidOn           *string `json:"paid_on"`
 	ReceiptDate      *string `json:"receipt_date"`
@@ -654,7 +659,8 @@ func (a *app) handleDeleteExpense(w http.ResponseWriter, r *http.Request) error 
 // handleBookExpense books a draft, owner only. It checks the draft again
 // in full against the regime of its payment date, because a period may
 // have been added or superseded since the draft was saved. Booking
-// without a receipt is allowed; the EÜR report flags it.
+// without a receipt is allowed. The expense JSON flags it as
+// missing_receipt, and the EÜR report warns about it.
 func (a *app) handleBookExpense(w http.ResponseWriter, r *http.Request) error {
 	c, err := a.profileOwner(r)
 	if err != nil {

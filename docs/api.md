@@ -603,6 +603,7 @@ An expense JSON:
   "vat_cents": 0,
   "category": "euer.z51",
   "file_id": "...",
+  "missing_receipt": false,
   "is_asset": false,
   "storno_of_id": null,
   "imported": false,
@@ -616,6 +617,9 @@ An expense JSON:
 - Under the Kleinunternehmer regime on `paid_on`, `net_cents` equals `gross_cents` and
   `vat_cents` is 0.
 - `is_asset` sends the expense to the asset register. The EÜR then counts only depreciation.
+- `missing_receipt` is `true` when `state` is `booked` and `file_id` is `null`. It is derived on
+  every answer and never stored. A draft is never flagged. A storno row copies the `file_id` of
+  its original and so carries the same flag. A request that sends the field is refused.
 
 ### `GET /api/v1/expenses`
 
@@ -626,8 +630,8 @@ An expense JSON:
 ### `POST /api/v1/expenses`
 
 - Who: any.
-- Request: the expense JSON without `id`, `state`, `storno_of_id`, `imported`, `booked_at` and
-  the timestamps.
+- Request: the expense JSON without `id`, `state`, `missing_receipt`, `storno_of_id`,
+  `imported`, `booked_at` and the timestamps.
 - Response `201`: the draft. `400` with `details` for an inconsistent amount or category.
 
 ### `GET /api/v1/expenses/{id}`

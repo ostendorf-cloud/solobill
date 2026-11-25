@@ -23,6 +23,8 @@ export interface Expense {
   vat_cents: number
   category: string
   file_id: string | null
+  /** Derived by the server: booked without a receipt. Never sent back. */
+  missing_receipt: boolean
   is_asset: boolean
   storno_of_id: string | null
   imported: boolean

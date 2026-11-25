@@ -26,6 +26,7 @@ type expenseResponse struct {
 	VATCents         int64      `json:"vat_cents"`
 	Category         string     `json:"category"`
 	FileID           *uuid.UUID `json:"file_id"`
+	MissingReceipt   *bool      `json:"missing_receipt"`
 	IsAsset          bool       `json:"is_asset"`
 	StornoOfID       *uuid.UUID `json:"storno_of_id"`
 	Imported         bool       `json:"imported"`
@@ -330,6 +331,80 @@ func TestExpenseBookingWithoutReceiptIsAllowed(t *testing.T) {
 	}
 }
 
+// wantMissingReceipt fails unless the expense JSON carries
+// missing_receipt with the value want. A field that is absent fails too.
+func wantMissingReceipt(t *testing.T, where string, e expenseResponse, want bool) {
+	t.Helper()
+
+	if e.MissingReceipt == nil {
+		t.Errorf("%s: missing_receipt is absent, want %v", where, want)
+
+		return
+	}
+	if *e.MissingReceipt != want {
+		t.Errorf("%s: missing_receipt = %v, want %v", where, *e.MissingReceipt, want)
+	}
+}
+
+// TestExpenseMissingReceiptFlag checks the derived flag on every route
+// that answers with an expense JSON: create, book, storno, read and list.
+func TestExpenseMissingReceiptFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		withReceipt bool
+		book        bool
+		want        bool
+	}{
+		{name: "draft without receipt", withReceipt: false, book: false, want: false},
+		{name: "draft with receipt", withReceipt: true, book: false, want: false},
+		{name: "booked without receipt", withReceipt: false, book: true, want: true},
+		{name: "booked with receipt", withReceipt: true, book: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app := buildTestApp(t, 1000)
+			tenant := newBookingTenant(t, app, "flag")
+			addRegime(t, app, "2026-01-01", storage.VATRegimeKleinunternehmer)
+			body := kleinExpense("2026-11-18")
+			if tt.withReceipt {
+				body = withField(body, "file_id", addReceipt(t, app, tenant.owner.tenant.ID, storage.FilePurposeReceipt).String())
+			}
+
+			created := createExpense(t, app, tenant.owner, body)
+			wantMissingReceipt(t, "create", created, false)
+			got := created
+			if tt.book {
+				got = bookExpense(t, app, tenant.owner, created.ID)
+				wantMissingReceipt(t, "book", got, tt.want)
+			}
+
+			rec := tenant.member.do(t, app, http.MethodGet, "/api/v1/expenses/"+created.ID.String(), nil)
+			masterDataWantStatus(t, rec, http.StatusOK)
+			wantMissingReceipt(t, "get", masterDataDecode[expenseResponse](t, rec), tt.want)
+
+			list := listExpenses(t, app, tenant.member, "")
+			if len(list.Expenses) != 1 {
+				t.Fatalf("list has %d expenses, want 1", len(list.Expenses))
+			}
+			wantMissingReceipt(t, "list", list.Expenses[0], tt.want)
+
+			if !tt.book {
+				return
+			}
+			// The storno copies the file of its original, so it carries
+			// the same flag.
+			rec = tenant.owner.do(t, app, http.MethodPost, "/api/v1/expenses/"+got.ID.String()+"/storno", map[string]any{"paid_on": "2026-11-25"})
+			masterDataWantStatus(t, rec, http.StatusCreated)
+			wantMissingReceipt(t, "storno", masterDataDecode[expenseResponse](t, rec), tt.want)
+		})
+	}
+}
+
 func TestExpenseBookingNeedsDateAndCategory(t *testing.T) {
 	t.Parallel()
 
@@ -484,10 +559,10 @@ func TestExpenseRefusesUnknownAndServerOwnedFields(t *testing.T) {
 	addRegime(t, app, "2026-01-01", storage.VATRegimeKleinunternehmer)
 	other := uuid.NewString()
 
-	for _, field := range []string{"tenant_id", "id", "state", "storno_of_id", "imported", "booked_at", "created_at", "nonsense"} {
+	for _, field := range []string{"tenant_id", "id", "state", "storno_of_id", "imported", "booked_at", "created_at", "missing_receipt", "nonsense"} {
 		t.Run(field, func(t *testing.T) {
 			value := any(other)
-			if field == "imported" {
+			if field == "imported" || field == "missing_receipt" {
 				value = true
 			}
 			rec := tenant.member.do(t, app, http.MethodPost, "/api/v1/expenses", withField(kleinExpense("2026-11-18"), field, value))

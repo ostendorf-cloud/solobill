@@ -12,6 +12,7 @@
   "open": "Öffnen",
   "openFor": "{name} öffnen",
   "noSupplier": "Kein Lieferant",
+  "missingReceipt": "Beleg fehlt",
   "filters": {
     "label": "Filter",
     "year": "Zahlungsjahr",
@@ -102,6 +103,7 @@
     "unsaved": "Speichere den Entwurf, bevor du ihn buchst.",
     "bookedNote": "Diese Ausgabe ist gebucht. Sie ist schreibgeschützt und kann weder geändert noch gelöscht werden.",
     "stornoNote": "Diese Zeile ist eine Stornobuchung. Sie macht eine frühere Ausgabe rückgängig und ist schreibgeschützt.",
+    "missingReceiptNote": "Diese Ausgabe ist ohne Beleg gebucht. Bewahre einen Ersatzbeleg auf, der Zahlung und Zweck belegt.",
     "openOriginal": "Ursprüngliche Ausgabe öffnen",
     "bookedAt": "Gebucht am {date}"
   },
