@@ -18,6 +18,38 @@ var (
 	miseTypst          = regexp.MustCompile(`(?m)^typst = "([^"]+)"`)
 )
 
+// goTypstVersion is the constant internal/pdf checks the typst binary against at startup.
+// It is read from the source, not imported, so this test does not build the renderer.
+var goTypstVersion = regexp.MustCompile(`(?m)^const TypstVersion = "([^"]+)"$`)
+
+// TestPDFTypstVersionMatchesMise fails when pdf.TypstVersion differs from the typst pin in
+// mise.toml. The startup check compares the binary with the constant, so a constant left
+// behind a bump would reject the image's own typst, or pass the tests on the wrong one.
+func TestPDFTypstVersionMatchesMise(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("../pdf/render.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mise, err := os.ReadFile("../../mise.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := goTypstVersion.FindAllStringSubmatch(string(src), -1)
+	if len(c) != 1 {
+		t.Fatalf("internal/pdf/render.go must have exactly one 'const TypstVersion = \"<version>\"' line, got %q", c)
+	}
+	m := miseTypst.FindStringSubmatch(string(mise))
+	if m == nil {
+		t.Fatal(`mise.toml has no 'typst = "<version>"' line`)
+	}
+	if c[0][1] != m[1] {
+		t.Fatalf("pdf.TypstVersion is %s but mise.toml pins typst %s; they must match, and the golden files in internal/pdf/testdata must be refreshed", c[0][1], m[1])
+	}
+}
+
 // TestDockerfileTypstMatchesMise fails when the image's typst differs from the one mise.toml
 // pins for the tests. An issued document is rendered from its frozen payload and must look
 // the same in the image as in the golden tests, so both must run the same typst.
