@@ -166,7 +166,7 @@ func BuildPayload(in PayloadInput) docpayload.FrozenPayloadV1 {
 		Type:              string(doc.Type),
 		Language:          string(lang),
 		VATRegime:         string(doc.VATRegime),
-		TemplateVersion:   docpayload.TemplateDocumentV1,
+		TemplateVersion:   docpayload.TemplateCurrent,
 		Currency:          docpayload.CurrencyEUR,
 		Number:            in.Number,
 		NumberValue:       in.NumberValue,

@@ -124,6 +124,18 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestIssuingWritesTheCurrentTemplate keeps the version issuing freezes
+// equal to the one this package renders new documents with.
+func TestIssuingWritesTheCurrentTemplate(t *testing.T) {
+	t.Parallel()
+	if docpayload.TemplateCurrent != CurrentTemplateVersion {
+		t.Errorf("docpayload.TemplateCurrent = %q, want %q", docpayload.TemplateCurrent, CurrentTemplateVersion)
+	}
+	if _, ok := templates[docpayload.TemplateDocumentV1]; !ok {
+		t.Errorf("%s is not shipped any more", docpayload.TemplateDocumentV1)
+	}
+}
+
 // templateHashes pins every shipped template version. A stored payload
 // names its version forever, so a shipped template never changes.
 var templateHashes = map[string]string{
