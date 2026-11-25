@@ -747,12 +747,18 @@ function back(): void {
                 : t(`expenses.state.${expense.state}`)
             }}
           </GovueBadge>
+          <GovueBadge v-if="expense.missing_receipt" kind="warning">
+            {{ t('expenses.missingReceipt') }}
+          </GovueBadge>
           <span v-if="expense.booked_at" class="text-sm text-text-muted">
             {{ t('expenses.capture.bookedAt', { date: expense.booked_at.slice(0, 10) }) }}
           </span>
         </div>
         <p v-if="booked && !expense?.storno_of_id" class="text-text-muted">
           {{ t('expenses.capture.bookedNote') }}
+        </p>
+        <p v-if="expense?.missing_receipt" class="text-warning-text">
+          {{ t('expenses.capture.missingReceiptNote') }}
         </p>
         <template v-if="expense?.storno_of_id">
           <p class="text-text-muted">{{ t('expenses.capture.stornoNote') }}</p>

@@ -27,7 +27,8 @@ const expense = {
   vat_rate_permyriad: 1900,
   vat_cents: 95000,
   category: 'euer.z27',
-  file_id: null,
+  file_id: 'f-1',
+  missing_receipt: false,
   is_asset: false,
   storno_of_id: null,
   imported: false,
@@ -130,6 +131,41 @@ describe('ExpensesView', () => {
     expect(await screen.findByRole('heading', { name: 'Ausgaben' })).toBeVisible()
     expect(await screen.findByRole('button', { name: 'Beleg erfassen' })).toBeVisible()
     expect(await screen.findAllByText('5.950,00 EUR')).not.toHaveLength(0)
+  })
+
+  it('flags only the rows the server marks as missing a receipt', async () => {
+    const noReceipt = {
+      ...expense,
+      id: 'e-4',
+      supplier: 'Kiosk',
+      file_id: null,
+      missing_receipt: true,
+    }
+    // A draft without a file is not flagged: the server decides, the view
+    // never derives the flag from file_id itself.
+    const draftWithoutFile = { ...draft, file_id: null, missing_receipt: false }
+    mockApi(answer([expense, draftWithoutFile, noReceipt]))
+    renderView()
+
+    await screen.findByRole('rowheader', { name: 'Kiosk' })
+    const rowOf = (name: string): HTMLElement => {
+      const row = screen.getByRole('rowheader', { name }).closest('tr')
+      if (!row) {
+        throw new Error(`no row for ${name}`)
+      }
+      return row
+    }
+    expect(within(rowOf('Kiosk')).getByText('Receipt missing')).toBeVisible()
+    for (const name of ['Office Supplies Inc', 'Draft Shop']) {
+      expect(within(rowOf(name)).queryByText('Receipt missing')).toBeNull()
+    }
+  })
+
+  it('flags a missing receipt in German', async () => {
+    mockApi(answer([{ ...expense, file_id: null, missing_receipt: true }]))
+    renderView('de')
+
+    expect(await screen.findByText('Beleg fehlt')).toBeVisible()
   })
 
   it('reloads with the chosen state and category', async () => {

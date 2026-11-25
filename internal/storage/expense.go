@@ -43,7 +43,7 @@ type Expense struct {
 	// Category is a category.KindExpense key.
 	Category category.Key
 	// FileID is the receipt in files, nil until uploaded. Booking
-	// without a receipt is allowed and flagged in the report.
+	// without a receipt is allowed and flagged: see MissingReceipt.
 	FileID *uuid.UUID
 	// IsAsset marks an acquisition that goes into the asset register
 	// (issue #78) instead of the expense lines. The EÜR report counts
@@ -58,6 +58,14 @@ type Expense struct {
 	BookedAt  *time.Time
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// MissingReceipt reports whether e is booked without a receipt. It is
+// derived, never stored. A draft is never flagged, because its receipt
+// may still be uploaded. A storno row copies the file of its original,
+// so the storno of an original without a receipt is flagged too.
+func (e Expense) MissingReceipt() bool {
+	return e.State == BookingStateBooked && e.FileID == nil
 }
 
 // ExpenseFilter narrows ExpenseRepository.List. A nil field does not

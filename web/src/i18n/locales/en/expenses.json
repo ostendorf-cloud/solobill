@@ -12,6 +12,7 @@
   "open": "Open",
   "openFor": "Open {name}",
   "noSupplier": "No supplier",
+  "missingReceipt": "Receipt missing",
   "filters": {
     "label": "Filter",
     "year": "Year of payment",
@@ -102,6 +103,7 @@
     "unsaved": "Save the draft before you book it.",
     "bookedNote": "This expense is booked. It is read only and cannot be changed or deleted.",
     "stornoNote": "This row is a storno booking. It reverses an earlier expense and is read only.",
+    "missingReceiptNote": "This expense is booked without a receipt. Keep a substitute receipt that shows the payment and its purpose.",
     "openOriginal": "Open the original expense",
     "bookedAt": "Booked at {date}"
   },
