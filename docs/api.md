@@ -838,37 +838,52 @@ Registered in `internal/httpapi/routes_reports.go`. Owned by issue #80.
       "key": "euer.z12",
       "zeile": 12,
       "kennzahl": "111",
+      "operator": "",
+      "verified": false,
       "label_de": "Betriebseinnahmen als Kleinunternehmer",
+      "label_en": "Revenue as a small business",
       "amount_cents": 2375000,
-      "sources": [{ "kind": "payment", "id": "...", "amount_cents": 23750 }]
+      "sources": [{ "kind": "payment", "id": "...", "date": "2026-03-10", "amount_cents": 23750 }]
     }
   ],
   "boundary_entries": [{ "kind": "expense", "id": "...", "date": "2027-01-08",
     "amount_cents": 0, "assigned_tax_year": null }],
   "warnings": [
-    { "code": "missing_receipt", "kind": "expense", "id": "..." },
-    { "code": "asset_expense_without_asset", "kind": "expense", "id": "..." }
+    { "code": "missing_receipt", "kind": "expense", "id": "...", "related_ids": ["..."] },
+    { "code": "asset_expense_without_asset", "kind": "expense", "id": "...", "related_ids": [] }
   ],
   "disclaimer": "Computed from your entries. No tax advice."
 }
 ```
 
-- `sources[].kind` is `payment`, `expense`, `other_income` or `asset`.
+- `sources[].kind` is `payment`, `expense`, `other_income` or `asset`. `sources[].date` is the
+  payment date of the entry, 31 December for the depreciation of an asset.
+- `operator` is the sign the form prints next to the Kennzahl: `-` on Zeile 72, `+` on Zeile 73,
+  else empty. `amount_cents` stays as it goes into the field.
+- `verified` is `false` for a line whose Zeile or Kennzahl was not checked against the form of
+  the year, which is every line of an unverified mapping.
 - `boundary_entries` lists entries from 22 December to 10 January. `assigned_tax_year` is the
-  effective assignment, or `null` when the entry counts in the year of its date.
+  effective assignment, or `null` when the entry counts in the year of its date. NOT VERIFIED:
+  the 10 day rule of section 11 EStG. solobill lists the entries and never decides it.
 - `warnings[].code` is one of `missing_receipt`, `asset_expense_without_asset` (a booked
   expense with `is_asset` set and no asset row), `unassigned_boundary_entry`.
+- `missing_receipt` is raised once per original. `related_ids` lists its stornos of the year,
+  or the original of a storno counted in another year. Zeilen 72 and 73 never raise it.
 - `mapping.status` is `verified` or `unverified`. The view shows a banner when unverified.
-- `404` for a year whose documents are all imported archive years (2023 to 2025).
-- `400 vat_regime_missing` for a year without any VAT regime period.
+- `404` for a year before 2026 (the imported archive years 2023 to 2025), a year without a line
+  mapping, or a `{year}` that is no four digit number.
+- `400 vat_regime_missing` when no VAT regime period covers 31 December of the year or the date
+  of a counted entry.
 
 ### `GET /api/v1/reports/euer/{year}/csv`
 
 - Who: any.
 - Response `200`: `text/csv; charset=utf-8`, semicolon separated, decimal comma,
-  `Content-Disposition: attachment`.
-- Columns: `key;zeile;kennzahl;label;amount;source_kind;source_id;source_amount`.
+  `Content-Disposition: attachment; filename="euer-<year>.csv"`.
+- Columns: `key;zeile;kennzahl;operator;label;amount;source_kind;source_id;source_amount`.
+- `operator` is `minus`, `plus` or empty. A text cell that starts like a formula gets a `'`.
 - One row per source, so every figure traces to its rows.
+- The same `404` and `400` as the JSON report.
 
 ### `GET /api/v1/euer-assignments`
 
@@ -885,9 +900,13 @@ Registered in `internal/httpapi/routes_reports.go`. Owned by issue #80.
   `"supersedes_id": null}`. `entry_kind` is `payment`, `expense` or `other_income`.
 - Append-only. A changed decision is a new row with `supersedes_id` naming the old one.
 - Response `201`: the assignment.
-- `400` when the entry's date lies outside 22 December to 10 January, or `tax_year` is neither
-  the year of the date nor the neighbouring year it belongs to.
-- `409` when the entry already has an effective assignment and `supersedes_id` does not name it.
+- `400` with `details.entry_id` when the entry is not found in the tenant, is a reversal (it
+  follows the payment it reverses), a draft or an asset expense, or its date lies outside 22
+  December to 10 January.
+- `400` with `details.tax_year` when `tax_year` is neither the year of the date nor the
+  neighbouring year it may belong to.
+- `409` when the entry already has an effective assignment and `supersedes_id` does not name it,
+  or `supersedes_id` names no effective assignment of the entry.
 
 ## Status
 
