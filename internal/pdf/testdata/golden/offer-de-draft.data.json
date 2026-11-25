@@ -1,7 +1,8 @@
 {
-  "template_version": "document-v1",
+  "template_version": "document-v2",
   "lang": "de",
   "draft": true,
+  "logo": false,
   "watermark": "Entwurf",
   "document_title": "Angebot (Entwurf)",
   "title": "Angebot",

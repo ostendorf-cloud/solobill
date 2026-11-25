@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "type": "offer",
+  "language": "en",
+  "vat_regime": "kleinunternehmer",
+  "template_version": "document-v2",
+  "currency": "EUR",
+  "number": "AN-20260004",
+  "number_value": 4,
+  "number_year": 2026,
+  "issue_date": "2026-11-20",
+  "valid_until": "2026-12-20",
+  "seller": {
+    "legal_name": "Max Mustermann IT-Beratung",
+    "address": {
+      "street": "Musterstraße 1",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "bank_name": "Musterbank",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "K-1001",
+    "name": "Mustermann Consulting GmbH",
+    "address": {
+      "street": "Beispielweg 7",
+      "postal_code": "54321",
+      "city": "Beispielstadt",
+      "country_code": "DE"
+    }
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "Kubernetes basics workshop",
+      "quantity_thousandths": 1000,
+      "unit": "day",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    },
+    {
+      "position": 2,
+      "description": "Travel expenses, flat rate",
+      "quantity_thousandths": 1000,
+      "unit": "flat",
+      "unit_price_cents": 8550,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 8550,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 8550
+    }
+  ],
+  "document_discount": {},
+  "totals": {
+    "net_total_cents": 128550,
+    "document_discount_cents": 0,
+    "net_after_document_discount_cents": 128550,
+    "vat": [
+      {
+        "rate_permyriad": 0,
+        "net_cents": 128550,
+        "vat_cents": 0
+      }
+    ],
+    "vat_total_cents": 0,
+    "grand_total_cents": 128550
+  },
+  "tax_note": "No VAT is charged under section 19 of the German VAT Act (Kleinunternehmerregelung).",
+  "payment_terms": "Payable within 14 days without deduction.",
+  "notes": "We look forward to hearing from you."
+}

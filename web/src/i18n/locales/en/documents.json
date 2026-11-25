@@ -248,8 +248,7 @@
     "correct": "Correct invoice",
     "correctHint": "Starts a correction draft with the lines of the effective document.",
     "correctOwnerOnly": "Only the owner corrects an invoice.",
-    "pdf": "Download PDF",
-    "pdfNote": "The PDF download is not available yet. It follows with the PDF renderer."
+    "pdf": "Download PDF ({language})"
   },
   "discard": {
     "action": "Discard draft",

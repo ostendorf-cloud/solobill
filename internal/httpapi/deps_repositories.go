@@ -57,10 +57,14 @@ type Repositories struct {
 }
 
 // DocumentRenderer turns a frozen payload into a PDF. Defined here, at
-// its consumer. Implemented by issue #74 (I8) with Typst.
+// its consumer. Implemented by issue #74 (I8) with Typst in
+// internal/pdf, which this package does not import: a failure is
+// classified by the methods it carries (see routes_pdf.go).
 type DocumentRenderer interface {
-	// Render renders payload (a stored docpayload.FrozenPayloadV1, as
-	// frozen) with the template version the payload names. draft renders
-	// the "Entwurf" watermark and no number.
-	Render(ctx context.Context, payload []byte, draft bool) ([]byte, error)
+	// RenderWithLogo renders payload (a stored docpayload.FrozenPayloadV1,
+	// as frozen) with the template version the payload names. logo is
+	// the logo file the payload names by SHA-256, nil when it names none;
+	// the renderer checks it against that hash again. draft renders the
+	// "Entwurf" watermark and no number.
+	RenderWithLogo(ctx context.Context, payload []byte, draft bool, logo []byte) ([]byte, error)
 }

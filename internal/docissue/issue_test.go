@@ -225,7 +225,7 @@ func TestIssueKleinunternehmerFreezesTheNoteFromTheRegime(t *testing.T) {
 			if p.VATRegime != docpayload.RegimeKleinunternehmer || p.Totals.VATTotalCents != 0 || p.Totals.GrandTotalCents != 23750 {
 				t.Errorf("payload regime %q totals %+v, want kleinunternehmer, no VAT, 23750", p.VATRegime, p.Totals)
 			}
-			if p.TemplateVersion != docpayload.TemplateDocumentV1 || p.Number != "RE-20260001" || p.NumberValue != 1 || p.NumberYear != 2026 {
+			if p.TemplateVersion != docpayload.TemplateCurrent || p.Number != "RE-20260001" || p.NumberValue != 1 || p.NumberYear != 2026 {
 				t.Errorf("payload template %q number %q %d/%d", p.TemplateVersion, p.Number, p.NumberValue, p.NumberYear)
 			}
 			if p.IssueDate != "2026-11-20" {

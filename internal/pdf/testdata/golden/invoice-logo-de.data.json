@@ -1,0 +1,152 @@
+{
+  "template_version": "document-v2",
+  "lang": "de",
+  "draft": false,
+  "logo": true,
+  "watermark": "Entwurf",
+  "document_title": "Rechnung RE-20260007",
+  "title": "Rechnung",
+  "sender_line": "Max Mustermann IT-Beratung · Musterstraße 1 · 12345 Musterstadt",
+  "seller_name": "Max Mustermann IT-Beratung",
+  "recipient_lines": [
+    "Mustermann Consulting GmbH",
+    "Beispielweg 7",
+    "54321 Beispielstadt"
+  ],
+  "recipient_paths": [
+    "customer.name",
+    "customer.address.street",
+    "customer.address.city"
+  ],
+  "meta": [
+    {
+      "label": "Rechnungsnummer",
+      "value": "RE-20260007",
+      "path": "number"
+    },
+    {
+      "label": "Datum",
+      "value": "20.11.2026",
+      "path": "issue_date"
+    },
+    {
+      "label": "Leistungsdatum",
+      "value": "18.11.2026",
+      "path": "service_period.from"
+    },
+    {
+      "label": "Kundennummer",
+      "value": "K-1001",
+      "path": "customer.number"
+    },
+    {
+      "label": "Zahlbar bis",
+      "value": "04.12.2026",
+      "path": "due_date"
+    }
+  ],
+  "corrects_line": "",
+  "show_vat": false,
+  "columns": {
+    "position": "Pos.",
+    "description": "Beschreibung",
+    "quantity": "Menge",
+    "unit": "Einheit",
+    "unit_price": "Einzelpreis",
+    "vat_rate": "USt.",
+    "amount": "Betrag"
+  },
+  "lines": [
+    {
+      "position": "1",
+      "description": [
+        "Workshop Kubernetes Grundlagen"
+      ],
+      "discount": "",
+      "quantity": "1",
+      "unit": "Tag",
+      "unit_price": "1.200,00 EUR",
+      "vat_rate": "",
+      "amount": "1.200,00 EUR"
+    },
+    {
+      "position": "2",
+      "description": [
+        "Reisekosten pauschal"
+      ],
+      "discount": "",
+      "quantity": "1",
+      "unit": "pauschal",
+      "unit_price": "85,50 EUR",
+      "vat_rate": "",
+      "amount": "85,50 EUR"
+    }
+  ],
+  "totals": [
+    {
+      "label": "Gesamtbetrag",
+      "value": "1.285,50 EUR",
+      "strong": true,
+      "path": "totals.grand_total_cents"
+    }
+  ],
+  "sections": [
+    {
+      "title": "",
+      "lines": [
+        "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet."
+      ],
+      "path": "tax_note"
+    },
+    {
+      "title": "Zahlungsbedingungen",
+      "lines": [
+        "Zahlbar innerhalb von 14 Tagen ohne Abzug."
+      ],
+      "path": "payment_terms"
+    }
+  ],
+  "footer": [
+    [
+      "Max Mustermann IT-Beratung",
+      "Musterstraße 1",
+      "12345 Musterstadt"
+    ],
+    [
+      "Tel. +49 000 0000000",
+      "E-Mail rechnung@example.com",
+      "Web www.example.com"
+    ],
+    [
+      "Steuernummer 12/345/67890"
+    ],
+    [
+      "Bank Musterbank",
+      "IBAN DE00 0000 0000 0000 0000 00",
+      "BIC MUSTDEXXXXX"
+    ]
+  ],
+  "footer_paths": [
+    [
+      "seller.legal_name",
+      "seller.address.street",
+      "seller.address.city"
+    ],
+    [
+      "seller.phone",
+      "seller.email",
+      "seller.website"
+    ],
+    [
+      "seller.tax_number"
+    ],
+    [
+      "seller.bank_name",
+      "seller.iban",
+      "seller.bic"
+    ]
+  ],
+  "footer_text": [],
+  "page_label": "Seite",
+  "page_of_label": "von"
+}

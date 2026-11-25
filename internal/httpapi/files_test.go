@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -29,8 +32,20 @@ import (
 // samplePDF is a minimal body the sniffer accepts as PDF.
 var samplePDF = []byte("%PDF-1.7\n1 0 obj << >> endobj\n%%EOF\n")
 
-// samplePNG starts with the PNG signature.
-var samplePNG = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, 64)...)
+// samplePNG is a real 24 by 8 pixel PNG: the logo upload decodes it.
+var samplePNG = encodeTestPNG(24, 8)
+
+// encodeTestPNG encodes a w by h PNG with one red pixel.
+func encodeTestPNG(w, h int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	img.Set(0, 0, color.RGBA{R: 200, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic(err)
+	}
+
+	return buf.Bytes()
+}
 
 func sha256Of(b []byte) string {
 	sum := sha256.Sum256(b)

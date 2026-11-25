@@ -248,8 +248,7 @@
     "correct": "Rechnung korrigieren",
     "correctHint": "Startet einen Korrekturentwurf mit den Positionen des gültigen Belegs.",
     "correctOwnerOnly": "Nur die Inhaberin oder der Inhaber korrigiert eine Rechnung.",
-    "pdf": "PDF herunterladen",
-    "pdfNote": "Der PDF-Download ist noch nicht verfügbar. Er folgt mit der PDF-Erzeugung."
+    "pdf": "PDF herunterladen ({language})"
   },
   "discard": {
     "action": "Entwurf verwerfen",

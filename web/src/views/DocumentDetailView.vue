@@ -25,6 +25,7 @@ import {
   classifyIssueError,
   createCorrection,
   deleteDocument,
+  documentPdfUrl,
   formatPermyriad,
   formatQuantity,
   getDocument,
@@ -601,13 +602,15 @@ function openNewCorrection(id: string): void {
           {{ actionErrorText }}
         </p>
 
-        <div v-if="isIssued">
-          <GovueButton variant="secondary" disabled aria-describedby="pdf-note">
-            {{ t('documents.detail.pdf') }}
-          </GovueButton>
-          <p id="pdf-note" class="mt-1 text-sm text-text-muted">
-            {{ t('documents.detail.pdfNote') }}
-          </p>
+        <div v-if="isIssued && !doc.imported">
+          <a
+            :href="documentPdfUrl(doc.id)"
+            :hreflang="doc.language"
+            download
+            class="text-accent underline underline-offset-2"
+          >
+            {{ t('documents.detail.pdf', { language: t(`documents.language.${doc.language}`) }) }}
+          </a>
         </div>
       </section>
 

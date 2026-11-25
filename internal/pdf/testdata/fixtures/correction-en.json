@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "type": "correction",
+  "language": "en",
+  "vat_regime": "standard",
+  "template_version": "document-v2",
+  "currency": "EUR",
+  "number": "RE-20260043-1",
+  "number_value": 43,
+  "number_year": 2026,
+  "correction_seq": 1,
+  "issue_date": "2026-12-10",
+  "service_period": {
+    "from": "2026-11-01",
+    "to": "2026-11-30"
+  },
+  "due_date": "2026-12-24",
+  "seller": {
+    "legal_name": "Example GmbH",
+    "address": {
+      "street": "Musterstraße 1",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "vat_id": "DE000000000",
+    "bank_name": "Musterbank",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com",
+    "footer_text": "Geschäftsführer: Max Mustermann · Amtsgericht Musterstadt HRB 00000"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "K-1001",
+    "name": "Mustermann Consulting GmbH",
+    "address": {
+      "street": "Beispielweg 7",
+      "line2": "z. Hd. Max Mustermann",
+      "postal_code": "54321",
+      "city": "Beispielstadt",
+      "country_code": "DE"
+    }
+  },
+  "corrects": {
+    "id": "00000000-0000-4000-8000-000000000043",
+    "number": "RE-20260043",
+    "issue_date": "2026-12-07"
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "Software development as specified",
+      "quantity_thousandths": 120000,
+      "unit": "hours",
+      "unit_price_cents": 9500,
+      "vat_rate_permyriad": 1900,
+      "line_discount": {},
+      "net_after_line_discount_cents": 1140000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 1140000
+    }
+  ],
+  "document_discount": {},
+  "totals": {
+    "net_total_cents": 1140000,
+    "document_discount_cents": 0,
+    "net_after_document_discount_cents": 1140000,
+    "vat": [
+      {
+        "rate_permyriad": 1900,
+        "net_cents": 1140000,
+        "vat_cents": 216600
+      }
+    ],
+    "vat_total_cents": 216600,
+    "grand_total_cents": 1356600
+  },
+  "payment_terms": "Payable within 14 days without deduction."
+}

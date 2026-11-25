@@ -39,20 +39,54 @@ func writeOrCompare(t *testing.T, path string, got []byte) {
 	}
 }
 
-// renderCase is one golden render: a fixture, issued or as a draft.
+// renderCase is one golden render: a fixture, issued or as a draft,
+// with the test logo or without.
 type renderCase struct {
 	name    string
 	fixture string
 	draft   bool
+	logo    bool
 }
 
 func renderCases() []renderCase {
 	cases := make([]renderCase, 0, len(fixtures)+1)
 	for _, f := range fixtures {
-		cases = append(cases, renderCase{name: f.name, fixture: f.name})
+		cases = append(cases, renderCase{name: f.name, fixture: f.name, logo: f.logo})
 	}
 
 	return append(cases, renderCase{name: "offer-de-draft", fixture: "offer-de", draft: true})
+}
+
+// logoOf is the logo bytes a case renders with, nil without a logo.
+func (c renderCase) logoOf(t *testing.T) []byte {
+	t.Helper()
+	if !c.logo {
+		return nil
+	}
+
+	return readLogo(t)
+}
+
+// TestGoldenCells proves a golden case exists for every VAT regime,
+// document type and language the templates print, issued with the
+// current template.
+func TestGoldenCells(t *testing.T) {
+	covered := map[string]bool{}
+	for _, f := range fixtures {
+		p := loadFixture(t, f.name)
+		if p.TemplateVersion == CurrentTemplateVersion {
+			covered[p.VATRegime+"/"+p.Type+"/"+p.Language] = true
+		}
+	}
+	for _, regime := range []string{docpayload.RegimeStandard, docpayload.RegimeKleinunternehmer} {
+		for _, typ := range []string{docpayload.TypeInvoice, docpayload.TypeCorrection, docpayload.TypeOffer} {
+			for lang := range labelsByLanguage {
+				if cell := regime + "/" + typ + "/" + lang; !covered[cell] {
+					t.Errorf("no golden case for %s", cell)
+				}
+			}
+		}
+	}
 }
 
 // TestFixtures keeps the payload fixtures in step with internal/money
@@ -81,7 +115,7 @@ func TestFixtures(t *testing.T) {
 func TestGolden(t *testing.T) {
 	for _, c := range renderCases() {
 		t.Run(c.name, func(t *testing.T) {
-			src, err := BuildSource(loadFixture(t, c.fixture), c.draft)
+			src, err := BuildSourceWithLogo(loadFixture(t, c.fixture), c.draft, c.logoOf(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -90,10 +124,23 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestIssuingWritesTheCurrentTemplate keeps the version issuing freezes
+// equal to the one this package renders new documents with.
+func TestIssuingWritesTheCurrentTemplate(t *testing.T) {
+	t.Parallel()
+	if docpayload.TemplateCurrent != CurrentTemplateVersion {
+		t.Errorf("docpayload.TemplateCurrent = %q, want %q", docpayload.TemplateCurrent, CurrentTemplateVersion)
+	}
+	if _, ok := templates[docpayload.TemplateDocumentV1]; !ok {
+		t.Errorf("%s is not shipped any more", docpayload.TemplateDocumentV1)
+	}
+}
+
 // templateHashes pins every shipped template version. A stored payload
 // names its version forever, so a shipped template never changes.
 var templateHashes = map[string]string{
 	"document-v1": "7054e771c104f9298550f5cdbff4b4da84224022aa0091f51d4e13d579da857f",
+	"document-v2": "e647dc56e1a4adcc0b7a1f0869b9b4e7e8cdb26bb655967d8b587505a8f26510",
 }
 
 func TestTemplateHashes(t *testing.T) {
@@ -128,7 +175,7 @@ func renderAll(t *testing.T) map[string][]byte {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pdf, err := r.Render(context.Background(), payload, c.draft)
+		pdf, err := r.RenderWithLogo(context.Background(), payload, c.draft, c.logoOf(t))
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}

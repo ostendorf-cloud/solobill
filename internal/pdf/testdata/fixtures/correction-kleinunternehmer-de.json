@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "type": "correction",
+  "language": "de",
+  "vat_regime": "kleinunternehmer",
+  "template_version": "document-v2",
+  "currency": "EUR",
+  "number": "RE-20260007-1",
+  "number_value": 7,
+  "number_year": 2026,
+  "correction_seq": 1,
+  "issue_date": "2026-11-27",
+  "service_period": {
+    "from": "2026-11-18",
+    "to": "2026-11-18"
+  },
+  "due_date": "2026-12-11",
+  "seller": {
+    "legal_name": "Max Mustermann IT-Beratung",
+    "address": {
+      "street": "Musterstraße 1",
+      "postal_code": "12345",
+      "city": "Musterstadt",
+      "country_code": "DE"
+    },
+    "tax_number": "12/345/67890",
+    "bank_name": "Musterbank",
+    "iban": "DE00 0000 0000 0000 0000 00",
+    "bic": "MUSTDEXXXXX",
+    "email": "rechnung@example.com",
+    "phone": "+49 000 0000000",
+    "website": "www.example.com"
+  },
+  "customer": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "number": "K-1001",
+    "name": "Mustermann Consulting GmbH",
+    "address": {
+      "street": "Beispielweg 7",
+      "postal_code": "54321",
+      "city": "Beispielstadt",
+      "country_code": "DE"
+    }
+  },
+  "corrects": {
+    "id": "00000000-0000-4000-8000-000000000007",
+    "number": "RE-20260007",
+    "issue_date": "2026-11-20"
+  },
+  "lines": [
+    {
+      "position": 1,
+      "description": "Workshop Kubernetes Grundlagen",
+      "quantity_thousandths": 1000,
+      "unit": "Tag",
+      "unit_price_cents": 120000,
+      "vat_rate_permyriad": 0,
+      "line_discount": {},
+      "net_after_line_discount_cents": 120000,
+      "document_discount_share_cents": 0,
+      "net_after_all_discounts_cents": 120000
+    }
+  ],
+  "document_discount": {},
+  "totals": {
+    "net_total_cents": 120000,
+    "document_discount_cents": 0,
+    "net_after_document_discount_cents": 120000,
+    "vat": [
+      {
+        "rate_permyriad": 0,
+        "net_cents": 120000,
+        "vat_cents": 0
+      }
+    ],
+    "vat_total_cents": 0,
+    "grand_total_cents": 120000
+  },
+  "tax_note": "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.",
+  "payment_terms": "Zahlbar innerhalb von 14 Tagen ohne Abzug."
+}

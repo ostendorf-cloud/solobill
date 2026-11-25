@@ -3,7 +3,7 @@
   "type": "invoice",
   "language": "de",
   "vat_regime": "standard",
-  "template_version": "document-v1",
+  "template_version": "document-v2",
   "currency": "EUR",
   "number": "RE-20260042",
   "number_value": 42,

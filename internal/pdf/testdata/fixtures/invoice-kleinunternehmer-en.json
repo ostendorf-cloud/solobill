@@ -3,7 +3,7 @@
   "type": "invoice",
   "language": "en",
   "vat_regime": "kleinunternehmer",
-  "template_version": "document-v1",
+  "template_version": "document-v2",
   "currency": "EUR",
   "number": "RE-20260007",
   "number_value": 7,

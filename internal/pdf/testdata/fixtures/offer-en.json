@@ -3,7 +3,7 @@
   "type": "offer",
   "language": "en",
   "vat_regime": "standard",
-  "template_version": "document-v1",
+  "template_version": "document-v2",
   "currency": "EUR",
   "number": "AN-20260013",
   "number_value": 13,
