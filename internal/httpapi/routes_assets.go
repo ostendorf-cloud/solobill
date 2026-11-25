@@ -48,53 +48,62 @@ type assetJSON struct {
 	DisposedOn            *string    `json:"disposed_on"`
 	DisposalProceedsCents *int64     `json:"disposal_proceeds_cents"`
 	Imported              bool       `json:"imported"`
-	// BookValueCents, BookValueYear and Editable are derived on every
-	// answer and never accepted in a request (see docs/api.md).
-	BookValueCents int64     `json:"book_value_cents"`
-	BookValueYear  *int      `json:"book_value_year"`
-	Editable       bool      `json:"editable"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// BookValueCents, BookValueYear, DisposalRestCents and Editable are
+	// derived on every answer and never accepted in a request (see
+	// docs/api.md).
+	BookValueCents    *int64    `json:"book_value_cents"`
+	BookValueYear     *int      `json:"book_value_year"`
+	DisposalRestCents *int64    `json:"disposal_rest_cents"`
+	Editable          bool      `json:"editable"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // toAssetJSON is the asset JSON at the German calendar year currentYear.
-// It fails only for a stored asset internal/afa refuses.
-func toAssetJSON(a storage.Asset, currentYear int) (assetJSON, error) {
+// A stored asset internal/afa refuses does not fail the answer: it is
+// logged by id and answered with null derived figures and editable false,
+// so one bad row does not hide the rest of the register.
+func (a *app) toAssetJSON(ctx context.Context, asset storage.Asset, currentYear int) assetJSON {
 	var disposed *string
-	if a.DisposedOn != nil {
-		s := a.DisposedOn.Format(assetDateLayout)
+	if asset.DisposedOn != nil {
+		s := asset.DisposedOn.Format(assetDateLayout)
 		disposed = &s
 	}
 
-	value, err := afa.CurrentBookValue(toAFAAsset(a), currentYear)
-	if err != nil {
-		return assetJSON{}, api.Internal(fmt.Errorf("httpapi: book value of asset %s: %w", a.ID, err))
-	}
-	var valueYear *int
-	if value.Year != 0 {
-		valueYear = &value.Year
+	out := assetJSON{
+		ID:                    asset.ID,
+		Name:                  asset.Name,
+		AcquiredOn:            asset.AcquiredOn.Format(assetDateLayout),
+		CostBasisCents:        asset.CostBasisCents,
+		Method:                string(asset.Method),
+		Group:                 string(asset.Group),
+		UsefulLifeMonths:      asset.UsefulLifeMonths,
+		ExpenseID:             asset.ExpenseID,
+		OpeningBookValueCents: asset.OpeningBookValueCents,
+		OpeningBookValueYear:  asset.OpeningBookValueYear,
+		DisposedOn:            disposed,
+		DisposalProceedsCents: asset.DisposalProceedsCents,
+		Imported:              asset.Imported,
+		CreatedAt:             asset.CreatedAt.UTC(),
+		UpdatedAt:             asset.UpdatedAt.UTC(),
 	}
 
-	return assetJSON{
-		ID:                    a.ID,
-		Name:                  a.Name,
-		AcquiredOn:            a.AcquiredOn.Format(assetDateLayout),
-		CostBasisCents:        a.CostBasisCents,
-		Method:                string(a.Method),
-		Group:                 string(a.Group),
-		UsefulLifeMonths:      a.UsefulLifeMonths,
-		ExpenseID:             a.ExpenseID,
-		OpeningBookValueCents: a.OpeningBookValueCents,
-		OpeningBookValueYear:  a.OpeningBookValueYear,
-		DisposedOn:            disposed,
-		DisposalProceedsCents: a.DisposalProceedsCents,
-		Imported:              a.Imported,
-		BookValueCents:        value.Cents,
-		BookValueYear:         valueYear,
-		Editable:              assetEditConflict(a, a, currentYear) == nil,
-		CreatedAt:             a.CreatedAt.UTC(),
-		UpdatedAt:             a.UpdatedAt.UTC(),
-	}, nil
+	value, err := afa.CurrentBookValue(toAFAAsset(asset), currentYear)
+	if err != nil {
+		// The afa reasons are fixed texts about fields, never the
+		// owner's own text.
+		a.logger.WarnContext(ctx, "stored asset has no book value", "asset_id", asset.ID, "error", err)
+
+		return out
+	}
+	out.BookValueCents = &value.Cents
+	if value.Year != 0 {
+		out.BookValueYear = &value.Year
+	}
+	out.DisposalRestCents = value.DisposalRestCents
+	out.Editable = assetEditConflict(asset, asset, currentYear) == nil
+
+	return out
 }
 
 // Codes of the asset routes' 409 answers. The client tells the reasons
@@ -142,13 +151,8 @@ func assetEditConflict(stored, replacement storage.Asset, currentYear int) *api.
 }
 
 // writeAsset answers status with the asset JSON at now.
-func writeAsset(w http.ResponseWriter, status int, asset storage.Asset, now time.Time) error {
-	out, err := toAssetJSON(asset, assetToday(now).Year())
-	if err != nil {
-		return err
-	}
-
-	return api.Write(w, status, out)
+func (a *app) writeAsset(w http.ResponseWriter, r *http.Request, status int, asset storage.Asset, now time.Time) error {
+	return api.Write(w, status, a.toAssetJSON(r.Context(), asset, assetToday(now).Year()))
 }
 
 // assetRequest is the body of POST and PUT: the asset JSON without id,
@@ -414,9 +418,7 @@ func (a *app) handleListAssets(w http.ResponseWriter, r *http.Request) error {
 	currentYear := assetToday(a.now()).Year()
 	out := make([]assetJSON, len(list))
 	for i, item := range list {
-		if out[i], err = toAssetJSON(item, currentYear); err != nil {
-			return err
-		}
+		out[i] = a.toAssetJSON(r.Context(), item, currentYear)
 	}
 
 	return api.Write(w, http.StatusOK, map[string]any{"assets": out})
@@ -453,7 +455,7 @@ func (a *app) handleCreateAsset(w http.ResponseWriter, r *http.Request) error {
 		return assetError(err, errExpenseAlreadyAnAsset())
 	}
 
-	return writeAsset(w, http.StatusCreated, created, now)
+	return a.writeAsset(w, r, http.StatusCreated, created, now)
 }
 
 func (a *app) handleGetAsset(w http.ResponseWriter, r *http.Request) error {
@@ -471,7 +473,7 @@ func (a *app) handleGetAsset(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	return writeAsset(w, http.StatusOK, found, a.now())
+	return a.writeAsset(w, r, http.StatusOK, found, a.now())
 }
 
 func (a *app) findAsset(ctx context.Context, c caller, id uuid.UUID) (storage.Asset, error) {
@@ -535,7 +537,7 @@ func (a *app) handleUpdateAsset(w http.ResponseWriter, r *http.Request) error {
 		return assetError(err, nil)
 	}
 
-	return writeAsset(w, http.StatusOK, updated, now)
+	return a.writeAsset(w, r, http.StatusOK, updated, now)
 }
 
 // assetDisposalRequest is the body of POST /api/v1/assets/{id}/disposal.
@@ -612,7 +614,7 @@ func (a *app) handleAssetDisposal(w http.ResponseWriter, r *http.Request) error 
 		return assetError(err, errAssetDisposed())
 	}
 
-	return writeAsset(w, http.StatusOK, disposed, now)
+	return a.writeAsset(w, r, http.StatusOK, disposed, now)
 }
 
 // assetScheduleYearJSON is one year of docs/api.md's schedule.

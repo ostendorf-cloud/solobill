@@ -943,6 +943,7 @@ func TestAssetsBookValueOfEachKind(t *testing.T) {
 	opening2026, opening2027 := int64(42000), int64(12000)
 	year2026, year2027 := int32(2026), int32(2027)
 	disposedOn, disposedThisYear := day("2026-01-31"), day("2027-03-01")
+	const noRest = -1
 
 	tests := []struct {
 		name         string
@@ -950,45 +951,151 @@ func TestAssetsBookValueOfEachKind(t *testing.T) {
 		wantCents    int
 		wantYear     int
 		wantEditable bool
+		wantRest     int
 	}{
 		{"acquired this year", storage.Asset{
 			Name: "Laptop", AcquiredOn: day("2027-03-10"), CostBasisCents: 149900,
 			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
-		}, 149900, 0, true},
+		}, 149900, 0, true, noRest},
 		{"gwg of last year", storage.Asset{
 			Name: "Chair", AcquiredOn: day("2026-05-01"), CostBasisCents: 80000,
 			Method: storage.DepreciationLowValue, Group: storage.AssetGroupOfficeEquipment,
-		}, 0, 2026, false},
+		}, 0, 2026, false, noRest},
 		{"sammelposten of last year", storage.Asset{
 			Name: "Shelf", AcquiredOn: day("2026-05-01"), CostBasisCents: 100000,
 			Method: storage.DepreciationPool, Group: storage.AssetGroupOfficeEquipment,
-		}, 80000, 2026, false},
+		}, 80000, 2026, false, noRest},
+		// A disposal does not reduce the pool (section 6 Abs. 2a Satz 3
+		// EStG): the value follows the schedule and there is no rest.
+		{"sammelposten disposed this year", storage.Asset{
+			Name: "Cabinet", AcquiredOn: day("2026-05-01"), CostBasisCents: 100000,
+			Method: storage.DepreciationPool, Group: storage.AssetGroupOfficeEquipment,
+			DisposedOn: &disposedThisYear,
+		}, 80000, 2026, false, noRest},
 		{"disposed in 2026", storage.Asset{
 			Name: "Phone", AcquiredOn: day("2025-01-15"), CostBasisCents: 120000,
 			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
 			DisposedOn: &disposedOn,
-		}, 76667, 2026, false},
+		}, 0, 2026, false, 76667},
+		// 2 of 36 months: 2778 handed out, 47222 left.
 		{"acquired and disposed this year", storage.Asset{
 			Name: "Monitor", AcquiredOn: day("2027-02-01"), CostBasisCents: 50000,
 			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
 			DisposedOn: &disposedThisYear,
-		}, 50000, 0, false},
+		}, 0, 2027, false, 47222},
 		{"imported with 2026's opening value", storage.Asset{
 			Name: "Old desk", AcquiredOn: day("2024-07-01"), CostBasisCents: 72000,
 			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
 			OpeningBookValueCents: &opening2026, OpeningBookValueYear: &year2026, Imported: true,
-		}, 14000, 2026, false},
+		}, 14000, 2026, false, noRest},
 		{"imported with this year's opening value", storage.Asset{
 			Name: "Old lamp", AcquiredOn: day("2024-07-01"), CostBasisCents: 72000,
 			Method: storage.DepreciationLinear, Group: storage.AssetGroupOfficeEquipment, UsefulLifeMonths: &life,
 			OpeningBookValueCents: &opening2027, OpeningBookValueYear: &year2027, Imported: true,
-		}, 12000, 0, true},
+		}, 12000, 0, true, noRest},
 	}
 
 	for _, tt := range tests {
 		stored := fake.put(tt.input)
 		got := profileDecodeMap(t, f.do(t, f.owner, http.MethodGet, assetsPath+"/"+stored.ID.String(), nil))
 		wantBookValue(t, tt.name, got, tt.wantCents, tt.wantYear, tt.wantEditable)
+		var wantRest any
+		if tt.wantRest != noRest {
+			wantRest = float64(tt.wantRest)
+		}
+		if got["disposal_rest_cents"] != wantRest {
+			t.Errorf("%s: disposal_rest_cents %v, want %v", tt.name, got["disposal_rest_cents"], wantRest)
+		}
+	}
+}
+
+// TestAssetsListSurvivesAnAssetAFARefuses stores a GWG above the limit,
+// which no request can create. The list still answers 200: that row has
+// null derived figures and editable false, the others are complete.
+func TestAssetsListSurvivesAnAssetAFARefuses(t *testing.T) {
+	t.Parallel()
+
+	clock := &assetClock{at: berlinTime(t, 2027, time.June, 1, 12, 0, 0)}
+	f := newAssetFixtureAt(t, clock)
+	fake := fakeAssetsOf(t, f)
+	acquired := time.Date(2027, 2, 1, 0, 0, 0, 0, time.UTC)
+	bad := fake.put(storage.Asset{
+		Name: "Broken", AcquiredOn: acquired, CostBasisCents: 80001,
+		Method: storage.DepreciationLowValue, Group: storage.AssetGroupOfficeEquipment,
+	})
+	good := fake.put(storage.Asset{
+		Name: "Chair", AcquiredOn: acquired, CostBasisCents: 80000,
+		Method: storage.DepreciationLowValue, Group: storage.AssetGroupOfficeEquipment,
+	})
+
+	rec := f.do(t, f.owner, http.MethodGet, assetsPath, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+	rows, _ := profileDecodeMap(t, rec)["assets"].([]any)
+	byID := map[string]map[string]any{}
+	for _, row := range rows {
+		m, _ := row.(map[string]any)
+		id, _ := m["id"].(string)
+		byID[id] = m
+	}
+	if len(byID) != 2 {
+		t.Fatalf("list = %v, want both assets", rows)
+	}
+
+	broken := byID[bad.ID.String()]
+	for _, k := range []string{"book_value_cents", "book_value_year", "disposal_rest_cents"} {
+		if v, ok := broken[k]; !ok || v != nil {
+			t.Errorf("refused row %s = %v (present %v), want null", k, v, ok)
+		}
+	}
+	if broken["editable"] != false || broken["name"] != "Broken" {
+		t.Errorf("refused row = %v, want editable false and its stored fields", broken)
+	}
+	wantBookValue(t, "good row", byID[good.ID.String()], 80000, 0, true)
+
+	// The single read answers the same way.
+	one := f.do(t, f.owner, http.MethodGet, assetsPath+"/"+bad.ID.String(), nil)
+	if one.Code != http.StatusOK || profileDecodeMap(t, one)["book_value_cents"] != nil {
+		t.Errorf("GET refused asset: status %d, body %s, want 200 with null book value", one.Code, one.Body.String())
+	}
+}
+
+// TestAssetsLostRaceFallbacks: the repository refuses a write after every
+// check before it passed, as only a concurrent writer can cause. Each
+// route still answers its own code.
+func TestAssetsLostRaceFallbacks(t *testing.T) {
+	t.Parallel()
+
+	f := newAssetFixture(t)
+	created := createAsset(t, f, func() map[string]any {
+		b := laptopBody()
+		b["acquired_on"] = assetThisYear()
+
+		return b
+	}())
+	id, _ := created["id"].(string)
+	fakeAssetsOf(t, f).loseRaces()
+
+	body := laptopBody()
+	body["acquired_on"] = assetThisYear()
+	for _, tc := range []struct {
+		name, method, path string
+		body               map[string]any
+		wantCode           string
+	}{
+		// The unique index assets_expense_once is the only conflict of an
+		// INSERT.
+		{"POST", http.MethodPost, assetsPath, body, "expense_already_an_asset"},
+		// RecordDisposal's only conflict is a disposal recorded meanwhile.
+		{"disposal", http.MethodPost, assetsPath + "/" + id + "/disposal", map[string]any{"disposed_on": assetThisYear()}, "asset_disposed"},
+		// The cause of an UPDATE that matched no row is unknown here.
+		{"PUT", http.MethodPut, assetsPath + "/" + id, body, "conflict"},
+	} {
+		rec := f.do(t, f.owner, tc.method, tc.path, tc.body)
+		if rec.Code != http.StatusConflict || assetErrorCode(t, rec) != tc.wantCode {
+			t.Errorf("%s: status %d, code %v, want 409 %s", tc.name, rec.Code, assetErrorCode(t, rec), tc.wantCode)
+		}
 	}
 }
 
