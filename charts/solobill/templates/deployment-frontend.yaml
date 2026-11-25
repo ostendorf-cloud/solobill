@@ -1,0 +1,98 @@
+{{- $fe := .Values.frontend -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "solobill.frontend.fullname" . }}
+  labels:
+    {{- include "solobill.frontend.labels" . | nindent 4 }}
+spec:
+  replicas: {{ $fe.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "solobill.frontend.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "solobill.frontend.labels" . | nindent 8 }}
+        {{- with $fe.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $fe.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "solobill.frontend.serviceAccountName" . }}
+      # The frontend makes no Kubernetes API calls.
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: frontend
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ $fe.image.repository }}:{{ $fe.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ $fe.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $fe.service.port }}
+              protocol: TCP
+            # /healthz, /readyz and /metrics: the probes target this port,
+            # and no Ingress or HTTPRoute rule ever names it.
+            - name: admin
+              containerPort: {{ $fe.adminPort }}
+              protocol: TCP
+          env:
+            # Derived from the ports above, so they cannot drift apart.
+            - name: LISTEN_ADDR
+              value: {{ printf ":%v" $fe.service.port | quote }}
+            - name: ADMIN_LISTEN_ADDR
+              value: {{ printf ":%v" $fe.adminPort | quote }}
+            - name: LOG_LEVEL
+              value: {{ $fe.logLevel | quote }}
+            - name: RATE_LIMIT_BURST
+              value: {{ $fe.rateLimitBurst | quote }}
+            - name: RATE_LIMIT_PER
+              value: {{ $fe.rateLimitPer | quote }}
+            {{- if .Values.config.trustedProxies }}
+            - name: TRUSTED_PROXIES
+              value: {{ join "," .Values.config.trustedProxies | quote }}
+            {{- end }}
+            {{- /*
+            FRONTEND_DEV_API_PROXY and ALLOW_PLAIN_HTTP are never set here:
+            the proxy is for docker-compose.yaml only, the Ingress or the
+            HTTPRoute routes /api in the cluster, and the cluster serves
+            HTTPS, so HSTS stays on.
+            */}}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            initialDelaySeconds: {{ $fe.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $fe.livenessProbe.periodSeconds }}
+            failureThreshold: {{ $fe.livenessProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: admin
+            initialDelaySeconds: {{ $fe.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ $fe.readinessProbe.periodSeconds }}
+            failureThreshold: {{ $fe.readinessProbe.failureThreshold }}
+          resources:
+            {{- toYaml $fe.resources | nindent 12 }}
+      {{- with $fe.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $fe.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $fe.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

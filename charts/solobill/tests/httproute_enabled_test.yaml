@@ -70,15 +70,40 @@ tests:
           path: spec.hostnames[0]
           value: solobill.example.org
 
-  - it: points its one rule at the chart's own Service and port
+  - it: routes /api to the API and everything else to the frontend, and nothing more
     template: templates/httproute.yaml
     asserts:
       - equal:
-          path: spec.rules[0].backendRefs[0].name
-          value: RELEASE-NAME-solobill
+          path: spec.rules
+          value:
+            - matches:
+                - path:
+                    type: PathPrefix
+                    value: /api
+              backendRefs:
+                - name: RELEASE-NAME-solobill
+                  port: 8080
+            - backendRefs:
+                - name: RELEASE-NAME-solobill-frontend
+                  port: 8080
+
+  - it: points each rule at the public port of its Service, never an admin port, even with non default ports
+    template: templates/httproute.yaml
+    set:
+      service:
+        port: 9090
+      adminPort: 9091
+      frontend:
+        service:
+          port: 7070
+        adminPort: 7071
+    asserts:
       - equal:
           path: spec.rules[0].backendRefs[0].port
-          value: 8080
+          value: 9090
+      - equal:
+          path: spec.rules[1].backendRefs[0].port
+          value: 7070
 
   - it: carries no tls field, unlike the Ingress alternative
     template: templates/httproute.yaml

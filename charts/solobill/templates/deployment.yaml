@@ -253,6 +253,17 @@ spec:
             {{- with include "solobill.objectStore.env" . }}
             {{- . | nindent 12 }}
             {{- end }}
+            {{- with .Values.pdf.typstBinary }}
+            # The typst binary of the api image (issue #146). Empty, the
+            # renderer is off and issuing answers 503.
+            - name: PDF_TYPST_BINARY
+              value: {{ . | quote }}
+            {{- end }}
+          volumeMounts:
+            # The root filesystem is read only. The PDF renderer writes one
+            # directory per render under os.TempDir, /tmp.
+            - name: tmp
+              mountPath: /tmp
           {{- if .Values.startupProbe.enabled }}
           startupProbe:
             httpGet:
@@ -278,6 +289,10 @@ spec:
             failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.pdf.tmpSizeLimit }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
