@@ -1,1 +1,67 @@
-{}
+{
+  "nav": "EÜR report",
+  "title": "EÜR {year}",
+  "lead": "The figures of the Anlage EÜR, line by line, computed from your entries.",
+  "disclaimer": "Computed from your entries. This is no tax advice. Check every figure before you file it.",
+  "year": "Tax year",
+  "csv": "Download CSV for {year}",
+  "loading": "Loading the report.",
+  "loadErrorTitle": "Loading failed",
+  "loadError": "The report could not be loaded.",
+  "regimeMissing": "No VAT regime period covers this year. Add one in the settings first.",
+  "archiveTitle": "No report for {year}",
+  "archiveDescription": "The years 2023 to 2025 are imported archive years. Only their archived documents are kept.",
+  "noMappingTitle": "No report for {year} yet",
+  "noMappingDescription": "There is no line mapping for this year yet.",
+  "emptyTitle": "No figures",
+  "emptyDescription": "No entry counts in this year.",
+  "tableCaption": "EÜR {year}, line by line",
+  "noKennzahl": "none",
+  "lineUnverified": "not verified",
+  "showSources": "Show {count} entries",
+  "hideSources": "Hide entries",
+  "toggleSources": "Entries behind Zeile {zeile} ({count})",
+  "regimes": "VAT regime:",
+  "regimeSince": "{regime} since {date}",
+  "regime": {
+    "kleinunternehmer": "small business (Kleinunternehmer)",
+    "standard": "standard taxation"
+  },
+  "columns": {
+    "zeile": "Zeile",
+    "kennzahl": "Kz",
+    "label": "Line",
+    "amount": "Amount",
+    "sources": "Entries"
+  },
+  "kind": {
+    "payment": "Payment",
+    "expense": "Expense",
+    "other_income": "Other income",
+    "asset": "Depreciation"
+  },
+  "mapping": {
+    "heading": "Line mapping",
+    "label": "Line mapping {year}:",
+    "verified": "verified",
+    "unverified": "not verified",
+    "unverifiedNote": "The line mapping of {year} is a copy of 2025 and was not compared with the form of {year}. Zeilen and Kennzahlen may differ."
+  },
+  "boundary": {
+    "heading": "Turn of the year",
+    "lead": "Entries from 22 December to 10 January. Without a decision an entry counts in the year of its date. Whether the 10 day rule applies is not checked here.",
+    "empty": "No entry in the turn of the year.",
+    "unassigned": "Counts in {year}, no decision",
+    "assignedTo": "Assigned to {year}",
+    "assign": "Count in {year}",
+    "assigned": "The entry now counts in {year}.",
+    "conflict": "The decision was changed in the meantime. The report was reloaded."
+  },
+  "warnings": {
+    "heading": "Warnings",
+    "empty": "No warnings.",
+    "missing_receipt": "Expense without a receipt (with {count} reversals)",
+    "asset_expense_without_asset": "Asset expense without an asset in the register",
+    "unassigned_boundary_entry": "Entry in the turn of the year without a decision"
+  }
+}

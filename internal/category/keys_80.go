@@ -1,10 +1,14 @@
 package category
 
 // Keys owned by the EÜR report, issue #80. Documented in
-// docs/concepts/euer-keys/80.md. The contract registers the two Zeile 65
-// keys here already; which of Kz 162 and 172 is the deductible one is
-// open and #80 resolves it in that file. #80 also adds Zeile 13 here if
-// it decides the line is chosen rather than derived.
+// docs/concepts/euer-keys/80.md, which also records how the open points
+// of the contract were settled from the form of 29 August 2025:
+//   - Zeile 65: Kz 162 is the non deductible part, Kz 172 the deductible
+//     one, by the form's two columns.
+//   - Zeile 13: no key. It is a "davon" line inside Zeile 12, and nothing
+//     in solobill marks a receipt as nicht steuerbar. An open question
+//     for the owner.
+//   - Kz 111: the amount field of Zeile 12, as keys_67.go registered it.
 
 const (
 	// HomeOfficeNonDeductible is Zeile 65, nicht abziehbar: häusliches

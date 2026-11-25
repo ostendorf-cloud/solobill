@@ -132,6 +132,18 @@ type DocumentNumber struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type EuerAssignment struct {
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	EntryKind    string
+	EntryID      uuid.UUID
+	TaxYear      int32
+	Note         pgtype.Text
+	SupersedesID pgtype.UUID
+	CreatedBy    pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
 type Expense struct {
 	ID               uuid.UUID
 	TenantID         uuid.UUID
