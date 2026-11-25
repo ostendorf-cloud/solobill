@@ -389,7 +389,7 @@ func (r *Renderer) compile(ctx context.Context, src Source) ([]byte, error) {
 			}
 		}
 
-		return nil, fmt.Errorf("%w: %w: %s", ErrCompile, err, bytes.TrimSpace(stderr.Bytes()))
+		return nil, fmt.Errorf("%w: %w: %s", ErrCompile, err, diagnosticSummary(stderr.Bytes()))
 	case !bytes.HasPrefix(out.buf.Bytes(), []byte("%PDF-")):
 		return nil, fmt.Errorf("%w: output is no PDF", ErrCompile)
 	}
@@ -406,6 +406,31 @@ func (r *Renderer) compile(ctx context.Context, src Source) ([]byte, error) {
 	}
 
 	return pdf, nil
+}
+
+// maxDiagnosticBytes bounds the part of Typst's diagnostics an error
+// carries.
+const maxDiagnosticBytes = 160
+
+// diagnosticSummary is the part of Typst's diagnostics an error carries
+// into the logs: the first line only, at most maxDiagnosticBytes, with
+// anything but printable ASCII replaced. In the short format that line is
+// "main.typ:LINE:COL: error: MESSAGE". The lines after it quote the
+// source and the data around the failure, which can hold customer text,
+// so they never leave this package.
+func diagnosticSummary(stderr []byte) string {
+	line, _, _ := bytes.Cut(bytes.TrimSpace(stderr), []byte("\n"))
+	if len(line) > maxDiagnosticBytes {
+		line = line[:maxDiagnosticBytes]
+	}
+
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7E {
+			return '?'
+		}
+
+		return r
+	}, string(line))
 }
 
 // pagesCount matches the /Count of a page tree node; the root's is the

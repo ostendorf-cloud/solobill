@@ -347,6 +347,22 @@ func TestDocumentPDFRendererFailures(t *testing.T) {
 		wantErrorCode(t, f.pdf(t, f.owner, id), http.StatusInternalServerError, "internal")
 	})
 
+	t.Run("a render error never reaches the response body", func(t *testing.T) {
+		t.Parallel()
+
+		f, renderer := newPDFFixture(t, "pdf-error-body")
+		id, _ := f.issuedID(t)
+		renderer.setErr(errors.New("pdf: typst compile failed: exit status 1: main.typ:3:1: error: Mustermann IBAN DE00"))
+
+		rec := f.pdf(t, f.owner, id)
+		wantErrorCode(t, rec, http.StatusInternalServerError, "internal")
+		for _, leak := range []string{"Mustermann", "typst", "main.typ"} {
+			if strings.Contains(rec.Body.String(), leak) {
+				t.Errorf("body %s carries %q", rec.Body.String(), leak)
+			}
+		}
+	})
+
 	t.Run("a failing render is an internal error and stores nothing", func(t *testing.T) {
 		t.Parallel()
 
