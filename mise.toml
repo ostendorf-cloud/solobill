@@ -3,13 +3,16 @@
 [tools]
 go = "1.27.4"
 task = "3"
-# The web/ package. pnpm is the package manager, so npm is never called directly, and the
-# lockfile is written by the major pinned here.
+# The web/ package. pnpm is the package manager, so npm is never called directly.
 node = "26"
-# ostendorf.tech pins pnpm's major at "10", but the registry's current latest stable major
-# is "12" (one newer release is held back by mise's own minimum release age); a brand-new
-# repository tracks the current major instead of copying that stale pin.
-pnpm = "12"
+# pnpm is pinned to the patch, not the major: the Dockerfile's web stage installs one
+# version, its PNPM_VERSION argument, and the lockfile that stage reads with
+# --frozen-lockfile has to have been written by the same one. Renovate's govue post upgrade
+# command regenerates web/pnpm-lock.yaml with constraints.pnpm in renovate.json, the same
+# version again. A floating major silently drifts the three apart. Renovate moves all three
+# in one pull request (group "pnpm"), and internal/envsync and internal/depsync fail when
+# they differ. 12.23.0 is what "12" resolved to locally, and the pin ostendorf.tech carries.
+pnpm = "12.23.0"
 # Pinned to the patch, not "2", and to the exact patch golangci-lint 2.15.0 was built with:
 # its release workflow builds its binaries with go1.27.0, and that binary can only read
 # export data up to format version 4. go1.27.3, the newest patch in the 1.27 line, writes
