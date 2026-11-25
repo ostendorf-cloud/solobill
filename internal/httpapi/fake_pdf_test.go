@@ -40,6 +40,16 @@ func withPDFRenderer(t *testing.T) *fakePDFRenderer {
 	return r
 }
 
+// withoutPDFRenderer makes the next app of t carry a typed nil renderer,
+// which the route treats as none. A plain nil would be replaced by the
+// contract hook's sentinel.
+func withoutPDFRenderer(t *testing.T) {
+	t.Helper()
+
+	pdfRenderers.Store(t, (*fakePDFRenderer)(nil))
+	t.Cleanup(func() { pdfRenderers.Delete(t) })
+}
+
 // renderCall is one call of the renderer fake.
 type renderCall struct {
 	payload []byte

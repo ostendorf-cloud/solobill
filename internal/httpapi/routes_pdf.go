@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -70,6 +71,19 @@ type rendererUnavailableError interface {
 	RendererUnavailable() bool
 }
 
+// rendererOf returns r unless it is nil or a typed nil (a nil pointer
+// stored in the interface), which would panic or render nothing.
+func rendererOf(r DocumentRenderer) (DocumentRenderer, bool) {
+	if r == nil {
+		return nil, false
+	}
+	if v := reflect.ValueOf(r); v.Kind() == reflect.Pointer && v.IsNil() {
+		return nil, false
+	}
+
+	return r, true
+}
+
 // pdfRendererUnavailable is the 503 of the PDF download while no
 // renderer is wired or the wired one cannot run.
 func pdfRendererUnavailable() *api.Error {
@@ -99,9 +113,6 @@ func (a *app) handleDocumentPDF(w http.ResponseWriter, r *http.Request) error {
 	if !ok {
 		return err
 	}
-	if a.repos.Renderer == nil {
-		return pdfRendererUnavailable()
-	}
 	// A file route for the first and every later download, and for a
 	// draft: nothing is read or rendered while the bucket is gated.
 	if err := a.requireFileRoutes(); err != nil {
@@ -118,16 +129,22 @@ func (a *app) handleDocumentPDF(w http.ResponseWriter, r *http.Request) error {
 	}
 	name := documentPDFName(src.doc)
 	if src.stored != nil {
+		// A stored PDF needs no renderer: it stays downloadable while none
+		// is configured.
 		return a.serveStoredFile(w, r, *src.stored, func(h http.Header) {
 			h.Set("Content-Disposition", attachmentDisposition(name, contentTypePDF))
 		})
+	}
+	renderer, ok := rendererOf(a.repos.Renderer)
+	if !ok {
+		return pdfRendererUnavailable()
 	}
 
 	logo, err := a.documentLogo(r, c, src.payload)
 	if err != nil {
 		return err
 	}
-	pdf, err := a.repos.Renderer.RenderWithLogo(r.Context(), src.payload, src.draft, logo)
+	pdf, err := renderer.RenderWithLogo(r.Context(), src.payload, src.draft, logo)
 	if err != nil {
 		return renderError(err, src.draft)
 	}
