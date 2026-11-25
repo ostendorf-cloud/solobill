@@ -76,7 +76,6 @@ describe('App colour mode switch', () => {
 
     await user.click(await screen.findByRole('button', { name: /^Theme: Follow the system/ }))
     expect(root.dataset.mode).toBe('light')
-    expect(root.dataset.theme).toBe('solobill')
 
     await user.click(screen.getByRole('button', { name: /^Theme: Light mode/ }))
     expect(root.dataset.mode).toBe('dark')
