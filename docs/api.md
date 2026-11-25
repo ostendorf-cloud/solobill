@@ -70,6 +70,7 @@ One shape for every error, written by govue's `api.WriteError`:
 | 501 | `not_implemented` | Reserved endpoint, issue not merged yet |
 | 503 | `unavailable` | Session store down |
 | 503 | `object_store_unavailable` | File routes only: bucket unreachable, or no versioning while it is required |
+| 503 | `renderer_unavailable` | No PDF renderer configured or able to run: issue, correction and the PDF download |
 
 ## Seller profile
 
@@ -517,17 +518,32 @@ Registered in `internal/httpapi/routes_pdf.go`. Owned by issue #74.
 - Response `200`: `application/pdf`, `Content-Disposition: attachment;
   filename="<numbering.FileName(display_number)>"`: the stored display number with every
   character outside the number set, and `/`, replaced by `_`, plus `.pdf`. A draft is named
-  `draft-<id>.pdf`.
+  `draft-<id>.pdf`. The PDF is in the document's language. The headers are those of a stored
+  file download: `X-Content-Type-Options: nosniff`, the sandbox `Content-Security-Policy` and
+  `Cache-Control: private, no-store`.
 - An issued document: the first download renders once from the frozen payload, the template
   version it names and the logo file its SHA-256 names, and stores the PDF as a file of
-  purpose `document_pdf`. Every later download returns the stored bytes; the logo is never
-  read again.
-- A draft renders live with an "Entwurf" or "Draft" watermark and without a number.
+  purpose `document_pdf`. Every later download returns the stored bytes, verified against
+  their SHA-256; the logo is never read again.
+- Storage rule: the stored file's id is derived from the document id (UUID version 5), so the
+  issued document needs no link column and only one first download can store it. A second
+  first download that loses that race serves the stored file. `GET /api/v1/files/{id}` reads
+  its metadata like any other file.
+- The logo is found by the SHA-256 frozen in the payload among the tenant's files of purpose
+  `logo`, never by a name or the current profile, and its bytes are hashed again after reading.
+- A draft renders live with an "Entwurf" or "Draft" watermark and without a number, from the
+  current profile, customer and logo. It is never stored.
 - This is a file route: `503 object_store_unavailable` while the bucket is gated, for the
-  first and every later download. Issuing a document never depends on the bucket.
+  first and every later download and for a draft. Issuing a document never depends on the
+  bucket.
 - `400` with `details` when a draft lacks data the template needs.
-- `409 conflict` when the logo file's SHA-256 differs from the one frozen in the payload.
-- `503 unavailable` when the renderer is not available.
+- `404` for a document of another tenant, like a missing one.
+- `409 conflict` when no logo file has the SHA-256 frozen in the payload, or its bytes no
+  longer hash to it.
+- `409 conflict` for an imported document: its original PDF is the document, downloaded
+  through the files routes.
+- `503 renderer_unavailable` when no renderer is configured (`PDF_TYPST_BINARY` unset) or it
+  cannot run. Without a renderer, issuing and creating a correction answer the same code.
 
 ## Files
 
