@@ -14,6 +14,20 @@ import (
 // fields, so the tenant slug cannot ride in the body any more.
 const tenantPathValue = "tenant"
 
+// authMethodsResponse is GET /api/v1/auth/methods: which login methods
+// beyond the local login are configured, for the login view to show only
+// those. It carries no setting of its own, only what a request to the
+// login route would reveal anyway.
+type authMethodsResponse struct {
+	OIDC bool `json:"oidc"`
+}
+
+// handleAuthMethods is GET /api/v1/auth/methods. Who: anyone, the login
+// view calls it before a session exists.
+func (a *app) handleAuthMethods(w http.ResponseWriter, _ *http.Request) error {
+	return api.Write(w, http.StatusOK, authMethodsResponse{OIDC: a.oidcHandlers != nil})
+}
+
 // registerAuth mounts the login, logout, password change, "who am I",
 // passkey and invite routes, plus the OIDC routes when OIDC is configured.
 //
@@ -51,6 +65,14 @@ func registerAuth(mux *http.ServeMux, route routeFunc, a *app) {
 	mux.Handle("POST /api/v1/invites/totp-secret", route(a.checked(api.Handle(a.handleInviteTOTPSecret))))
 	mux.Handle("POST /api/v1/invites/accept", route(a.checked(api.Handle(a.handleAcceptInvite))))
 	mux.Handle("POST /api/v1/invites/confirm", route(a.checked(api.Handle(a.handleInviteConfirm))))
+
+	mux.Handle("GET /api/v1/auth/methods", route(api.Handle(a.handleAuthMethods)))
+
+	// The old OIDC paths, see legacyOIDCPrefix. Registered with no method
+	// and as both the bare prefix and its subtree, so no method and no
+	// path below it falls through to the SPA catch-all.
+	mux.Handle(legacyOIDCPrefix, route(api.NotFoundHandler()))
+	mux.Handle(legacyOIDCPrefix+"/", route(api.NotFoundHandler()))
 
 	if a.oidcHandlers != nil {
 		mux.Handle("GET "+oidcLoginPath, route(a.oidcHandlers.Login()))

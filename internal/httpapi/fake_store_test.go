@@ -47,8 +47,20 @@ func newFakeStore() *fakeStore {
 	return s
 }
 
-func (s *fakeStore) WithTenant(ctx context.Context, _ uuid.UUID, fn func(ctx context.Context) error) error {
-	return fn(context.WithValue(ctx, fakeTxKey{}, &fakeTx{}))
+func (s *fakeStore) WithTenant(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context) error) error {
+	return fn(context.WithValue(ctx, fakeTxKey{}, &fakeTx{tenantID: tenantID}))
+}
+
+// scopedTenant reports the tenant WithTenant opened ctx for, if any. A
+// fake that models row level security filters by it, and a call outside
+// WithTenant stands for a privileged read that sees every tenant.
+func scopedTenant(ctx context.Context) (uuid.UUID, bool) {
+	tx, ok := ctx.Value(fakeTxKey{}).(*fakeTx)
+	if !ok {
+		return uuid.Nil, false
+	}
+
+	return tx.tenantID, true
 }
 
 // fakeTxKey carries the fake transaction WithTenant opened, so a fake
@@ -59,6 +71,8 @@ type fakeTxKey struct{}
 // failed the way Postgres fails the whole transaction (a unique
 // violation): every later statement in it fails with SQLSTATE 25P02.
 type fakeTx struct {
+	tenantID uuid.UUID
+
 	mu      sync.Mutex
 	aborted bool
 }
@@ -199,11 +213,19 @@ func (r *fakeAccountRepository) FindByEmail(_ context.Context, email string) (st
 	return storage.Account{}, storage.ErrNotFound
 }
 
-func (r *fakeAccountRepository) FindByOIDCSubject(_ context.Context, subject string) (storage.Account, error) {
+// FindByOIDCSubject models the accounts table's row level security: inside
+// WithTenant it sees only that tenant's rows, the way the real query does
+// under app.tenant_id. The OIDC cross tenant tests depend on it.
+func (r *fakeAccountRepository) FindByOIDCSubject(ctx context.Context, subject string) (storage.Account, error) {
 	r.s.mu.Lock()
 	defer r.s.mu.Unlock()
 
+	tenantID, scoped := scopedTenant(ctx)
+
 	for _, a := range r.s.accounts {
+		if scoped && a.TenantID != tenantID {
+			continue
+		}
 		if a.OIDCSubject != nil && *a.OIDCSubject == subject {
 			return a, nil
 		}

@@ -124,7 +124,7 @@ func TestLoad(t *testing.T) {
 			"OIDC_ISSUER_URL":          "https://idp.example.com",
 			"OIDC_CLIENT_ID":           "solobill",
 			"OIDC_CLIENT_SECRET":       "a-client-secret",
-			"OIDC_REDIRECT_URL":        "https://solobill.example.com/auth/oidc/callback",
+			"OIDC_REDIRECT_URL":        "https://solobill.example.com/api/v1/auth/oidc/callback",
 			"OIDC_DEFAULT_TENANT_SLUG": "acme",
 		})
 

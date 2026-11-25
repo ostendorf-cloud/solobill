@@ -244,6 +244,7 @@ func Load(getenv func(string) string) (Config, error) {
 		cfg.OIDCClientID = l.Required("OIDC_CLIENT_ID")
 		cfg.OIDCClientSecret = l.RequiredSecretOrFile("OIDC_CLIENT_SECRET")
 		cfg.OIDCRedirectURL = l.Required("OIDC_REDIRECT_URL")
+		fail(checkOIDCRedirectURL(cfg.OIDCRedirectURL, cfg.SessionAllowPlainHTTP))
 		cfg.OIDCDefaultTenantSlug = l.Required("OIDC_DEFAULT_TENANT_SLUG")
 		cfg.OIDCScopes = l.List("OIDC_SCOPES")
 	}

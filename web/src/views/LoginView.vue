@@ -14,7 +14,7 @@ import {
   GovuePage,
   GovuePasskeyButton,
 } from '@ostendorf-cloud/govue'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -30,15 +30,28 @@ const tenantSlug = ref(typeof route.query.tenant === 'string' ? route.query.tena
 const tenantPath = computed(() => `/tenants/${encodeURIComponent(tenantSlug.value.trim())}/auth`)
 const noTenant = computed(() => tenantSlug.value.trim() === '')
 
-// The OIDC login route is mounted by internal/httpapi only when
-// config.Config.OIDCEnabled is true (see httpapi.go's route registration);
-// nothing today exposes that flag to this SPA. The link is shown
-// unconditionally rather than guessing at a flag that does not exist: with
-// OIDC disabled, the backend's catch-all SPA route answers this same path
-// with the shell's own index.html (see internal/httpapi/spa.go), so a
-// visitor clicking it with OIDC off lands back on this app instead of at a
-// dead JSON 404.
-const oidcLoginHref = '/auth/oidc/login'
+// The OIDC login route is mounted by internal/httpapi only when OIDC is
+// configured, and answers a JSON 404 otherwise. GET /api/v1/auth/methods
+// says whether it is, without a session, so the link shows only then. A
+// failed request leaves the link hidden: a missing link is the safe way
+// to be wrong, a link to a 404 is not.
+const oidcLoginHref = '/api/v1/auth/oidc/login'
+const oidcEnabled = ref(false)
+
+interface AuthMethods {
+  oidc: boolean
+}
+
+onMounted(async () => {
+  try {
+    const methods = await apiClient.get<AuthMethods>('/auth/methods', {
+      skipUnauthenticatedHook: true,
+    })
+    oidcEnabled.value = methods?.oidc === true
+  } catch {
+    oidcEnabled.value = false
+  }
+})
 
 async function loggedIn(): Promise<void> {
   await router.push({ name: 'home' })
@@ -74,7 +87,7 @@ async function loggedIn(): Promise<void> {
       </div>
     </GovueCard>
 
-    <p class="text-sm">
+    <p v-if="oidcEnabled" class="text-sm">
       <a :href="oidcLoginHref" class="text-accent-text underline">{{ t('login.oidcLink') }}</a>
     </p>
   </GovuePage>

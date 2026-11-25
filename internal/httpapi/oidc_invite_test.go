@@ -23,7 +23,8 @@ import (
 // LoginCodec, the two Deps fields handleInviteOIDCStart requires (see
 // NewHandler's "must both be set or both be nil" check): the fixture
 // never actually drives handlers.Login() or handlers.Callback(), see
-// internal/auth's own oidc_test.go for the end-to-end callback test, it
+// oidc_flow_test.go for the end-to-end flow against a fake identity
+// provider, it
 // only needs a real, non-nil *oidc.Handlers for the OIDC route group
 // (oidc/start included) to be mounted at all.
 func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
@@ -51,7 +52,7 @@ func buildTestAppWithOIDC(t *testing.T) (testApp, *auth.InviteManager) {
 		Issuer:       "http://127.0.0.1:1/realms/solobill",
 		ClientID:     "solobill",
 		ClientSecret: "a-test-client-secret",
-		RedirectURL:  "http://127.0.0.1:1/auth/oidc/callback",
+		RedirectURL:  "http://127.0.0.1:1/api/v1/auth/oidc/callback",
 	})
 	if err != nil {
 		t.Fatalf("auth.NewOIDCProvider() error = %v", err)

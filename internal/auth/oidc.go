@@ -15,6 +15,15 @@ import (
 	"github.com/ostendorf-cloud/solobill/internal/storage"
 )
 
+// OIDCLoginPath and OIDCCallbackPath are where internal/httpapi mounts the
+// OIDC routes. OIDCCallbackPath is also what internal/config requires
+// OIDC_REDIRECT_URL's path to end in, so the redirect URL the identity
+// provider is told and the route that answers it cannot drift apart.
+const (
+	OIDCLoginPath    = "/api/v1/auth/oidc/login"
+	OIDCCallbackPath = "/api/v1/auth/oidc/callback"
+)
+
 // inviteOIDCCookieName carries a pending OIDC invite acceptance from
 // internal/httpapi's invite-accept-via-OIDC start endpoint through to the
 // OIDC callback's own StartSession closure below: see

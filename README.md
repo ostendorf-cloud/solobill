@@ -20,6 +20,12 @@ together, and OIDC bound to the same account. solobill keeps the tenancy rules o
 section "Login on govue" in `docs/concepts/solobill.md` and `charts/solobill/README.md` for
 the cookie, proxy, replica and passkey settings a deployment needs.
 
+OIDC login is optional and starts at `GET /api/v1/auth/oidc/login`. The identity provider
+redirects back to `GET /api/v1/auth/oidc/callback`, and `OIDC_REDIRECT_URL` must name that URL,
+for example `https://solobill.example.com/api/v1/auth/oidc/callback`. solobill refuses to start
+when that URL names another path or is not `https`. The old `/auth/oidc/...` paths answer a JSON
+`404`.
+
 ## Install
 
 ```sh
