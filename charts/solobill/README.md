@@ -751,6 +751,9 @@ app and the API together):
   `Ingress` or `HTTPRoute` now sends every path but `/api` to the frontend.
 - Until the frontend pods are ready, the app's pages answer `503` from the ingress controller.
   The API keeps answering throughout.
+- The API's `app.kubernetes.io/component` label changes from `server` to `api`. A
+  `ServiceMonitor`, `PodMonitor`, `NetworkPolicy` or alert that selects `component: server`
+  stops matching: point it at `component: api` in the same change.
 - `podLabels` and `podAnnotations` apply to the API pods only. Set
   `frontend.podLabels` and `frontend.podAnnotations` for the frontend.
 
