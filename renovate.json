@@ -1,4 +1,46 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>ostendorf-cloud/workflows#v0"]
+  "extends": [
+    "github>ostendorf-cloud/workflows#v0",
+    "github>ostendorf-cloud/workflows:govue-lockfile#v0"
+  ],
+  "customManagers": [
+    {
+      "description": "Renovate's npm manager skips the govue pnpm git dependency (skipReason unversioned-reference) because of its '&path:/web' suffix. This manager reads the tag out of web/package.json so the npm half is updated like any other dependency.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^web/package\\.json$/"],
+      "matchStrings": [
+        "\"@ostendorf-cloud/govue\":\\s*\"ostendorf-cloud/govue#(?<currentValue>v[^&\"]+)&path:/web\""
+      ],
+      "depNameTemplate": "ostendorf-cloud/govue",
+      "datasourceTemplate": "github-tags"
+    },
+    {
+      "description": "The Dockerfile's web stage installs pnpm through corepack at the version of its PNPM_VERSION argument, which Renovate's Dockerfile manager does not read. This manager reads the argument under its renovate comment, so it moves with the mise.toml pin.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nARG PNPM_VERSION=(?<currentValue>\\S+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "A govue release is one tag with a Go module and an npm package. Both halves move in one pull request, because task check:govue-version refuses a repository that pins them to different tags. Renovate regenerates no lock file for the custom manager, so the govue-lockfile preset of the shared workflows repository runs one fixed post upgrade command for web/pnpm-lock.yaml. The pnpm constraint equals the pin in mise.toml and moves with it.",
+      "matchPackageNames": ["github.com/ostendorf-cloud/govue", "ostendorf-cloud/govue"],
+      "groupName": "govue",
+      "constraints": { "pnpm": "12.23.0" }
+    },
+    {
+      "description": "pnpm is pinned in mise.toml (mise manager), in the Dockerfile's PNPM_VERSION (the regex manager above) and in the govue rule's constraints.pnpm, which Renovate reads itself as a tool constraint (renovate-config manager). All three move in one pull request: internal/envsync's TestDockerfilePnpmMatchesMise fails when the Dockerfile and mise.toml differ, because the image must read the lockfile with the pnpm that wrote it.",
+      "matchPackageNames": ["pnpm"],
+      "matchManagers": ["mise", "custom.regex", "renovate-config"],
+      "groupName": "pnpm"
+    },
+    {
+      "description": "TypeScript stays below 7 until typescript-eslint and vue-tsc support it: typescript-eslint rejects 7.0 at import and vue-tsc 3.x needs typescript/lib/tsc, which 7 no longer exports. Remove this rule when both release 7 support.",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
+    }
+  ]
 }
