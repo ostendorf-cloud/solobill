@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/ostendorf-cloud/govue/health"
@@ -72,7 +71,6 @@ func TestReservedListMatchesTheRouter(t *testing.T) {
 		HealthRegistry: health.New(),
 		RateLimitBurst: 10,
 		RateLimitPer:   time.Minute,
-		DistFS:         fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html></html>")}},
 	})
 	if err != nil {
 		t.Fatalf("NewHandler() error = %v", err)

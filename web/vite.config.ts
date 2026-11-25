@@ -4,9 +4,9 @@ import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
 
-// cmd/solobill embeds dist/ with a go:embed directive that resolves next to
-// the Go source file, which is why the build writes there directly rather
-// than into web/dist and leaving a copy step for the Taskfile to do.
+// The build goes to web/dist. The frontend image (cmd/frontend) copies that
+// directory in and serves it through govue's frontend package in app mode:
+// index.html for every route of the app, the bundle under assets/.
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
   resolve: {
@@ -15,7 +15,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../cmd/solobill/dist',
+    outDir: 'dist',
     emptyOutDir: true,
   },
   test: {

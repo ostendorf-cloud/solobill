@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -341,9 +340,6 @@ func newOIDCFlow(t *testing.T) *oidcFlow {
 		RateLimitBurst:   100,
 		RateLimitPer:     time.Minute,
 		DefaultInviteTTL: time.Hour,
-		DistFS: fstest.MapFS{
-			"index.html": &fstest.MapFile{Data: []byte("<!doctype html><html></html>")},
-		},
 	})
 	if err != nil {
 		t.Fatalf("httpapi.NewHandler() error = %v", err)
