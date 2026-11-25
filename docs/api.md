@@ -643,7 +643,8 @@ An expense JSON:
 ### `GET /api/v1/expenses`
 
 - Who: any.
-- Query: `year` (of `paid_on`), `state`, `category`. All optional.
+- Query: `year` (of `paid_on`), `state`, `category`, `is_asset` (`true` or `false`). All
+  optional. Any other `is_asset` value is a `400` with `details`.
 - Response `200`: `{"expenses": [expense, ...], "total_gross_cents": 0, "total_net_cents": 0}`.
 
 ### `POST /api/v1/expenses`
@@ -761,6 +762,9 @@ An asset JSON:
   "disposed_on": null,
   "disposal_proceeds_cents": null,
   "imported": false,
+  "book_value_cents": 108261,
+  "book_value_year": 2026,
+  "editable": false,
   "created_at": "2026-11-20T10:00:00Z",
   "updated_at": "2026-11-20T10:00:00Z"
 }
@@ -769,6 +773,30 @@ An asset JSON:
 - `method` is `linear`, `gwg`, `sammelposten` or `immediate`. No degressive method.
 - `group` is `intangible`, `office_equipment` or `other_movable`.
 - `useful_life_months` is required for `linear` and refused otherwise.
+- `book_value_cents`, `book_value_year` and `editable` are derived on every answer and never
+  stored. A request that sends them is refused. The example shows them on 1 June 2027.
+
+The current book value follows this rule:
+
+- The current year is the calendar year of the server's clock in Europe/Berlin. At 00:00 on
+  1 January in Berlin the old year has ended, although it is still 31 December in UTC.
+- A schedule year has ended when it is before the current year.
+- `book_value_cents` is the `closing_book_value_cents` of the last schedule year that has
+  ended. `book_value_year` is that year.
+- While no schedule year has ended, `book_value_cents` is the value before any depreciation and
+  `book_value_year` is `null`. That value is `cost_basis_cents`, or `opening_book_value_cents`
+  for an asset with an opening book value. It holds in the acquisition year or the opening year,
+  and for an imported asset whose schedule is empty.
+- After the schedule's last year the value stays at that year's closing value, 0 for a fully
+  depreciated asset, a GWG or a dissolved Sammelposten.
+- A disposal does not set the value to 0. It follows the schedule: a linear asset keeps the rest
+  as the closing value of the disposal year, a GWG and a Sammelposten are not changed.
+- The server computes the value from the schedule of `GET /api/v1/assets/{id}/schedule`. The
+  client shows it and computes no amount.
+
+`editable` is `true` while a `PUT` would not be refused with `409`: the asset is not disposed
+and its first schedule year (the calendar year of `acquired_on`, or `opening_book_value_year`)
+is not before the current year. The client uses it instead of its own date logic.
 
 ### `GET /api/v1/assets`
 
@@ -778,10 +806,12 @@ An asset JSON:
 ### `POST /api/v1/assets`
 
 - Who: owner.
-- Request: the asset JSON without `id`, `disposed_on`, `disposal_proceeds_cents`, `imported` and
-  the timestamps. `expense_id` names a booked expense with `is_asset` set.
+- Request: the asset JSON without `id`, `disposed_on`, `disposal_proceeds_cents`, `imported`,
+  `book_value_cents`, `book_value_year`, `editable` and the timestamps. `expense_id` names a
+  booked expense with `is_asset` set.
 - Response `201`. `400` with `details` when the method does not fit the cost
   (for example `gwg` above 800 EUR).
+- `409 expense_already_an_asset` when another asset came from the expense.
 
 ### `GET /api/v1/assets/{id}`
 
@@ -793,15 +823,22 @@ An asset JSON:
 - Request: as for `POST`. Response `200`.
 - Allowed only while the asset's first schedule year is open: the calendar year of
   `acquired_on`, or `opening_book_value_year` for an imported asset, has not ended.
-- `409` afterwards, because a depreciation figure of a past year may already be in a filed EÜR.
-  A later change is a disposal.
+- The `409` answers have distinct codes, checked in this order after the `400` of the body:
+  - `asset_disposed`: the asset is disposed.
+  - `asset_year_ended`: the first schedule year of the stored asset, or of the replacement, has
+    ended. A depreciation figure of a past year may already be in a filed EÜR. A later change is
+    a disposal.
+  - `expense_already_an_asset`: another asset came from the expense.
+  - `conflict`: the asset changed between the checks and the write. Load it again.
 
 ### `POST /api/v1/assets/{id}/disposal`
 
 - Who: owner.
 - Request: `{"disposed_on": "2026-12-01", "proceeds_cents": 20000}`. `proceeds_cents` may be
   null for a withdrawal or a scrapping.
-- Response `200`: the asset. `409` when already disposed.
+- Response `200`: the asset.
+- `409 asset_disposed` when already disposed.
+- `409 asset_year_ended` when `disposed_on` lies in a year that has ended.
 
 ### `GET /api/v1/assets/{id}/schedule`
 
