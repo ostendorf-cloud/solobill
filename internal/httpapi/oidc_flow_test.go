@@ -403,9 +403,22 @@ func (f *oidcFlow) do(t *testing.T, req *http.Request) (int, string, []byte) {
 func (f *oidcFlow) startLogin(t *testing.T, subject string) string {
 	t.Helper()
 
+	return f.startLoginNext(t, subject, "")
+}
+
+// startLoginNext is startLogin with a ?next= target on the login route.
+// An empty next sends no parameter at all.
+func (f *oidcFlow) startLoginNext(t *testing.T, subject, next string) string {
+	t.Helper()
+
 	f.idp.loginAs(subject)
 
-	status, location, body := f.get(t, f.server.URL+oidcLoginRoute)
+	loginURL := f.server.URL + oidcLoginRoute
+	if next != "" {
+		loginURL += "?" + url.Values{"next": {next}}.Encode()
+	}
+
+	status, location, body := f.get(t, loginURL)
 	if status != http.StatusSeeOther {
 		t.Fatalf("GET %s status = %d, want %d, body = %s", oidcLoginRoute, status, http.StatusSeeOther, body)
 	}
@@ -530,6 +543,45 @@ func TestOIDCLoginFlowOnAPIPaths(t *testing.T) {
 	status, _, _ = f.get(t, callback)
 	if status != http.StatusBadRequest {
 		t.Errorf("replayed callback status = %d, want %d", status, http.StatusBadRequest)
+	}
+}
+
+// TestOIDCLoginFlowNext sends ?next= through the login route: a local
+// path is where the callback lands, anything that leaves this site lands
+// on "/" instead, so the login is no open redirect.
+func TestOIDCLoginFlowNext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "local path with a query", input: "/documents?status=draft", want: "/documents?status=draft"},
+		{name: "absolute url", input: "https://evil.example/phish", want: "/"},
+		{name: "protocol relative url", input: "//evil.example/phish", want: "/"},
+		{name: "backslash protocol relative url", input: `/\evil.example/phish`, want: "/"},
+		{name: "relative path", input: "documents", want: "/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newOIDCFlow(t)
+			const subject = "f:realm:member-1"
+			f.addOIDCAccount(f.tenant.ID, subject)
+
+			callback := f.startLoginNext(t, subject, tt.input)
+
+			status, location, body := f.get(t, callback)
+			if status != http.StatusSeeOther {
+				t.Fatalf("callback status = %d, want %d, body = %s", status, http.StatusSeeOther, body)
+			}
+			if location != tt.want {
+				t.Errorf("callback Location = %q, want %q", location, tt.want)
+			}
+		})
 	}
 }
 
@@ -827,6 +879,48 @@ func TestLegacyOIDCPathsAnswerJSONNotFound(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestAuthMethods covers GET /api/v1/auth/methods, which the login view
+// reads before any session exists to decide whether it shows the single
+// sign-on link.
+func TestAuthMethods(t *testing.T) {
+	t.Parallel()
+
+	withOIDC, _ := buildTestAppWithOIDC(t)
+	withoutOIDC := buildTestApp(t, 100)
+
+	tests := []struct {
+		name    string
+		handler http.Handler
+		want    bool
+	}{
+		{name: "oidc enabled", handler: withOIDC.handler, want: true},
+		{name: "oidc disabled", handler: withoutOIDC.handler, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// No session cookie: the login view has none yet.
+			rec := doJSON(t, tt.handler, http.MethodGet, "/api/v1/auth/methods", nil, nil, "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+			}
+
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v, body = %s", err, rec.Body.String())
+			}
+			if len(body) != 1 || body["oidc"] != tt.want {
+				t.Errorf("body = %v, want exactly {\"oidc\": %v}", body, tt.want)
+			}
+		})
 	}
 }
 

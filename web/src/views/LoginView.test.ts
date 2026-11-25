@@ -77,10 +77,42 @@ describe('LoginView', () => {
     expect(apiClient.post).not.toHaveBeenCalled()
   })
 
-  it('always renders the single sign-on link, regardless of whether OIDC is enabled', async () => {
+  it('renders the single sign-on link when the backend reports OIDC', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({ oidc: true })
     await renderLoginView()
 
-    const link = screen.getByRole('link', { name: 'Log in with single sign-on' })
+    const link = await screen.findByRole('link', { name: 'Log in with single sign-on' })
     expect(link).toHaveAttribute('href', '/api/v1/auth/oidc/login')
+    expect(apiClient.get).toHaveBeenCalledWith('/auth/methods', { skipUnauthenticatedHook: true })
+  })
+
+  it.each([
+    [
+      'the backend reports no OIDC',
+      () => vi.mocked(apiClient.get).mockResolvedValue({ oidc: false }),
+    ],
+    [
+      'the request fails',
+      () => vi.mocked(apiClient.get).mockRejectedValue(new Error('network down')),
+    ],
+  ])('hides the single sign-on link when %s', async (_name, arrange) => {
+    arrange()
+    await renderLoginView()
+
+    await vi.waitFor(() =>
+      expect(apiClient.get).toHaveBeenCalledWith('/auth/methods', {
+        skipUnauthenticatedHook: true,
+      }),
+    )
+    await flushPromises()
+    expect(
+      screen.queryByRole('link', { name: 'Log in with single sign-on' }),
+    ).not.toBeInTheDocument()
   })
 })
+
+// flushPromises lets the view's mount request settle before an absence is
+// asserted, so a link that would appear late still fails the test.
+async function flushPromises(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}

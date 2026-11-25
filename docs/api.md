@@ -76,10 +76,23 @@ One shape for every error, written by govue's `api.WriteError`:
 
 Registered in `internal/httpapi/routes_auth.go`. Moved under `/api` by issue #153.
 
-- Mounted only when `OIDC_ISSUER_URL` is set. Without OIDC both answer `404 not_found`.
-- No session is needed. These are browser navigations, not JSON calls.
+- The login and the callback are mounted only when `OIDC_ISSUER_URL` is set. Without OIDC both
+  answer `404 not_found`. `GET /api/v1/auth/methods` says which case applies.
+- No session is needed. The login and the callback are browser navigations, not JSON calls.
 - The old paths `/auth/oidc/login` and `/auth/oidc/callback` answer `404 not_found` as JSON.
   They do not redirect, so a stale redirect URL at the identity provider fails loudly.
+
+### `GET /api/v1/auth/methods`
+
+Who: anyone, no session needed. Always mounted. Tells the login view which login methods beyond
+the local login are configured, so it shows the single sign-on link only with OIDC. `200`:
+
+```json
+{ "oidc": true }
+```
+
+`oidc` is `false` without OIDC. The answer carries no setting, only what the login route itself
+reveals.
 
 ### `GET /api/v1/auth/oidc/login`
 
