@@ -3,10 +3,10 @@
 # Frontend build stage: produces the dist/ bundle cmd/solobill's
 # go:embed directive needs populated before the Go stage below can even
 # compile, let alone serve anything (see AGENTS.md's "A build needs the
-# frontend first"). Pinned to the exact node and pnpm versions mise.toml
-# resolves node="26" and pnpm="12" to locally (node 26.13.0, pnpm
-# 12.19.0), so this image builds with the same toolchain task web:build
-# does, not merely the same majors.
+# frontend first"). Pinned to the exact node version mise.toml resolves
+# node="26" to locally (node 26.13.0) and to the exact pnpm patch
+# mise.toml pins (PNPM_VERSION below), so this image builds with the same
+# toolchain task web:build does, not merely the same majors.
 #
 # web/vite.config.ts's own outDir is "../cmd/solobill/dist", relative to
 # web/, so this stage keeps the same sibling layout the repository itself
@@ -25,9 +25,14 @@ WORKDIR /src
 # corepack no longer ships with Node. nodejs/node PR 57617 dropped it,
 # starting with Node.js 25. This image's Node 26 reflects that change.
 # npm still ships, so npm installs corepack first. corepack then
-# installs the pnpm version mise.toml resolves to, matching the comment
-# above.
-RUN npm install -g corepack && corepack enable && corepack prepare pnpm@12.19.0 --activate
+# installs the pinned pnpm version below, the exact one mise.toml pins,
+# so the lockfile this stage reads was written by the same pnpm.
+# Renovate updates PNPM_VERSION through the regex manager in
+# renovate.json, in the same pull request as the mise.toml pin (group
+# "pnpm"); internal/envsync fails when the two differ.
+# renovate: datasource=npm depName=pnpm
+ARG PNPM_VERSION=12.23.0
+RUN npm install -g corepack && corepack enable && corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml web/
 RUN cd web && pnpm install --frozen-lockfile
