@@ -621,7 +621,7 @@ None of these is a secret. The session codec key and the CSRF key stay in `exist
 | `config.inviteDefaultTtl` | `INVITE_DEFAULT_TTL`. | `168h` |
 | `config.oidc.issuerUrl` | `OIDC_ISSUER_URL`. OIDC login is off exactly when this is empty. | `""` |
 | `config.oidc.clientId` | `OIDC_CLIENT_ID`. Required together with `issuerUrl`. | `""` |
-| `config.oidc.redirectUrl` | `OIDC_REDIRECT_URL`. Required together with `issuerUrl`. The public URL of `/api/v1/auth/oidc/callback`, for example `https://solobill.example.com/api/v1/auth/oidc/callback`, registered as is at the identity provider. The old `/auth/oidc/callback` answers a JSON `404`. | `""` |
+| `config.oidc.redirectUrl` | `OIDC_REDIRECT_URL`. Required together with `issuerUrl`. The public URL of `/api/v1/auth/oidc/callback`, for example `https://solobill.example.com/api/v1/auth/oidc/callback`, registered as is at the identity provider. The pod refuses to start when the path does not end in `/api/v1/auth/oidc/callback` or the scheme is not `https`. The old `/auth/oidc/callback` answers a JSON `404`. | `""` |
 | `config.oidc.scopes` | `OIDC_SCOPES`, joined with a comma. | `[]` |
 | `config.oidc.defaultTenantSlug` | `OIDC_DEFAULT_TENANT_SLUG`. Required together with `issuerUrl`. | `""` |
 | `existingSecret.name` | Name of the existing `Secret` carrying every secret-shaped value. Required. | `""` |

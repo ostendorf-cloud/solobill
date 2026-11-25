@@ -89,7 +89,10 @@ Redirects (`303`) to the identity provider. Sets the short lived login cookie (`
 ### `GET /api/v1/auth/oidc/callback`
 
 The redirect URL registered at the identity provider. `OIDC_REDIRECT_URL` must name exactly this
-path, for example `https://solobill.example.com/api/v1/auth/oidc/callback`. Starts a session and
+path, for example `https://solobill.example.com/api/v1/auth/oidc/callback`. solobill refuses to
+start when the path of `OIDC_REDIRECT_URL` does not end in `/api/v1/auth/oidc/callback`, when it
+carries a query or fragment, or when it is not `https`. Plain `http` is accepted only with
+`SESSION_ALLOW_PLAIN_HTTP=true`. Starts a session and
 redirects (`303`) to `/` or to `next`. A refused login answers a short plain text `400` (state,
 code or login cookie wrong) or `503` (provider or account problem), with no cause.
 

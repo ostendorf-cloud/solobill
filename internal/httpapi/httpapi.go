@@ -114,15 +114,16 @@ const defaultInviteTTL = 7 * 24 * time.Hour
 // oidcLoginPath and oidcCallbackPath are where the OIDC routes are mounted
 // when OIDC is enabled. They live under /api/v1/auth/, next to the local
 // logout and password routes, so a frontend server in front of this one
-// routes only /api to it. OIDC_REDIRECT_URL's path (see internal/config)
-// must equal oidcCallbackPath: the identity provider is told to redirect
-// back to exactly that URL, and this is the one route that answers it.
+// routes only /api to it. internal/config refuses to start unless
+// OIDC_REDIRECT_URL's path ends in oidcCallbackPath: the identity provider
+// is told to redirect back to exactly that URL, and this is the one route
+// that answers it. Both come from internal/auth, the one definition.
 //
 // govue's login cookie and solobill's pending-invite cookie both carry
 // Path=/, so either path reaches the callback with them.
 const (
-	oidcLoginPath    = "/api/v1/auth/oidc/login"
-	oidcCallbackPath = "/api/v1/auth/oidc/callback"
+	oidcLoginPath    = auth.OIDCLoginPath
+	oidcCallbackPath = auth.OIDCCallbackPath
 )
 
 // legacyOIDCPrefix is the subtree the OIDC routes lived under before they

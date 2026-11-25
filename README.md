@@ -22,8 +22,9 @@ the cookie, proxy, replica and passkey settings a deployment needs.
 
 OIDC login is optional and starts at `GET /api/v1/auth/oidc/login`. The identity provider
 redirects back to `GET /api/v1/auth/oidc/callback`, and `OIDC_REDIRECT_URL` must name that URL,
-for example `https://solobill.example.com/api/v1/auth/oidc/callback`. The old `/auth/oidc/...`
-paths answer a JSON `404`.
+for example `https://solobill.example.com/api/v1/auth/oidc/callback`. solobill refuses to start
+when that URL names another path or is not `https`. The old `/auth/oidc/...` paths answer a JSON
+`404`.
 
 ## Install
 
