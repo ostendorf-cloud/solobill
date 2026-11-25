@@ -433,7 +433,7 @@ describe('DocumentDetailView', () => {
   })
 
   describe('an issued invoice', () => {
-    it('is read only, shows its stored number, status and payments, and a disabled PDF placeholder', async () => {
+    it('is read only, shows its stored number, status and payments, and the PDF download', async () => {
       mockApi(issued)
       await renderView()
 
@@ -443,8 +443,26 @@ describe('DocumentDetailView', () => {
       expect(screen.queryByRole('button', { name: 'Edit draft' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'Discard draft' })).toBeNull()
       expect(await screen.findByRole('heading', { name: 'Payments' })).toBeVisible()
-      expect(screen.getByRole('button', { name: 'Download PDF' })).toBeDisabled()
-      expect(screen.getByText(/PDF download is not available yet/)).toBeVisible()
+      const link = screen.getByRole('link', { name: 'Download PDF (German)' })
+      expect(link).toHaveAttribute('href', '/api/v1/documents/d-1/pdf')
+      expect(link).toHaveAttribute('hreflang', 'de')
+      expect(link).toHaveAttribute('download')
+    })
+
+    it('names the language of an English document on the PDF download', async () => {
+      mockApi(doc({ ...issued, language: 'en' }))
+      await renderView()
+
+      const link = await screen.findByRole('link', { name: 'Download PDF (English)' })
+      expect(link).toHaveAttribute('hreflang', 'en')
+    })
+
+    it('offers no rendered PDF for an imported document', async () => {
+      mockApi(doc({ ...issued, imported: true, original_number: 'RE 2019/7' }))
+      await renderView()
+
+      expect(await screen.findByRole('heading', { name: 'RE-20260009' })).toBeVisible()
+      expect(screen.queryByRole('link', { name: /Download PDF/ })).toBeNull()
     })
 
     it('starts a correction and opens its editor', async () => {

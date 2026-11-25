@@ -172,6 +172,14 @@ export function listDocuments(filters: ListFilters, options: Options = {}): Prom
     .then((answer) => answer.documents)
 }
 
+/** documentPdfUrl is the PDF download route of a document. The browser
+ *  follows it as a plain link: the route answers with the PDF as an
+ *  attachment, in the document's own language, and the session cookie
+ *  authenticates it. */
+export function documentPdfUrl(id: string): string {
+  return `/api/v1/documents/${encodeURIComponent(id)}/pdf`
+}
+
 export function getDocument(id: string, options: Options = {}): Promise<Doc> {
   return apiClient.get<Doc>(`/documents/${encodeURIComponent(id)}`, { signal: options.signal })
 }

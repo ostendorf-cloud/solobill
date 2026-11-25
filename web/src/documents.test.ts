@@ -233,6 +233,11 @@ describe('classifyIssueError', () => {
     expect(docs.classifyIssueError(error).kind).toBe(kind)
   })
 
+  it('builds the PDF download route with an encoded id', () => {
+    expect(docs.documentPdfUrl('d-1')).toBe('/api/v1/documents/d-1/pdf')
+    expect(docs.documentPdfUrl('a/b?c')).toBe('/api/v1/documents/a%2Fb%3Fc/pdf')
+  })
+
   it('sorts a transport failure and a foreign error', () => {
     expect(
       docs.classifyIssueError(new ApiError({ code: ErrorCode.network, message: 'm' })).kind,
