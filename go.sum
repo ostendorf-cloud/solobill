@@ -49,8 +49,8 @@ github.com/minio/minio-go/v7 v7.4.1 h1:PtU/zIOfQRWZ+QydXAZysc+xZYHdG+BBR4Z6TUvy7
 github.com/minio/minio-go/v7 v7.4.1/go.mod h1:nQnQi7zTfXR4lREtYXZQWqo5aw0Rqv+ZqCGrTORygRk=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
-github.com/ostendorf-cloud/govue v0.11.0 h1:R0Sj9r5CLjJKs+o1hZKy7BGOpZuhQC9LGGRtkAD7lBQ=
-github.com/ostendorf-cloud/govue v0.11.0/go.mod h1:/q2eOzkRJ75Kq8hVMMN+HdX6/e75cGj3S5AL8LJLIFk=
+github.com/ostendorf-cloud/govue v0.12.0 h1:yyBRoq81jGQ34Tnk74aVE1rah7CBemlo1JOcjX1LsGI=
+github.com/ostendorf-cloud/govue v0.12.0/go.mod h1:/q2eOzkRJ75Kq8hVMMN+HdX6/e75cGj3S5AL8LJLIFk=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
 github.com/philhofer/fwd v1.2.0/go.mod h1:RqIHx9QI14HlwKwm98g9Re5prTQ6LdeRQn+gXJFxsJM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
