@@ -1,18 +1,11 @@
 <script setup lang="ts">
 // App is the shell: skip link, and for a signed in route the header with
-// the navigation, the language and theme switch and the sign out button,
-// plus the GoBD banner. The login and invite routes render bare. The
+// the navigation, the link to the account settings (language and colour
+// mode live there) and the sign out button, plus the GoBD banner. The login and invite routes render bare. The
 // session comes from GET /api/v1/me, the banner from GET /api/v1/status
 // (gobdBannerVisible, src/status.ts): a failed status request means unknown
 // and shows no banner.
-import {
-  GovueButton,
-  GovueHeader,
-  GovueLanguageSwitch,
-  GovueSkipLink,
-  GovueThemeSwitch,
-  GovueToastHost,
-} from '@ostendorf-cloud/govue'
+import { GovueButton, GovueHeader, GovueSkipLink, GovueToastHost } from '@ostendorf-cloud/govue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -20,7 +13,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { apiClient } from './api'
 import AppNav from './components/AppNav.vue'
 import { clearSession, loadSession, me, status } from './session'
-import { homeLocation, localizedHref } from './router/locale'
+import { homeLocation, routeLocale } from './router/locale'
 import { gobdBannerVisible } from './status'
 
 const BARE_ROUTES = ['login', 'accept-invite']
@@ -54,13 +47,6 @@ watch(
   { immediate: true },
 )
 
-// The switch is a group of links to the same page in the other language.
-// govue remembers the choice; the router takes the click over.
-function goToLanguage(href: string): boolean {
-  void router.push(href)
-  return true
-}
-
 async function logout(): Promise<void> {
   loggingOut.value = true
   logoutError.value = ''
@@ -86,18 +72,14 @@ async function logout(): Promise<void> {
 
     <AppNav v-if="me" :role="me.role" />
 
-    <!-- One cycle button at every width: system, light, dark. The choice is
-         kept by govue's useTheme under its default storage key. -->
-    <template #theme>
-      <GovueThemeSwitch cycle />
-    </template>
-
     <template #actions>
-      <GovueLanguageSwitch
-        :link-for="(code) => localizedHref(router, code)"
-        :navigate="goToLanguage"
-      />
       <template v-if="me">
+        <RouterLink
+          :to="{ name: 'account', params: { locale: routeLocale(route) } }"
+          class="inline-flex min-h-11 items-center rounded-md px-3 text-base text-text hover:bg-surface-hover"
+        >
+          {{ t('account.link') }}
+        </RouterLink>
         <span class="hidden text-sm text-text-muted lg:inline">
           {{ t('common.signedInAs', { name: me.name || me.email }) }}
         </span>
