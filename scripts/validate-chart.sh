@@ -195,6 +195,8 @@ if [ "$mode" = "lint" ]; then
     "config.oidc.issuerUrl holds a second colon in its host"
     "config.databaseUrl is scheme-relative"
     "frontend.service.port equals frontend.adminPort"
+    "objectStore.endpoint port outside 1 to 65535"
+    "objectStore.endpoint port too large for an integer"
   )
 
   # The DEL character (U+007F), set through printf: bash's $'\x7f' next to a quoted string
@@ -241,6 +243,8 @@ if [ "$mode" = "lint" ]; then
     "${baseline},config.oidc.issuerUrl=https://u:s3cr3tTOKEN@::1/realms/solobill"
     "existingSecret.name=solobill-secrets,config.databaseUrl=//u:s3cr3tTOKEN@postgres.example.svc:abc/solobill,config.databaseUser=solobill_app,migrationJob.databaseUser=solobill_migrator"
     "${baseline},frontend.adminPort=8080"
+    "${baseline},objectStore.endpoint=http://s3.example.svc:65536,objectStore.bucket=solobill"
+    "${baseline},objectStore.endpoint=http://s3.example.svc:99999999999999999999,objectStore.bucket=solobill"
   )
 
   # The distinctive lead sentence of each guard's own fail message (see
@@ -249,7 +253,7 @@ if [ "$mode" = "lint" ]; then
   # apart and to prove this specific guard fired, short enough to survive a
   # reworded explanation. The two port-comparison guards below are matched on
   # the text before the port numbers they interpolate, not the numbers
-  # themselves. The two port-range guards (a URL port outside 1 to 65535) name
+  # themselves. The port-range guards (a URL port outside 1 to 65535) name
   # their key only and interpolate nothing.
   guard_messages=(
     "ingress.enabled and httpRoute.enabled cannot both be true"
@@ -290,6 +294,8 @@ if [ "$mode" = "lint" ]; then
     "config.oidc.issuerUrl has a non-numeric port in its host part"
     "config.databaseUrl is not a valid URL"
     "frontend.service.port and frontend.adminPort are both"
+    "objectStore.endpoint names a port outside 1 to 65535"
+    "objectStore.endpoint names a port outside 1 to 65535"
   )
 
   for i in "${!guard_names[@]}"; do
