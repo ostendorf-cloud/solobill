@@ -249,6 +249,29 @@ describe('classifyIssueError', () => {
     expect(await file.blob.text()).toBe('%PDF')
   })
 
+  it('prefers the UTF-8 filename* over filename', async () => {
+    fetchStub.mockResolvedValueOnce(
+      new Response('%PDF', {
+        headers: {
+          'Content-Disposition':
+            'attachment; filename="Rechnung-Muller.pdf"; filename*=UTF-8\'\'Rechnung-M%C3%BCller.pdf',
+        },
+      }),
+    )
+    expect((await docs.fetchDocumentPdf('d-1', 'fallback.pdf')).name).toBe('Rechnung-Müller.pdf')
+  })
+
+  it('falls back to filename when filename* is malformed', async () => {
+    fetchStub.mockResolvedValueOnce(
+      new Response('%PDF', {
+        headers: {
+          'Content-Disposition': 'attachment; filename="RE-2.pdf"; filename*=UTF-8\'\'%E0%A4%A',
+        },
+      }),
+    )
+    expect((await docs.fetchDocumentPdf('d-1', 'fallback.pdf')).name).toBe('RE-2.pdf')
+  })
+
   it('falls back to the given name without a Content-Disposition', async () => {
     fetchStub.mockResolvedValueOnce(new Response('%PDF'))
     expect((await docs.fetchDocumentPdf('d-1', 'fallback.pdf')).name).toBe('fallback.pdf')

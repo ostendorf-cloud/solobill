@@ -185,10 +185,25 @@ export interface PdfFile {
   name: string
 }
 
-/** pdfFileName reads the file name out of a Content-Disposition header. */
+/** pdfFileName reads the file name out of a Content-Disposition header. It
+ *  prefers the RFC 5987 form filename*=UTF-8''..., then filename=. */
 function pdfFileName(header: string | null, fallbackName: string): string {
-  const match = header ? /filename="?([^";]+)"?/i.exec(header) : null
-  return match?.[1] ?? fallbackName
+  if (!header) {
+    return fallbackName
+  }
+  const extended = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header)
+  if (extended?.[2]) {
+    const charset = (extended[1] ?? '').trim().toLowerCase()
+    if (charset === '' || charset === 'utf-8') {
+      try {
+        return decodeURIComponent(extended[2].trim())
+      } catch {
+        // Malformed escapes: fall through to the plain name.
+      }
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header)
+  return plain?.[1] ?? fallbackName
 }
 
 /** fetchDocumentPdf downloads the PDF of a document. A plain link would save
