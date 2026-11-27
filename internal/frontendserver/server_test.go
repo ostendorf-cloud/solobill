@@ -101,6 +101,14 @@ func TestRouting(t *testing.T) {
 			wantType: "text/html", wantCache: "no-cache", wantInBody: `<div id="app">`,
 		},
 		{
+			name: "german prefix", method: http.MethodGet, path: "/de/documents/42", wantStatus: http.StatusOK,
+			wantType: "text/html", wantCache: "no-cache", wantInBody: `<div id="app">`,
+		},
+		{
+			name: "english prefix root", method: http.MethodGet, path: "/en/", wantStatus: http.StatusOK,
+			wantType: "text/html", wantCache: "no-cache", wantInBody: `<div id="app">`,
+		},
+		{
 			name: "fixed asset route", method: http.MethodGet, path: "/fixed-assets/7", wantStatus: http.StatusOK,
 			wantType: "text/html", wantCache: "no-cache", wantInBody: `<div id="app">`,
 		},
