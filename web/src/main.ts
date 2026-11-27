@@ -1,10 +1,10 @@
 import { createApp } from 'vue'
-import { createGovueI18n, localeFromPath, useTheme } from '@ostendorf-cloud/govue'
+import { createGovueI18n, useTheme } from '@ostendorf-cloud/govue'
 
 import App from './App.vue'
 import { createAppI18n } from './i18n'
 import { createAppRouter } from './router'
-import { followUrlLocale, preferredLocale } from './router/locale'
+import { followUrlLocale, initialLocale } from './router/locale'
 import './styles.css'
 
 // The theme never varies: this app ships exactly one brand (see
@@ -13,9 +13,8 @@ import './styles.css'
 // useTheme's own documented default.
 useTheme({ theme: 'solobill' })
 
-// The language comes from the URL. A path without a prefix is redirected by
-// the router, so the remembered or browser language only seeds that case.
-const i18n = createAppI18n(localeFromPath(location.pathname) ?? preferredLocale())
+// The language comes from the URL, see initialLocale.
+const i18n = createAppI18n(initialLocale(location.pathname))
 const router = createAppRouter()
 
 // govue's components (login form, TOTP enrolment, passkey button) render

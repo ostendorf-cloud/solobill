@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
 import { routes } from '.'
-import { localizedHref, preferredLocale, withLocale } from './locale'
+import { initialLocale, localizedHref, preferredLocale, withLocale } from './locale'
 
 const stub = { template: '<div />' }
 
@@ -28,6 +28,12 @@ describe('withLocale', () => {
     await router.push('/')
     expect(router.currentRoute.value.fullPath).toBe('/en/')
     expect(router.currentRoute.value.name).toBe('home')
+  })
+
+  it('keeps query and hash when / goes to the preferred language', async () => {
+    const router = makeRouter(() => 'en')
+    await router.push('/?tab=lines#top')
+    expect(router.currentRoute.value.fullPath).toBe('/en/?tab=lines#top')
   })
 
   it('serves a prefixed path and keeps the language on a named move', async () => {
@@ -63,6 +69,31 @@ describe('withLocale', () => {
     expect(localizedHref(router, 'en')).toBe('/en/documents/7?tab=lines#top')
     await router.push('/de/')
     expect(localizedHref(router, 'en')).toBe('/en/')
+  })
+
+  it('links to the start page from the 404 of an unknown prefix', async () => {
+    const router = makeRouter()
+    await router.push('/fr/documents/7?tab=lines')
+    expect(router.currentRoute.value.name).toBe('not-found-bare')
+    expect(localizedHref(router, 'en')).toBe('/en/')
+    expect(localizedHref(router, 'de')).toBe('/de/')
+  })
+})
+
+describe('initialLocale', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('takes the language of the URL before the remembered one', () => {
+    localStorage.setItem('govue-language', 'de')
+    expect(initialLocale('/en/documents')).toBe('en')
+  })
+
+  it('falls back to the preferred language for a path without a prefix', () => {
+    localStorage.setItem('govue-language', 'de')
+    expect(initialLocale('/documents')).toBe('de')
+    expect(initialLocale('/fr/documents')).toBe('de')
   })
 })
 

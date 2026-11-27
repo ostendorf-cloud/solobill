@@ -36,6 +36,13 @@ export function preferredLocale(): LocaleCode {
   return pickLocale(stored, navigator.languages ?? [navigator.language])
 }
 
+/** initialLocale is the language the app starts in: the one in the URL, else
+ *  the preferred one. A path without a prefix is redirected by the router, so
+ *  the preferred language only seeds that case. */
+export function initialLocale(pathname: string): LocaleCode {
+  return localeFromPath(pathname) ?? preferredLocale()
+}
+
 /** withLocale puts the feature routes under the language prefix and adds the
  *  routes that need no feature: '/' goes to the preferred language, a path
  *  without a prefix that is an app route goes there too, and anything else is
@@ -47,7 +54,10 @@ export function withLocale(
 ): RouteRecordRaw[] {
   const children = features.map((r) => ({ ...r, path: r.path.replace(/^\//, '') }))
   return [
-    { path: '/', redirect: () => `/${preferred()}/` },
+    {
+      path: '/',
+      redirect: (to) => ({ path: `/${preferred()}/`, query: to.query, hash: to.hash }),
+    },
     {
       path: LOCALE_PARAM,
       children: [
@@ -86,9 +96,14 @@ export function homeLocation(route: RouteLocationNormalizedLoaded): RouteLocatio
 }
 
 /** localizedHref is the current page in another language: same path
- *  below the prefix, same query and hash. */
+ *  below the prefix, same query and hash. The 404 view of a path without a
+ *  known prefix has no page to carry over, so it links to the start page of
+ *  that language. */
 export function localizedHref(router: Router, code: string): string {
   const current = router.currentRoute.value
+  if (current.name === NOT_FOUND_BARE) {
+    return router.resolve({ path: localizedPath('/', code as LocaleCode) }).href
+  }
   return router.resolve({
     path: localizedPath(current.path, code as LocaleCode),
     query: current.query,
