@@ -15,10 +15,6 @@ describe('routes', () => {
     expect(new Set(names).size).toBe(names.length)
   })
 
-  it('keeps the catch-all last', () => {
-    expect(routes.at(-1)?.path).toBe('/:pathMatch(.*)*')
-  })
-
   // The frontend server (cmd/frontend, govue app mode) answers /assets and
   // /api itself, with the bundle and a JSON 404, and the Ingress sends /api
   // to the API. A route under either would never reach the app on a reload.

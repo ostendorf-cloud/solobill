@@ -1,13 +1,14 @@
 import { ApiError, createGovueI18n } from '@ostendorf-cloud/govue'
-import { render, screen } from '@testing-library/vue'
+import { render, screen, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
 import { apiClient } from './api'
 import { de, en } from './i18n/locales'
 import App from './App.vue'
+import { followUrlLocale, withLocale } from './router/locale'
 import { clearSession, me } from './session'
 import type { StatusResponse } from './status'
 
@@ -47,29 +48,34 @@ function mockApi(role: string, statusAnswer: StatusResponse | Error) {
 }
 
 async function renderApp(path: string) {
-  const router = createRouter({
+  const router: Router = createRouter({
     history: createMemoryHistory(),
-    routes: [
-      { path: '/', name: 'home', component: stub },
-      { path: '/login', name: 'login', component: stub },
-      {
-        path: '/customers',
-        name: 'customers',
-        component: stub,
-        meta: { nav: { labelKey: 'customers.nav', order: 30 } },
-      },
-      {
-        path: '/settings',
-        name: 'settings',
-        component: stub,
-        meta: { nav: { labelKey: 'profile.nav', order: 90, roles: ['owner'] } },
-      },
-    ],
+    routes: withLocale(
+      [
+        { path: '/', name: 'home', component: stub },
+        { path: '/login', name: 'login', component: stub },
+        {
+          path: '/customers',
+          name: 'customers',
+          component: stub,
+          meta: { nav: { labelKey: 'customers.nav', order: 30 } },
+        },
+        {
+          path: '/settings',
+          name: 'settings',
+          component: stub,
+          meta: { nav: { labelKey: 'profile.nav', order: 90, roles: ['owner'] } },
+        },
+      ],
+      () => router,
+      () => 'en',
+    ),
   })
   const i18n = createI18n({ legacy: false, locale: 'en', messages: { en, de } })
+  const govueI18n = createGovueI18n({ i18n })
+  followUrlLocale(router, govueI18n.language)
   await router.push(path)
   await router.isReady()
-  const govueI18n = createGovueI18n({ i18n })
   render(App, { global: { plugins: [router, i18n, govueI18n] } })
   return { router, i18n }
 }
@@ -82,30 +88,56 @@ describe('App', () => {
     localStorage.clear()
   })
 
-  it('stores the chosen language and survives blocked storage', async () => {
+  it('switches the language by the prefix, keeps path and query, and remembers it', async () => {
     mockApi('owner', status(true))
     const user = userEvent.setup()
-    const { i18n } = await renderApp('/')
-    const select = await screen.findByRole('combobox', { name: 'Language' })
+    const { router, i18n } = await renderApp('/en/customers?tenant=acme#top')
+    const group = await screen.findByRole('group', { name: 'Language' })
+    expect(within(group).getByRole('link', { name: 'Deutsch' })).toHaveAttribute(
+      'href',
+      '/de/customers?tenant=acme#top',
+    )
 
-    await user.selectOptions(select, 'de')
+    await user.click(within(group).getByRole('link', { name: 'Deutsch' }))
 
-    expect(localStorage.getItem('solobill-locale')).toBe('de')
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.fullPath).toBe('/de/customers?tenant=acme#top'),
+    )
     expect(i18n.global.locale.value).toBe('de')
+    expect(document.documentElement.lang).toBe('de')
+    expect(localStorage.getItem('govue-language')).toBe('de')
+  })
 
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('blocked')
-    })
-    await user.selectOptions(select, 'en')
+  it('follows the prefix of a link into the other language', async () => {
+    mockApi('owner', status(true))
+    const { router, i18n } = await renderApp('/en/')
 
-    expect(i18n.global.locale.value).toBe('en')
+    await router.push('/de/customers')
+
+    expect(i18n.global.locale.value).toBe('de')
+    expect(document.documentElement.lang).toBe('de')
+  })
+
+  it('keeps the app language on an unknown prefix and renders the 404 view', async () => {
+    mockApi('owner', status(true))
+    const { router, i18n } = await renderApp('/de/customers')
+
+    await router.push('/fr/documents/7')
+
+    expect(router.currentRoute.value.name).toBe('not-found-bare')
+    expect(i18n.global.locale.value).toBe('de')
+    expect(await screen.findByRole('link', { name: 'Zur Startseite' })).toHaveAttribute(
+      'href',
+      '/de',
+    )
+    expect(screen.getByRole('link', { name: 'Kunden' })).toHaveAttribute('href', '/de/customers')
   })
 
   it('signs out through the shell button and drops the header', async () => {
     mockApi('owner', status(true))
     vi.mocked(apiClient.post).mockResolvedValue(undefined)
     const user = userEvent.setup()
-    const { router } = await renderApp('/')
+    const { router } = await renderApp('/en/')
 
     await user.click(await screen.findByRole('button', { name: 'Sign out' }))
 
@@ -117,17 +149,17 @@ describe('App', () => {
 
   it('shows no stale user after another sign out and a different sign in', async () => {
     mockApi('owner', status(false))
-    const { router } = await renderApp('/')
+    const { router } = await renderApp('/en/')
     expect(await screen.findByRole('link', { name: 'Settings' })).toBeVisible()
     expect(await screen.findByTestId('gobd-banner')).toBeVisible()
 
     // A view's own sign out ends the session without the shell's button.
-    await router.push('/login')
+    await router.push('/en/login')
     await vi.waitFor(() => expect(me.value).toBeNull())
     expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull()
 
     mockApi('member', status(true))
-    await router.push('/')
+    await router.push('/en/')
 
     expect(await screen.findByRole('link', { name: 'Customers' })).toBeVisible()
     expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull()
@@ -137,7 +169,7 @@ describe('App', () => {
 
   it('renders the skip link ahead of the current route view', async () => {
     mockApi('owner', status(true))
-    await renderApp('/')
+    await renderApp('/en/')
 
     expect(screen.getByRole('link', { name: 'Skip to content' })).toHaveAttribute('href', '#main')
     expect(await screen.findByText('page')).toBeVisible()
@@ -145,11 +177,11 @@ describe('App', () => {
 
   it('lists the navigation entries from route meta, owner only ones for the owner', async () => {
     mockApi('owner', status(true))
-    await renderApp('/')
+    await renderApp('/en/')
 
     expect(await screen.findByRole('link', { name: 'Customers' })).toHaveAttribute(
       'href',
-      '/customers',
+      '/en/customers',
     )
     expect(screen.getByRole('link', { name: 'Settings' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeVisible()
@@ -157,7 +189,7 @@ describe('App', () => {
 
   it('hides an owner only entry from a member', async () => {
     mockApi('member', status(true))
-    await renderApp('/')
+    await renderApp('/en/')
 
     await screen.findByRole('link', { name: 'Customers' })
     expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull()
@@ -165,14 +197,14 @@ describe('App', () => {
 
   it('shows the GoBD banner while the protection is inactive', async () => {
     mockApi('owner', status(false))
-    await renderApp('/')
+    await renderApp('/en/')
 
     expect(await screen.findByTestId('gobd-banner')).toBeVisible()
   })
 
   it('shows no banner when the protection is active', async () => {
     mockApi('owner', status(true))
-    await renderApp('/')
+    await renderApp('/en/')
 
     await screen.findByRole('link', { name: 'Customers' })
     expect(screen.queryByTestId('gobd-banner')).toBeNull()
@@ -183,7 +215,7 @@ describe('App', () => {
       'owner',
       new ApiError({ code: 'not_implemented', message: 'not implemented', status: 501 }),
     )
-    await renderApp('/')
+    await renderApp('/en/')
 
     await screen.findByRole('link', { name: 'Customers' })
     expect(screen.queryByTestId('gobd-banner')).toBeNull()
@@ -191,7 +223,7 @@ describe('App', () => {
 
   it('renders no header on the login route and asks for no session', async () => {
     mockApi('owner', status(false))
-    await renderApp('/login')
+    await renderApp('/en/login')
 
     expect(screen.queryByRole('navigation')).toBeNull()
     expect(apiClient.get).not.toHaveBeenCalled()
