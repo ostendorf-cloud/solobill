@@ -29,6 +29,22 @@ func (r *sellerProfileRepository) Get(ctx context.Context) (storage.SellerProfil
 	return sellerProfileFromRow(row)
 }
 
+// GetForUpdate implements storage.SellerProfileRepository with
+// queries/seller_profiles.sql's GetSellerProfileForUpdate.
+func (r *sellerProfileRepository) GetForUpdate(ctx context.Context) (storage.SellerProfile, error) {
+	tx, err := txFromContext(ctx)
+	if err != nil {
+		return storage.SellerProfile{}, err
+	}
+
+	row, err := sqlcgen.New(tx).GetSellerProfileForUpdate(ctx)
+	if err != nil {
+		return storage.SellerProfile{}, mapReadError(err)
+	}
+
+	return sellerProfileFromRow(row)
+}
+
 // Put implements storage.SellerProfileRepository. The query names its
 // columns and writes no logo column, so a save never drops the logo.
 func (r *sellerProfileRepository) Put(ctx context.Context, profile storage.SellerProfile) (storage.SellerProfile, error) {

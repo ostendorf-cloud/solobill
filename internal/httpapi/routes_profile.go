@@ -242,7 +242,10 @@ func (a *app) handlePutProfile(w http.ResponseWriter, r *http.Request) error {
 
 	var out profileResponse
 	err = a.profileInTenant(r.Context(), c, func(ctx context.Context) error {
-		old, err := a.repos.SellerProfiles.Get(ctx)
+		// The row lock comes first: it waits for an issue in flight and
+		// holds off a new one, so the issued types read below stay true
+		// until this transaction ends.
+		old, err := a.repos.SellerProfiles.GetForUpdate(ctx)
 		if err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
@@ -282,9 +285,10 @@ func (a *app) handlePutProfile(w http.ResponseWriter, r *http.Request) error {
 // prefix. Without a document repository (a test app that wires none)
 // nothing is issued.
 //
-// The check and the save are not one atomic step: a document issued by
-// another request between them keeps its number, and the unique index on
-// documents.display_number stays the last guard (issue #70).
+// The caller holds the profile row lock (SellerProfiles.GetForUpdate)
+// when it calls this, so no issue commits between the read and the save.
+// The unique index on documents.display_number stays the last guard
+// (issue #70).
 func (a *app) profileIssuedDocumentTypes(ctx context.Context) (map[storage.DocumentType]bool, error) {
 	issued := map[storage.DocumentType]bool{}
 	if a.repos.Documents == nil {

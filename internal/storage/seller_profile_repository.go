@@ -13,6 +13,14 @@ type SellerProfileRepository interface {
 	// saved yet.
 	Get(ctx context.Context) (SellerProfile, error)
 
+	// GetForUpdate is Get and also locks the profile row until the
+	// transaction ends. A concurrent SellerProfileForIssue or
+	// GetForUpdate of the same tenant waits for it, so a save reads which
+	// document types were issued only after no issue is in flight. It
+	// locks nothing when no profile was saved yet, which no issue can
+	// run without: ErrNotFound then.
+	GetForUpdate(ctx context.Context) (SellerProfile, error)
+
 	// Put creates or replaces the tenant's profile as a whole, except
 	// LogoFileID: the query never writes the logo column, so saving the
 	// profile never drops the logo (see SellerProfileLogoRepository).

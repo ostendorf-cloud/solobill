@@ -57,6 +57,52 @@ func (q *Queries) GetSellerProfile(ctx context.Context) (SellerProfile, error) {
 	return i, err
 }
 
+const getSellerProfileForUpdate = `-- name: GetSellerProfileForUpdate :one
+SELECT tenant_id, legal_name, street, address_line2, postal_code, city, country_code,
+       tax_number, vat_id, kleinunternehmer_id, default_vat_regime, default_language,
+       bank_name, iban, bic, email, phone, website, footer_text, number_formats,
+       created_at, updated_at
+FROM seller_profiles
+WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+FOR UPDATE
+`
+
+// GetSellerProfileForUpdate reads the profile and holds a FOR UPDATE lock
+// on it until the transaction ends. FOR UPDATE conflicts with the FOR
+// SHARE lock LockSellerProfileForIssue takes, so a profile save and an
+// issue of the same tenant run one after the other. The save reads which
+// document types were issued only after this lock, and an issue that
+// starts later sees the saved templates.
+func (q *Queries) GetSellerProfileForUpdate(ctx context.Context) (SellerProfile, error) {
+	row := q.db.QueryRow(ctx, getSellerProfileForUpdate)
+	var i SellerProfile
+	err := row.Scan(
+		&i.TenantID,
+		&i.LegalName,
+		&i.Street,
+		&i.AddressLine2,
+		&i.PostalCode,
+		&i.City,
+		&i.CountryCode,
+		&i.TaxNumber,
+		&i.VatID,
+		&i.KleinunternehmerID,
+		&i.DefaultVatRegime,
+		&i.DefaultLanguage,
+		&i.BankName,
+		&i.Iban,
+		&i.Bic,
+		&i.Email,
+		&i.Phone,
+		&i.Website,
+		&i.FooterText,
+		&i.NumberFormats,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const putSellerProfile = `-- name: PutSellerProfile :one
 INSERT INTO seller_profiles (
     tenant_id, legal_name, street, address_line2, postal_code, city, country_code,
