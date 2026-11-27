@@ -73,7 +73,7 @@ poppler = "26.11.0"
 # against a scratch HELM_DATA_HOME, with the plugin never installed any other way: "helm
 # unittest charts/solobill" passes.
 [tools."github:helm-unittest/helm-unittest"]
-version = "1.2.1"
+version = "1.3.0"
 depends = ["helm"]
 postinstall = "rm -rf \"$(helm env HELM_PLUGINS)/helm-unittest\" && mkdir -p \"$(helm env HELM_PLUGINS)\" && cp -r \"$MISE_TOOL_INSTALL_PATH\" \"$(helm env HELM_PLUGINS)/helm-unittest\""
 
