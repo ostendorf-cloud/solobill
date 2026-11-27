@@ -12,6 +12,7 @@ import deExpenses from './de/expenses.json'
 import deHome from './de/home.json'
 import deImports from './de/imports.json'
 import deLogin from './de/login.json'
+import deNotFound from './de/notFound.json'
 import deProfile from './de/profile.json'
 import deReports from './de/reports.json'
 import enAcceptInvite from './en/acceptInvite.json'
@@ -24,12 +25,14 @@ import enExpenses from './en/expenses.json'
 import enHome from './en/home.json'
 import enImports from './en/imports.json'
 import enLogin from './en/login.json'
+import enNotFound from './en/notFound.json'
 import enProfile from './en/profile.json'
 import enReports from './en/reports.json'
 
 export const de = {
   common: deCommon,
   login: deLogin,
+  notFound: deNotFound,
   home: deHome,
   acceptInvite: deAcceptInvite,
   profile: deProfile,
@@ -45,6 +48,7 @@ export const de = {
 export const en = {
   common: enCommon,
   login: enLogin,
+  notFound: enNotFound,
   home: enHome,
   acceptInvite: enAcceptInvite,
   profile: enProfile,

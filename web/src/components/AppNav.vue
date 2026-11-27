@@ -20,7 +20,7 @@ const router = useRouter()
 const route = useRoute()
 
 const items = computed<NavItem[]>(() =>
-  navigationEntries(router.options.routes)
+  navigationEntries(router.options.routes.flatMap((r) => r.children ?? [r]))
     .filter((entry) => {
       const roles = entry.nav.roles
       return (

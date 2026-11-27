@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw, type Router } from 'vue-router'
 
 import './meta'
+import { withLocale } from './locale'
 import { assetRoutes } from './routes/assets'
 import { authRoutes } from './routes/auth'
 import { catalogueRoutes } from './routes/catalogue'
@@ -29,18 +30,14 @@ export const routeModules: Record<string, RouteRecordRaw[]> = {
   imports: importRoutes,
 }
 
-// The catch-all stays last.
-export const routes: RouteRecordRaw[] = [
-  ...Object.values(routeModules).flat(),
-  {
-    path: '/:pathMatch(.*)*',
-    redirect: { name: 'home' },
-  },
-]
+// The feature routes, written without a language prefix. withLocale puts
+// them under /de and /en and adds the redirect and the 404 view.
+export const routes: RouteRecordRaw[] = Object.values(routeModules).flat()
 
 export function createAppRouter(): Router {
-  return createRouter({
+  const router: Router = createRouter({
     history: createWebHistory(),
-    routes,
+    routes: withLocale(routes, () => router),
   })
+  return router
 }

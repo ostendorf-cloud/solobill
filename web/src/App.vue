@@ -19,6 +19,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { apiClient } from './api'
 import AppNav from './components/AppNav.vue'
 import { clearSession, loadSession, me, status } from './session'
+import { localizedHref } from './router/locale'
 import { gobdBannerVisible } from './status'
 
 const BARE_ROUTES = ['login', 'accept-invite']
@@ -52,12 +53,11 @@ watch(
   { immediate: true },
 )
 
-function rememberLocale(code: string): void {
-  try {
-    localStorage.setItem('solobill-locale', code)
-  } catch {
-    // Blocked storage: the choice only lasts for this visit.
-  }
+// The switch is a group of links to the same page in the other language.
+// govue remembers the choice; the router takes the click over.
+function goToLanguage(href: string): boolean {
+  void router.push(href)
+  return true
 }
 
 async function logout(): Promise<void> {
@@ -80,13 +80,16 @@ async function logout(): Promise<void> {
 
   <GovueHeader v-if="!bare" theme-switch>
     <template #brand>
-      <RouterLink to="/" class="text-text">{{ t('common.appName') }}</RouterLink>
+      <RouterLink :to="{ name: 'home' }" class="text-text">{{ t('common.appName') }}</RouterLink>
     </template>
 
     <AppNav v-if="me" :role="me.role" />
 
     <template #actions>
-      <GovueLanguageSwitch @change="rememberLocale" />
+      <GovueLanguageSwitch
+        :link-for="(code) => localizedHref(router, code)"
+        :navigate="goToLanguage"
+      />
       <template v-if="me">
         <span class="hidden text-sm text-text-muted lg:inline">
           {{ t('common.signedInAs', { name: me.name || me.email }) }}
