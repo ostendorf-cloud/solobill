@@ -19,7 +19,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { apiClient } from './api'
 import AppNav from './components/AppNav.vue'
 import { clearSession, loadSession, me, status } from './session'
-import { localizedHref } from './router/locale'
+import { homeLocation, localizedHref } from './router/locale'
 import { gobdBannerVisible } from './status'
 
 const BARE_ROUTES = ['login', 'accept-invite']
@@ -80,7 +80,7 @@ async function logout(): Promise<void> {
 
   <GovueHeader v-if="!bare" theme-switch>
     <template #brand>
-      <RouterLink :to="{ name: 'home' }" class="text-text">{{ t('common.appName') }}</RouterLink>
+      <RouterLink :to="homeLocation(route)" class="text-text">{{ t('common.appName') }}</RouterLink>
     </template>
 
     <AppNav v-if="me" :role="me.role" />

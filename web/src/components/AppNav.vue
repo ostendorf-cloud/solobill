@@ -8,6 +8,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
+import { routeLocale } from '../router/locale'
 import { navigationEntries } from '../router/meta'
 
 const props = defineProps<{
@@ -28,7 +29,7 @@ const items = computed<NavItem[]>(() =>
       )
     })
     .map((entry) => ({
-      href: router.resolve({ name: entry.name }).href,
+      href: router.resolve({ name: entry.name, params: { locale: routeLocale(route) } }).href,
       label: t(entry.nav.labelKey),
       current: route.name === entry.name,
     })),

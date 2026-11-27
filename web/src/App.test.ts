@@ -118,6 +118,21 @@ describe('App', () => {
     expect(document.documentElement.lang).toBe('de')
   })
 
+  it('keeps the app language on an unknown prefix and renders the 404 view', async () => {
+    mockApi('owner', status(true))
+    const { router, i18n } = await renderApp('/de/customers')
+
+    await router.push('/fr/documents/7')
+
+    expect(router.currentRoute.value.name).toBe('not-found-bare')
+    expect(i18n.global.locale.value).toBe('de')
+    expect(await screen.findByRole('link', { name: 'Zur Startseite' })).toHaveAttribute(
+      'href',
+      '/de',
+    )
+    expect(screen.getByRole('link', { name: 'Kunden' })).toHaveAttribute('href', '/de/customers')
+  })
+
   it('signs out through the shell button and drops the header', async () => {
     mockApi('owner', status(true))
     vi.mocked(apiClient.post).mockResolvedValue(undefined)

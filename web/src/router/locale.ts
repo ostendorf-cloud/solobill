@@ -11,7 +11,12 @@ import {
   type LanguageState,
   type LocaleCode,
 } from '@ostendorf-cloud/govue'
-import type { RouteRecordRaw, Router } from 'vue-router'
+import type {
+  RouteLocationNormalizedLoaded,
+  RouteLocationRaw,
+  RouteRecordRaw,
+  Router,
+} from 'vue-router'
 
 import NotFoundView from '../views/NotFoundView.vue'
 
@@ -67,6 +72,19 @@ export function withLocale(
   ]
 }
 
+/** routeLocale is the language a link from this route is built in. The 404
+ *  route for an unknown prefix has no locale param, and a named route needs
+ *  one, so a link there takes the preferred language instead. */
+export function routeLocale(route: RouteLocationNormalizedLoaded): string {
+  const current = route.params.locale
+  return typeof current === 'string' ? current : preferredLocale()
+}
+
+/** homeLocation is the link to the start page from this route. */
+export function homeLocation(route: RouteLocationNormalizedLoaded): RouteLocationRaw {
+  return { name: 'home', params: { locale: routeLocale(route) } }
+}
+
 /** localizedHref is the current page in another language: same path
  *  below the prefix, same query and hash. */
 export function localizedHref(router: Router, code: string): string {
@@ -79,7 +97,8 @@ export function localizedHref(router: Router, code: string): string {
 }
 
 /** followUrlLocale makes the language of the URL the app's language, which
- *  govue also writes to <html lang> and remembers. */
+ *  govue also writes to <html lang> and remembers. A URL with an unknown
+ *  prefix names no language: the 404 view stays in the current app language. */
 export function followUrlLocale(router: Router, language: LanguageState): void {
   router.beforeEach((to) => {
     const code = localeFromPath(to.path)
