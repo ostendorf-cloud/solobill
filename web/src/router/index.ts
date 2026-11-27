@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw, type Router } from
 
 import './meta'
 import { withLocale } from './locale'
+import { accountRoutes } from './routes/account'
 import { assetRoutes } from './routes/assets'
 import { authRoutes } from './routes/auth'
 import { catalogueRoutes } from './routes/catalogue'
@@ -21,6 +22,7 @@ export const routeModules: Record<string, RouteRecordRaw[]> = {
   home: homeRoutes,
   auth: authRoutes,
   profile: profileRoutes,
+  account: accountRoutes,
   customers: customerRoutes,
   catalogue: catalogueRoutes,
   documents: documentRoutes,

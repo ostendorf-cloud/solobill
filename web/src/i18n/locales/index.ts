@@ -3,6 +3,7 @@
 // issue edits only its own two files; this index is not edited again by
 // a feature issue (see AGENTS.md's conflict zone rule).
 import deAcceptInvite from './de/acceptInvite.json'
+import deAccount from './de/account.json'
 import deAssets from './de/assets.json'
 import deCatalogue from './de/catalogue.json'
 import deCommon from './de/common.json'
@@ -16,6 +17,7 @@ import deNotFound from './de/notFound.json'
 import deProfile from './de/profile.json'
 import deReports from './de/reports.json'
 import enAcceptInvite from './en/acceptInvite.json'
+import enAccount from './en/account.json'
 import enAssets from './en/assets.json'
 import enCatalogue from './en/catalogue.json'
 import enCommon from './en/common.json'
@@ -35,6 +37,7 @@ export const de = {
   notFound: deNotFound,
   home: deHome,
   acceptInvite: deAcceptInvite,
+  account: deAccount,
   profile: deProfile,
   customers: deCustomers,
   catalogue: deCatalogue,
@@ -51,6 +54,7 @@ export const en = {
   notFound: enNotFound,
   home: enHome,
   acceptInvite: enAcceptInvite,
+  account: enAccount,
   profile: enProfile,
   customers: enCustomers,
   catalogue: enCatalogue,

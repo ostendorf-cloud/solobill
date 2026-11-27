@@ -8,10 +8,10 @@ import { followUrlLocale, initialLocale } from './router/locale'
 import './styles.css'
 
 // The theme never varies: this app ships exactly one brand (see
-// src/theme/solobill.css). Mode starts at "system" and the header's
-// GovueThemeSwitch overrides it. useTheme keeps the choice under its
-// default storage key, which the boot script of the Go server reads too
-// (internal/httpapi/spa.go).
+// src/theme/solobill.css). Mode starts at "system" and the account
+// settings view (AccountView) overrides it. useTheme keeps the choice under
+// its default storage key, which the boot script of the frontend server
+// reads too (internal/frontendserver, AppConfig.ThemeBoot).
 useTheme({ theme: 'solobill' })
 
 // The language comes from the URL, see initialLocale.
