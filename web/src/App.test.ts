@@ -54,6 +54,7 @@ async function renderApp(path: string) {
       [
         { path: '/', name: 'home', component: stub },
         { path: '/login', name: 'login', component: stub },
+        { path: '/account', name: 'account', component: stub },
         {
           path: '/customers',
           name: 'customers',
@@ -88,24 +89,30 @@ describe('App', () => {
     localStorage.clear()
   })
 
-  it('switches the language by the prefix, keeps path and query, and remembers it', async () => {
+  it('has no language or colour mode control in the header, only a link to the account view', async () => {
     mockApi('owner', status(true))
-    const user = userEvent.setup()
-    const { router, i18n } = await renderApp('/en/customers?tenant=acme#top')
-    const group = await screen.findByRole('group', { name: 'Language' })
-    expect(within(group).getByRole('link', { name: 'Deutsch' })).toHaveAttribute(
+    await renderApp('/en/customers')
+
+    const banner = await screen.findByRole('banner')
+    expect(await within(banner).findByRole('link', { name: 'Account' })).toHaveAttribute(
       'href',
-      '/de/customers?tenant=acme#top',
+      '/en/account',
     )
+    expect(within(banner).queryByRole('group', { name: 'Language' })).toBeNull()
+    expect(within(banner).queryByRole('combobox')).toBeNull()
+    expect(within(banner).queryByRole('radiogroup')).toBeNull()
+    expect(within(banner).queryByRole('button', { name: /^Theme:/ })).toBeNull()
+    expect(within(banner).getByRole('button', { name: 'Sign out' })).toBeVisible()
+  })
 
-    await user.click(within(group).getByRole('link', { name: 'Deutsch' }))
+  it('shows the account link to a member too, in the language of the URL', async () => {
+    mockApi('member', status(true))
+    await renderApp('/de/customers')
 
-    await vi.waitFor(() =>
-      expect(router.currentRoute.value.fullPath).toBe('/de/customers?tenant=acme#top'),
+    expect(await screen.findByRole('link', { name: 'Konto' })).toHaveAttribute(
+      'href',
+      '/de/account',
     )
-    expect(i18n.global.locale.value).toBe('de')
-    expect(document.documentElement.lang).toBe('de')
-    expect(localStorage.getItem('govue-language')).toBe('de')
   })
 
   it('follows the prefix of a link into the other language', async () => {

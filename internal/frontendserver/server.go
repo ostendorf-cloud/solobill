@@ -64,8 +64,8 @@ func New(cfg frontendconfig.Config, build fs.FS, logger *slog.Logger, o Options)
 
 	// govue's default policy: script-src 'self' and no inline script. The
 	// Vite build loads its bundle as a module script with src, so
-	// index.html needs none, and app mode adds no hash while ThemeBoot is
-	// off.
+	// index.html needs none. The one inline script is govue's theme boot
+	// script (AppConfig.ThemeBoot below), which app mode allows by its hash.
 	security := middleware.DefaultSecurity()
 	if cfg.AllowPlainHTTP {
 		// A browser that reached this service over plain HTTP must never
@@ -85,6 +85,9 @@ func New(cfg frontendconfig.Config, build fs.FS, logger *slog.Logger, o Options)
 		Build: build,
 		App: &frontend.AppConfig{
 			ReservedPrefixes: reservedPrefixes,
+			// Applies the stored colour mode before the first paint, so a
+			// visitor who chose dark never sees a flash of the light page.
+			ThemeBoot: true,
 		},
 		Security:  &security,
 		ClientIP:  resolver,

@@ -1,0 +1,19 @@
+{
+  "link": "Account",
+  "title": "Account settings",
+  "lead": "Language and appearance apply to this browser.",
+  "loadError": "The session could not be loaded. Reload the page.",
+  "language": {
+    "title": "Language",
+    "current": "Current language: {name}",
+    "label": "Choose the language"
+  },
+  "colourMode": {
+    "title": "Appearance",
+    "current": "Current appearance: {mode}",
+    "label": "Choose the appearance",
+    "system": "Follow the system",
+    "light": "Light",
+    "dark": "Dark"
+  }
+}

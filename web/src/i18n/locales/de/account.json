@@ -1,0 +1,19 @@
+{
+  "link": "Konto",
+  "title": "Kontoeinstellungen",
+  "lead": "Sprache und Darstellung gelten für diesen Browser.",
+  "loadError": "Die Sitzung konnte nicht geladen werden. Lade die Seite neu.",
+  "language": {
+    "title": "Sprache",
+    "current": "Aktuelle Sprache: {name}",
+    "label": "Sprache wählen"
+  },
+  "colourMode": {
+    "title": "Darstellung",
+    "current": "Aktuelle Darstellung: {mode}",
+    "label": "Darstellung wählen",
+    "system": "Dem System folgen",
+    "light": "Hell",
+    "dark": "Dunkel"
+  }
+}

@@ -90,7 +90,8 @@ hardening issue (#82) rewrites it once. This section is the current state.
 - `cmd/frontend` wires the frontend: `internal/frontendconfig` loads its environment,
   `internal/frontendserver` builds govue's `frontend` server in app mode. It answers
   `index.html` for every route of the Vue router, the bundle under `/assets`, a JSON `404` under
-  `/api` and `/auth/oidc`, with govue's security headers.
+  `/api` and `/auth/oidc`, with govue's security headers. `AppConfig.ThemeBoot` injects the colour
+  mode boot script, allowed by its hash in `script-src`.
 - No Vue route lives under `/assets` or `/api`: the frontend server owns both, and
   `web/src/router/index.test.ts` fails on such a route.
 - `docker-compose.yaml` runs an `api` and a `frontend` service. `FRONTEND_DEV_API_PROXY`
