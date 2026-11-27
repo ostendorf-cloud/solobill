@@ -218,8 +218,10 @@ services:
       LISTEN_ADDR: ":8080"
       LOG_LEVEL: info
       # The typst binary the api stage installs: issuing documents and the
-      # PDF download work locally. The compose root filesystem is
-      # writable, so the renderer's temporary directory needs no volume.
+      # PDF download work locally. The renderer writes one directory per
+      # render under /tmp (os.TempDir). The compose root filesystem is
+      # writable, so /tmp needs no volume here. The chart mounts an
+      # emptyDir at /tmp because its root filesystem is read only.
       PDF_TYPST_BINARY: /usr/local/bin/typst
       # Every request reaches the API through the frontend's development
       # proxy, so the TCP peer is always the frontend container. Trusting
