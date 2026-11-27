@@ -5,7 +5,7 @@ name: renovate
 # repository only, authenticated through the ostendorf-cloud-dependencies
 # GitHub App.
 #
-# The "issues"/"pull_request" "edited" triggers exist so that a human
+# The "issues"/"pull_request_target" "edited" triggers exist so that a human
 # checking a Renovate rebase checkbox reacts within this run's CI time,
 # instead of waiting for the next "schedule" tick: checking that checkbox
 # edits the Dependency Dashboard issue body or a Renovate pull request's own
