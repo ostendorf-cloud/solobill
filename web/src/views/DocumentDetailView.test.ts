@@ -516,6 +516,19 @@ describe('DocumentDetailView', () => {
         expect(createUrl).not.toHaveBeenCalled()
       })
 
+      it('sends a 401 on the download to the login', async () => {
+        fetchMock.mockResolvedValue(jsonError(401, 'unauthenticated'))
+        mockApi(issued)
+        const { router } = await renderView()
+        const user = userEvent.setup()
+        await user.click(await screen.findByRole('button', { name: 'Download PDF (German)' }))
+
+        await vi.waitFor(() => expect(me.value).toBeNull())
+        await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+        expect(screen.queryByTestId('pdf-error')).toBeNull()
+        expect(saved).toEqual([])
+      })
+
       it('shows the German message in the German locale', async () => {
         fetchMock.mockResolvedValue(jsonError(503, 'object_store_unavailable'))
         mockApi(issued)
