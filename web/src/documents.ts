@@ -4,7 +4,7 @@
 // (GET a document, POST /documents/preview), amounts typed by the user are
 // parsed into integer cents by money.ts, and the only arithmetic left is
 // comparing integers and flipping the sign of one.
-import { isApiError } from '@ostendorf-cloud/govue'
+import { ApiError, ErrorCode, isApiError } from '@ostendorf-cloud/govue'
 
 import { apiClient } from './api'
 import { parseCents } from './money'
@@ -172,12 +172,101 @@ export function listDocuments(filters: ListFilters, options: Options = {}): Prom
     .then((answer) => answer.documents)
 }
 
-/** documentPdfUrl is the PDF download route of a document. The browser
- *  follows it as a plain link: the route answers with the PDF as an
- *  attachment, in the document's own language, and the session cookie
- *  authenticates it. */
+/** documentPdfUrl is the PDF download route of a document. The route answers
+ *  with the PDF as an attachment, in the document's own language, and the
+ *  session cookie authenticates it. */
 export function documentPdfUrl(id: string): string {
   return `/api/v1/documents/${encodeURIComponent(id)}/pdf`
+}
+
+export interface PdfFile {
+  blob: Blob
+  /** name is the file name the server proposes, or fallbackName. */
+  name: string
+}
+
+/** pdfFileName reads the file name out of a Content-Disposition header. It
+ *  prefers the RFC 5987 form filename*=UTF-8''..., then filename=. */
+function pdfFileName(header: string | null, fallbackName: string): string {
+  if (!header) {
+    return fallbackName
+  }
+  const extended = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header)
+  if (extended?.[2]) {
+    const charset = (extended[1] ?? '').trim().toLowerCase()
+    if (charset === '' || charset === 'utf-8') {
+      try {
+        return decodeURIComponent(extended[2].trim())
+      } catch {
+        // Malformed escapes: fall through to the plain name.
+      }
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header)
+  return plain?.[1] ?? fallbackName
+}
+
+/** fetchDocumentPdf downloads the PDF of a document. A plain link would save
+ *  the JSON body of a 409 or 503 as a file, so the PDF is fetched and every
+ *  failure answers as an ApiError, like the client does. govue's client reads
+ *  JSON only, so this is the second place that calls fetch for a read. */
+export async function fetchDocumentPdf(
+  id: string,
+  fallbackName: string,
+  signal?: AbortSignal,
+): Promise<PdfFile> {
+  let response: Response
+  try {
+    response = await fetch(documentPdfUrl(id), {
+      headers: { Accept: 'application/pdf, application/json' },
+      credentials: 'same-origin',
+      signal,
+    })
+  } catch {
+    throw new ApiError({
+      code: ErrorCode.network,
+      message: 'The PDF did not reach the browser.',
+    })
+  }
+  if (!response.ok) {
+    let error: { code?: unknown; message?: unknown; request_id?: unknown } = {}
+    try {
+      error = ((await response.json()) as { error?: typeof error }).error ?? {}
+    } catch {
+      // A gateway answering HTML: the status is all there is.
+    }
+    throw new ApiError({
+      code: typeof error.code === 'string' ? error.code : ErrorCode.internal,
+      message: typeof error.message === 'string' ? error.message : 'The PDF download failed.',
+      status: response.status,
+      requestId: typeof error.request_id === 'string' ? error.request_id : undefined,
+    })
+  }
+  return {
+    blob: await response.blob(),
+    name: pdfFileName(response.headers.get('Content-Disposition'), fallbackName),
+  }
+}
+
+export type PdfFailure = 'conflict' | 'objectStore' | 'renderer' | 'transport' | 'other'
+
+/** classifyPdfError sorts the answers of the PDF route by their code, not
+ *  their text. 401 is not here: the caller handles it. */
+export function classifyPdfError(error: unknown): PdfFailure {
+  if (!isApiError(error)) {
+    return 'other'
+  }
+  switch (error.code) {
+    case 'object_store_unavailable':
+      return 'objectStore'
+    case 'renderer_unavailable':
+      return 'renderer'
+    default:
+  }
+  if (error.status === 409) {
+    return 'conflict'
+  }
+  return error.isTransport ? 'transport' : 'other'
 }
 
 export function getDocument(id: string, options: Options = {}): Promise<Doc> {

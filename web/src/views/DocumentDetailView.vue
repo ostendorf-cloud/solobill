@@ -23,9 +23,10 @@ import DocumentIssue from '../components/documents/DocumentIssue.vue'
 import PaymentsPanel from '../components/documents/PaymentsPanel.vue'
 import {
   classifyIssueError,
+  classifyPdfError,
   createCorrection,
   deleteDocument,
-  documentPdfUrl,
+  fetchDocumentPdf,
   formatPermyriad,
   formatQuantity,
   getDocument,
@@ -33,6 +34,7 @@ import {
   type Doc,
   type DocumentLine,
   type IssueFailure,
+  type PdfFailure,
 } from '../documents'
 import { formatCents } from '../money'
 import { clearSession, loadSession, me, sessionFailed, sessionReady } from '../session'
@@ -304,6 +306,47 @@ async function confirmDiscard(): Promise<void> {
   } finally {
     if (!unmounted.signal.aborted) {
       discarding.value = false
+    }
+  }
+}
+
+const pdfWorking = ref(false)
+const pdfError = ref<PdfFailure | null>(null)
+
+/** downloadPdf fetches the PDF and saves it. A refusal shows a message
+ *  instead of saving its JSON body as a file. */
+async function downloadPdf(): Promise<void> {
+  const d = doc.value
+  if (!d || pdfWorking.value) {
+    return
+  }
+  pdfWorking.value = true
+  pdfError.value = null
+  try {
+    const file = await fetchDocumentPdf(d.id, `${d.number ?? d.id}.pdf`, unmounted.signal)
+    if (unmounted.signal.aborted) {
+      return
+    }
+    const url = URL.createObjectURL(file.blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = file.name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    if (unmounted.signal.aborted) {
+      return
+    }
+    if (isApiError(error) && error.isUnauthenticated) {
+      await toLogin()
+      return
+    }
+    pdfError.value = classifyPdfError(error)
+  } finally {
+    if (!unmounted.signal.aborted) {
+      pdfWorking.value = false
     }
   }
 }
@@ -603,14 +646,17 @@ function openNewCorrection(id: string): void {
         </p>
 
         <div v-if="isIssued && !doc.imported">
-          <a
-            :href="documentPdfUrl(doc.id)"
-            :hreflang="doc.language"
-            download
-            class="text-accent underline underline-offset-2"
+          <GovueButton
+            variant="secondary"
+            :loading="pdfWorking"
+            :loading-label="t('documents.detail.pdfWorking')"
+            @click="downloadPdf"
           >
             {{ t('documents.detail.pdf', { language: t(`documents.language.${doc.language}`) }) }}
-          </a>
+          </GovueButton>
+          <p v-if="pdfError" role="alert" data-testid="pdf-error" class="mt-1 text-danger-text">
+            {{ t(`documents.detail.pdfErrors.${pdfError}`) }}
+          </p>
         </div>
       </section>
 

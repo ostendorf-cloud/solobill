@@ -248,7 +248,15 @@
     "correct": "Correct invoice",
     "correctHint": "Starts a correction draft with the lines of the effective document.",
     "correctOwnerOnly": "Only the owner corrects an invoice.",
-    "pdf": "Download PDF ({language})"
+    "pdf": "Download PDF ({language})",
+    "pdfWorking": "Preparing the PDF",
+    "pdfErrors": {
+      "conflict": "The PDF cannot be created right now because the document is in conflict with the stored data. Reload the page and try again.",
+      "objectStore": "The file storage is not available. The PDF cannot be saved or read right now. Try again later.",
+      "renderer": "The PDF renderer is not set up. The PDF cannot be created right now.",
+      "transport": "The server cannot be reached. Check the connection.",
+      "other": "The PDF download did not work. Try again."
+    }
   },
   "discard": {
     "action": "Discard draft",

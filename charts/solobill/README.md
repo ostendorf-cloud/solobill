@@ -833,6 +833,22 @@ This chart is verified with:
   `helm plugin install`, which Helm 4 refuses for an unsigned plugin source) and run with
   `helm unittest charts/solobill`.
 
+The PDF renderer needs one writable directory, `/tmp`, and nothing else. Two checks cover it:
+
+- `internal/pdf`'s `TestRenderUsesOnlyTheTempDirectory` renders with `TMPDIR` as the only
+  writable directory, from a read only working directory, and fails at the temp directory when
+  that one is read only. It skips without `typst` on the path.
+- Run the API image the way the chart does, by hand. It needs a database, so this only
+  checks that the binary starts and runs with the read only root filesystem:
+
+  ```sh
+  docker run --rm --read-only --tmpfs /tmp --entrypoint /usr/local/bin/typst \
+    ghcr.io/ostendorf-cloud/solobill-api:<tag> --version
+  ```
+
+  A render through the running service (issue, then download the PDF) is the end to end
+  proof and was not part of the static checks above.
+
 Every check above runs on every push and pull request, through `task lint:helm`,
 `task validate:kubeconform` and `task test:helm`, each its own CI job (`helm-lint`,
 `kubeconform` and `helm-unittest`), one job per check. A live end-to-end install into a real
