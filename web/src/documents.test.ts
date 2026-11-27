@@ -238,6 +238,46 @@ describe('classifyIssueError', () => {
     expect(docs.documentPdfUrl('a/b?c')).toBe('/api/v1/documents/a%2Fb%3Fc/pdf')
   })
 
+  it('fetches a PDF and takes the name from Content-Disposition', async () => {
+    fetchStub.mockResolvedValueOnce(
+      new Response('%PDF', {
+        headers: { 'Content-Disposition': 'attachment; filename="RE-1.pdf"' },
+      }),
+    )
+    const file = await docs.fetchDocumentPdf('d-1', 'fallback.pdf')
+    expect(file.name).toBe('RE-1.pdf')
+    expect(await file.blob.text()).toBe('%PDF')
+  })
+
+  it('falls back to the given name without a Content-Disposition', async () => {
+    fetchStub.mockResolvedValueOnce(new Response('%PDF'))
+    expect((await docs.fetchDocumentPdf('d-1', 'fallback.pdf')).name).toBe('fallback.pdf')
+  })
+
+  it('answers a refused PDF as an ApiError with the code of the body', async () => {
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ error: { code: 'renderer_unavailable', message: 'm' } }, 503),
+    )
+    const error = await docs.fetchDocumentPdf('d-1', 'x.pdf').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(docs.classifyPdfError(error)).toBe('renderer')
+  })
+
+  it.each([
+    [409, 'conflict', 'conflict'],
+    [503, 'object_store_unavailable', 'objectStore'],
+    [500, 'internal', 'other'],
+  ])('sorts PDF answer %i %s as %s', (status, code, kind) => {
+    expect(docs.classifyPdfError(new ApiError({ code, message: 'm', status }))).toBe(kind)
+  })
+
+  it('sorts a PDF transport failure and a foreign error', async () => {
+    fetchStub.mockRejectedValueOnce(new TypeError('offline'))
+    const error = await docs.fetchDocumentPdf('d-1', 'x.pdf').catch((e: unknown) => e)
+    expect(docs.classifyPdfError(error)).toBe('transport')
+    expect(docs.classifyPdfError(new Error('x'))).toBe('other')
+  })
+
   it('sorts a transport failure and a foreign error', () => {
     expect(
       docs.classifyIssueError(new ApiError({ code: ErrorCode.network, message: 'm' })).kind,

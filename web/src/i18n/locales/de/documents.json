@@ -248,7 +248,15 @@
     "correct": "Rechnung korrigieren",
     "correctHint": "Startet einen Korrekturentwurf mit den Positionen des gültigen Belegs.",
     "correctOwnerOnly": "Nur die Inhaberin oder der Inhaber korrigiert eine Rechnung.",
-    "pdf": "PDF herunterladen ({language})"
+    "pdf": "PDF herunterladen ({language})",
+    "pdfWorking": "PDF wird vorbereitet",
+    "pdfErrors": {
+      "conflict": "Das PDF kann gerade nicht erstellt werden, weil der Beleg im Konflikt mit den gespeicherten Daten steht. Lade die Seite neu und versuche es erneut.",
+      "objectStore": "Der Dateispeicher ist nicht verfügbar. Das PDF kann gerade nicht gespeichert oder gelesen werden. Versuche es später erneut.",
+      "renderer": "Die PDF-Erzeugung ist nicht eingerichtet. Das PDF kann gerade nicht erstellt werden.",
+      "transport": "Der Server ist nicht erreichbar. Prüfe die Verbindung.",
+      "other": "Der PDF-Download hat nicht funktioniert. Versuche es erneut."
+    }
   },
   "discard": {
     "action": "Entwurf verwerfen",

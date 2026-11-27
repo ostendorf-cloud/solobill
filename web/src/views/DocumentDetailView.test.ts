@@ -443,18 +443,88 @@ describe('DocumentDetailView', () => {
       expect(screen.queryByRole('button', { name: 'Edit draft' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'Discard draft' })).toBeNull()
       expect(await screen.findByRole('heading', { name: 'Payments' })).toBeVisible()
-      const link = screen.getByRole('link', { name: 'Download PDF (German)' })
-      expect(link).toHaveAttribute('href', '/api/v1/documents/d-1/pdf')
-      expect(link).toHaveAttribute('hreflang', 'de')
-      expect(link).toHaveAttribute('download')
+      expect(screen.getByRole('button', { name: 'Download PDF (German)' })).toBeVisible()
     })
 
     it('names the language of an English document on the PDF download', async () => {
       mockApi(doc({ ...issued, language: 'en' }))
       await renderView()
 
-      const link = await screen.findByRole('link', { name: 'Download PDF (English)' })
-      expect(link).toHaveAttribute('hreflang', 'en')
+      expect(await screen.findByRole('button', { name: 'Download PDF (English)' })).toBeVisible()
+    })
+
+    describe('the PDF download', () => {
+      const fetchMock = vi.fn<typeof fetch>()
+      const createUrl = vi.fn(() => 'blob:pdf')
+      const revokeUrl = vi.fn()
+      let saved: string[]
+
+      beforeEach(() => {
+        fetchMock.mockReset()
+        vi.stubGlobal('fetch', fetchMock)
+        URL.createObjectURL = createUrl
+        URL.revokeObjectURL = revokeUrl
+        saved = []
+        vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+          this: HTMLAnchorElement,
+        ) {
+          saved.push(this.download)
+        })
+      })
+
+      async function clickDownload() {
+        mockApi(issued)
+        await renderView()
+        const user = userEvent.setup()
+        await user.click(await screen.findByRole('button', { name: 'Download PDF (German)' }))
+      }
+
+      function jsonError(status: number, code: string): Response {
+        return new Response(JSON.stringify({ error: { code, message: 'x' } }), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      it('fetches the PDF and saves it under the name the server proposes', async () => {
+        fetchMock.mockResolvedValue(
+          new Response('%PDF-1.7', {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': 'attachment; filename="RE-20260009.pdf"',
+            },
+          }),
+        )
+        await clickDownload()
+
+        await vi.waitFor(() => expect(saved).toEqual(['RE-20260009.pdf']))
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/documents/d-1/pdf')
+        expect(screen.queryByTestId('pdf-error')).toBeNull()
+      })
+
+      it.each([
+        [409, 'conflict', /in conflict with the stored data/],
+        [503, 'object_store_unavailable', /file storage is not available/],
+        [503, 'renderer_unavailable', /renderer is not set up/],
+      ])('shows a message for %i %s and saves nothing', async (status, code, text) => {
+        fetchMock.mockResolvedValue(jsonError(status, code))
+        await clickDownload()
+
+        expect(await screen.findByTestId('pdf-error')).toHaveTextContent(text)
+        expect(saved).toEqual([])
+        expect(createUrl).not.toHaveBeenCalled()
+      })
+
+      it('shows the German message in the German locale', async () => {
+        fetchMock.mockResolvedValue(jsonError(503, 'object_store_unavailable'))
+        mockApi(issued)
+        await renderView('d-1', 'de')
+        const user = userEvent.setup()
+        await user.click(await screen.findByRole('button', { name: 'PDF herunterladen (Deutsch)' }))
+
+        expect(await screen.findByTestId('pdf-error')).toHaveTextContent(/Dateispeicher/)
+      })
     })
 
     it('offers no rendered PDF for an imported document', async () => {
