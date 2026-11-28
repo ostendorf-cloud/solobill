@@ -43,7 +43,9 @@ const (
 // printableRanges are the runes both bundled fonts of TemplateDocumentV1
 // (Go Regular and Go Bold, internal/pdf/fonts) have a glyph for, from
 // U+0020 on. Computed from the two font files of PR #91 with
-// golang.org/x/image/font/sfnt (GlyphIndex not 0 in both). Control
+// golang.org/x/image/font/sfnt (GlyphIndex not 0 in both).
+// internal/pdf's TestPrintableTableMatchesFonts keeps the table equal to
+// the fonts and logs the rebuilt table when they differ. Control
 // characters and U+FFFD are refused before this table is consulted. The
 // table must stay equal to the renderer's coverage: a rune outside it
 // cannot be printed, a rune the fonts cover but this table lacks only
