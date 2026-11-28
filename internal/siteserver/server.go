@@ -102,8 +102,10 @@ func New(cfg frontendconfig.Config, build fs.FS, logger *slog.Logger, o Options)
 
 	s, err := frontend.New(frontend.Config{
 		Build: withFile(build, ConfigFile, config),
-		// The one file the server makes itself. govue revalidates it by its
-		// ETag, and the landing asks for it with cache: no-cache.
+		// The one file the server makes itself. govue serves every public
+		// file with Cache-Control: public, max-age=86400. Only the landing's
+		// cache: no-cache makes the browser revalidate it by its ETag, so a
+		// shared cache in front of the site can hold it for a day.
 		PublicFiles: []string{ConfigFile},
 		Language: language.Config{
 			Languages: Languages,
