@@ -564,6 +564,13 @@ included. The guard names only the key. No schema pattern applies to a URL value
 error carries one. `config.passkey.origins` items keep a `^https://` pattern: they are origins,
 never carry credentials, and a rejected one is printed in the schema error.
 
+`objectStore.endpoint`'s port gets the same range guard as the database URL and the issuer URL.
+The object store egress rule takes its port from the endpoint, so a port outside 1 to 65535, such
+as `0` or `65536`, or too large for an integer, fails the render on a message that names the key
+only, never the URL or the port. A leading zero is not refused: `:08333` is port 8333 and the
+rule renders `8333` as a plain decimal number. The guard sits in the egress rule, so it runs
+while `networkPolicy.enabled` and `networkPolicy.egress.enabled` are both true.
+
 The last guard is not about a URL at all: `service.port` and `adminPort` select two different
 listeners, and the public ingress rule above, unscoped by default, renders on whichever port
 number `service.port` names. Equal, that same rule now also covers `adminPort`, admitting it

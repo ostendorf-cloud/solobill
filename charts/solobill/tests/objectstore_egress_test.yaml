@@ -128,3 +128,86 @@ tests:
               - namespaceSelector:
                   matchLabels:
                     kubernetes.io/metadata.name: seaweedfs
+
+  # ---------------------------------------------------------------------
+  # The endpoint's port is held to 1 to 65535 like the database URL and the
+  # issuer URL (issue #112). The message names the key only: no URL and no
+  # port value.
+  # ---------------------------------------------------------------------
+  - it: allows port 1 in the endpoint
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:1"
+        bucket: solobill
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - protocol: TCP
+                port: 1
+
+  - it: allows port 65535 in the endpoint
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:65535"
+        bucket: solobill
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - protocol: TCP
+                port: 65535
+
+  # "08333" is a decimal port to net/url, so the rule renders 8333 and never
+  # the number 08333, which YAML 1.1 reads as octal.
+  - it: renders a leading zero port as plain decimal
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:08333"
+        bucket: solobill
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            ports:
+              - protocol: TCP
+                port: 8333
+
+  - it: fails the render when objectStore.endpoint names port 0
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:0"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint names a port outside 1 to 65535: a URL's port must be a number
+            from 1 to 65535. Fix the port after the host's ":", or remove it so this chart falls
+            back to the scheme's own default port.
+
+  - it: fails the render when objectStore.endpoint names port 65536
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:65536"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint names a port outside 1 to 65535: a URL's port must be a number
+            from 1 to 65535. Fix the port after the host's ":", or remove it so this chart falls
+            back to the scheme's own default port.
+
+  # Digits that overflow an int must land on the same guard, not wrap into range.
+  - it: fails the render when objectStore.endpoint names a port too large for an integer
+    set:
+      objectStore:
+        endpoint: "http://s3.seaweedfs.svc:99999999999999999999"
+        bucket: solobill
+    asserts:
+      - failedTemplate:
+          errorMessage: >-
+            objectStore.endpoint names a port outside 1 to 65535: a URL's port must be a number
+            from 1 to 65535. Fix the port after the host's ":", or remove it so this chart falls
+            back to the scheme's own default port.

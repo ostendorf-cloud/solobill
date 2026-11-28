@@ -80,11 +80,23 @@ same story as PostgreSQL in networkpolicy.yaml.
 {{- $os := .Values.objectStore -}}
 {{- if $os.endpoint -}}
 {{- $port := include "solobill.urlPort" (dict "key" "objectStore.endpoint" "url" $os.endpoint) -}}
+{{- $port = required "objectStore.endpoint names no scheme this chart knows a port for: use an http or https URL." $port -}}
+{{- /*
+The port is checked like the database URL and the issuer URL are in networkpolicy.yaml:
+digits are not enough, 0 and 65536 are digits. atoi yields the largest integer for a number too
+large for an integer, so that case lands on the same guard. The rule renders the integer atoi read, so
+"08333" becomes 8333 and never the invalid YAML number 08333. The message names the key
+only: no URL and no port value.
+*/ -}}
+{{- $portNum := atoi $port -}}
+{{- if or (lt $portNum 1) (gt $portNum 65535) -}}
+{{ fail "objectStore.endpoint names a port outside 1 to 65535: a URL's port must be a number from 1 to 65535. Fix the port after the host's \":\", or remove it so this chart falls back to the scheme's own default port." }}
+{{- end -}}
 {{- $peers := include "solobill.networkPolicy.peers" ($os.egress | default dict) -}}
 # The S3 compatible object store (objectStore.endpoint).
 - ports:
     - protocol: TCP
-      port: {{ required "objectStore.endpoint names no scheme this chart knows a port for: use an http or https URL." $port }}
+      port: {{ $portNum }}
   {{- with $peers }}
   to:
     {{- . | nindent 4 }}
