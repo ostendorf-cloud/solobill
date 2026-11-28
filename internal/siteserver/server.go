@@ -47,6 +47,9 @@ const maxRateLimitKeys = 100_000
 // development. The zero value is production's.
 type Options struct {
 	DevAPITransport http.RoundTripper
+	// Links are served as /config.json for the landing's buttons. Nil is
+	// DefaultLinks, what a site with no variable set serves.
+	Links *Links
 }
 
 // NewFromDir opens cfg.BuildDir and builds the server from it. os.OpenRoot
@@ -88,8 +91,20 @@ func New(cfg frontendconfig.Config, build fs.FS, logger *slog.Logger, o Options)
 		return nil, fmt.Errorf("siteserver: rate limit: %w", err)
 	}
 
+	links := DefaultLinks()
+	if o.Links != nil {
+		links = *o.Links
+	}
+	config, err := links.JSON()
+	if err != nil {
+		return nil, err
+	}
+
 	s, err := frontend.New(frontend.Config{
-		Build: build,
+		Build: withFile(build, ConfigFile, config),
+		// The one file the server makes itself. govue revalidates it by its
+		// ETag, and the landing asks for it with cache: no-cache.
+		PublicFiles: []string{ConfigFile},
 		Language: language.Config{
 			Languages: Languages,
 			Default:   DefaultLanguage,

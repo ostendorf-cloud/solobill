@@ -2,8 +2,10 @@
 // build of landing/ in FRONTEND_BUILD_DIR, through internal/siteserver
 // (govue's frontend package in prerendered mode), on its public listener, and
 // /healthz, /readyz and /metrics on a second, administrative listener. It
-// holds no secret and serves no API. This file only wires configuration,
-// logger and shutdown.
+// also serves /config.json, the login and register links and the registration
+// switch of SITE_LOGIN_URL, SITE_REGISTER_URL and SITE_REGISTRATION_ENABLED,
+// which the landing reads at startup. It holds no secret and serves no API.
+// This file only wires configuration, logger and shutdown.
 package main
 
 import (
@@ -33,7 +35,12 @@ func run() error {
 	}
 	logger := logging.New(os.Stdout, cfg.LogLevel)
 
-	s, err := siteserver.NewFromDir(cfg, logger, siteserver.Options{})
+	links, err := siteserver.LoadLinks(os.Getenv)
+	if err != nil {
+		return err
+	}
+
+	s, err := siteserver.NewFromDir(cfg, logger, siteserver.Options{Links: &links})
 	if err != nil {
 		return err
 	}
