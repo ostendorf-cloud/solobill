@@ -68,6 +68,16 @@ func TestLoadLinks(t *testing.T) {
 			wantErr: siteserver.EnvLoginURL,
 		},
 		{
+			name:    "a URL with a query is refused",
+			env:     map[string]string{siteserver.EnvLoginURL: "https://app.solobill.de/login?next=/"},
+			wantErr: siteserver.EnvLoginURL,
+		},
+		{
+			name:    "a URL with a fragment is refused",
+			env:     map[string]string{siteserver.EnvRegisterURL: "https://app.solobill.de/register#plan"},
+			wantErr: siteserver.EnvRegisterURL,
+		},
+		{
 			name:    "a switch that is not a boolean is refused",
 			env:     map[string]string{siteserver.EnvRegistrationEnabled: "maybe"},
 			wantErr: siteserver.EnvRegistrationEnabled,
