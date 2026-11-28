@@ -22,6 +22,7 @@ type fakeSellerProfiles struct {
 	mu         sync.Mutex
 	profile    *storage.SellerProfile
 	putTenants []uuid.UUID
+	locked     bool
 }
 
 func (f *fakeSellerProfiles) Get(context.Context) (storage.SellerProfile, error) {
@@ -33,6 +34,23 @@ func (f *fakeSellerProfiles) Get(context.Context) (storage.SellerProfile, error)
 	}
 
 	return *f.profile, nil
+}
+
+// GetForUpdate is Get and records that the lock was taken, which the
+// fake documents read through isLocked.
+func (f *fakeSellerProfiles) GetForUpdate(ctx context.Context) (storage.SellerProfile, error) {
+	f.mu.Lock()
+	f.locked = true
+	f.mu.Unlock()
+
+	return f.Get(ctx)
+}
+
+func (f *fakeSellerProfiles) isLocked() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.locked
 }
 
 func (f *fakeSellerProfiles) Put(_ context.Context, p storage.SellerProfile) (storage.SellerProfile, error) {
@@ -57,8 +75,9 @@ func (f *fakeSellerProfiles) Put(_ context.Context, p storage.SellerProfile) (st
 // for that test's app alone: the hook installs nothing else outside this
 // feature's own repositories.
 type profileExtras struct {
-	logos *fakeSellerLogos
-	docs  *fakeIssuedDocuments
+	logos    *fakeSellerLogos
+	docs     *fakeIssuedDocuments
+	profiles *fakeSellerProfiles
 }
 
 // profileExtrasByTest maps the *testing.T of a test to its extras.
@@ -92,6 +111,11 @@ func (f *fakeSellerLogos) SetLogo(_ context.Context, id *uuid.UUID) error {
 type fakeIssuedDocuments struct {
 	mu        sync.Mutex
 	documents []storage.Document
+
+	// profileLocked, when set, is asked at every List and the answers are
+	// kept in listedLocked.
+	profileLocked func() bool
+	listedLocked  []bool
 }
 
 var errFakeDocumentsUnsupported = errors.New("fakeIssuedDocuments: method not supported")
@@ -99,6 +123,10 @@ var errFakeDocumentsUnsupported = errors.New("fakeIssuedDocuments: method not su
 func (f *fakeIssuedDocuments) List(context.Context) ([]storage.Document, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	if f.profileLocked != nil {
+		f.listedLocked = append(f.listedLocked, f.profileLocked())
+	}
 
 	return append([]storage.Document(nil), f.documents...), nil
 }
@@ -143,6 +171,9 @@ func init() {
 
 		if v, ok := profileExtrasByTest.Load(t); ok {
 			extras, _ := v.(profileExtras)
+			if extras.profiles != nil {
+				repos.SellerProfiles = extras.profiles
+			}
 			if extras.logos != nil {
 				repos.SellerProfileLogos = extras.logos
 			}

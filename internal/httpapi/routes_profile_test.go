@@ -450,3 +450,22 @@ func TestProfileTemplateChangeAfterTheFirstIssue(t *testing.T) {
 		t.Errorf("offer change status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestProfileSaveLocksBeforeReadingIssuedTypes pins the order the issue
+// race rests on: the profile row is locked before the issued document
+// types are read, so a first issue cannot commit between the two.
+func TestProfileSaveLocksBeforeReadingIssuedTypes(t *testing.T) {
+	t.Parallel()
+
+	profiles := &fakeSellerProfiles{}
+	docs := &fakeIssuedDocuments{profileLocked: profiles.isLocked}
+	f := newProfileFixtureWith(t, profileExtras{docs: docs, profiles: profiles})
+
+	if rec := f.do(t, f.owner, http.MethodPut, "/api/v1/profile", validProfileBody()); rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	if len(docs.listedLocked) != 1 || !docs.listedLocked[0] {
+		t.Errorf("the issued types were read with the profile locked = %v, want [true]", docs.listedLocked)
+	}
+}

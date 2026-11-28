@@ -12,6 +12,22 @@ SELECT tenant_id, legal_name, street, address_line2, postal_code, city, country_
 FROM seller_profiles
 WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid;
 
+-- GetSellerProfileForUpdate reads the profile and holds a FOR UPDATE lock
+-- on it until the transaction ends. FOR UPDATE conflicts with the FOR
+-- SHARE lock LockSellerProfileForIssue takes, so a profile save and an
+-- issue of the same tenant run one after the other. The save reads which
+-- document types were issued only after this lock, and an issue that
+-- starts later sees the saved templates.
+--
+-- name: GetSellerProfileForUpdate :one
+SELECT tenant_id, legal_name, street, address_line2, postal_code, city, country_code,
+       tax_number, vat_id, kleinunternehmer_id, default_vat_regime, default_language,
+       bank_name, iban, bic, email, phone, website, footer_text, number_formats,
+       created_at, updated_at
+FROM seller_profiles
+WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+FOR UPDATE;
+
 -- PutSellerProfile creates or replaces the profile as a whole. It names
 -- its columns and never writes a logo column, so saving the profile never
 -- drops the logo issue #75 adds.
