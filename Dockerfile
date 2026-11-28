@@ -54,9 +54,9 @@ RUN pnpm run build
 
 # Node stage of the site: builds landing/ into landing/dist and prerenders
 # every page of every language into it, the same two steps "task
-# landing:build" and "task landing:prerender" run locally. Only the
-# "site-frontend" stage copies the result. The prerender needs no browser
-# and no network: it renders the Vue components in Node.
+# landing:build" runs locally. Only the "site-frontend" stage copies the
+# result. The prerender needs no browser and no network: it renders the
+# Vue components in Node.
 FROM node-pnpm AS site
 
 WORKDIR /src/landing
