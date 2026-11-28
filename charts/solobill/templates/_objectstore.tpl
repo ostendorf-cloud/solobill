@@ -83,8 +83,8 @@ same story as PostgreSQL in networkpolicy.yaml.
 {{- $port = required "objectStore.endpoint names no scheme this chart knows a port for: use an http or https URL." $port -}}
 {{- /*
 The port is checked like the database URL and the issuer URL are in networkpolicy.yaml:
-digits are not enough, 0 and 65536 are digits. atoi yields 0 for a number too large for an
-integer, so that case lands on the same guard. The rule renders the integer atoi read, so
+digits are not enough, 0 and 65536 are digits. atoi yields the largest integer for a number too
+large for an integer, so that case lands on the same guard. The rule renders the integer atoi read, so
 "08333" becomes 8333 and never the invalid YAML number 08333. The message names the key
 only: no URL and no port value.
 */ -}}

@@ -150,6 +150,21 @@ done
 echo "all combinations valid (${mode})"
 
 if [ "$mode" = "lint" ]; then
+  # A leading zero in the object store port must render as the integer 8333. "08333" is not a
+  # valid YAML number, and the unit test for it passes with and without the fix, so this check
+  # reads the rendered egress rule itself.
+  echo "==> validating render: object store port with a leading zero"
+  if ! rendered=$(helm template "${chart}" \
+    --set "${baseline},objectStore.endpoint=http://s3.example.svc:08333,objectStore.bucket=solobill" 2>&1); then
+    echo "validate-chart: the object store port with a leading zero did not render" >&2
+    echo "${rendered}" >&2
+    exit 1
+  fi
+  if ! grep -qE '^ +port: 8333$' <<<"${rendered}"; then
+    echo "validate-chart: the object store egress rule does not render port: 8333 for :08333" >&2
+    exit 1
+  fi
+
   # Each entry below is one guard's own --set arguments: every other guard's
   # requirement is satisfied, and exactly one is violated. That isolation is what
   # makes the assertion below mean something - if the guard under test were
