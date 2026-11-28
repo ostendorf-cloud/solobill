@@ -28,6 +28,9 @@ const (
 	// DefaultBuildDir is where the Dockerfile's frontend stage copies the
 	// Vite build, web/dist.
 	DefaultBuildDir = "/usr/share/solobill/web"
+	// DefaultSiteBuildDir is where the Dockerfile's site-frontend stage
+	// copies the prerendered marketing site, landing/dist.
+	DefaultSiteBuildDir = "/usr/share/solobill/site"
 	// DefaultRateLimitBurst and DefaultRateLimitPer bound one client
 	// address. A first load of the app fetches index.html and a few dozen
 	// bundle files, so the burst stays well above one load.
@@ -82,6 +85,14 @@ func (c Config) Development() bool {
 // Load reads every setting through getenv and validates the result. A nil
 // getenv reads the real process environment.
 func Load(getenv func(string) string) (Config, error) {
+	return LoadWithBuildDir(getenv, DefaultBuildDir)
+}
+
+// LoadWithBuildDir is Load for a frontend image whose build lives elsewhere
+// than the app's: the site image (cmd/site-frontend) passes
+// DefaultSiteBuildDir. Every variable keeps its name, only the default of
+// FRONTEND_BUILD_DIR differs.
+func LoadWithBuildDir(getenv func(string) string, defaultBuildDir string) (Config, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
@@ -90,7 +101,7 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
 		ListenAddr:      loader.String("LISTEN_ADDR", DefaultListenAddr),
 		AdminListenAddr: loader.String("ADMIN_LISTEN_ADDR", DefaultAdminListenAddr),
-		BuildDir:        loader.String("FRONTEND_BUILD_DIR", DefaultBuildDir),
+		BuildDir:        loader.String("FRONTEND_BUILD_DIR", defaultBuildDir),
 		RateLimitBurst:  loader.Int("RATE_LIMIT_BURST", DefaultRateLimitBurst, 1, 100_000),
 		RateLimitPer:    loader.Duration("RATE_LIMIT_PER", DefaultRateLimitPer, time.Second, time.Hour),
 		AllowPlainHTTP:  loader.Bool("ALLOW_PLAIN_HTTP", false),
