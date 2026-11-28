@@ -14,8 +14,9 @@
 coverage.out
 bin/
 
-# Node, for the web/ package
+# Node, for the web/ and landing/ packages
 node_modules/
+.prerender-ssr/
 dist/
 coverage/
 *.log

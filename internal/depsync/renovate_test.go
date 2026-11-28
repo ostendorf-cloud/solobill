@@ -3,6 +3,7 @@ package depsync
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -70,22 +71,14 @@ func TestRenovateGroupsGovueHalves(t *testing.T) {
 }
 
 // TestRenovateManagerReadsGovueSpecifier fails when the custom manager's expression no
-// longer extracts the tag from web/package.json's real specifier. Renovate's own npm
+// longer extracts the tag from the real specifier of web/package.json and
+// landing/package.json, or no longer covers one of the two files. Renovate's own npm
 // manager skips that specifier ("unversioned-reference") because of the "&path:/web"
 // suffix, so this manager is the only way the npm half is ever updated.
 func TestRenovateManagerReadsGovueSpecifier(t *testing.T) {
 	t.Parallel()
 
 	cfg := readRenovateConfig(t)
-
-	raw, err := os.ReadFile(packageJSONPath)
-	if err != nil {
-		t.Fatalf("read web/package.json: %v", err)
-	}
-	wantTag, err := packageJSONGovueTag(t)
-	if err != nil {
-		t.Fatalf("resolve the tag in web/package.json: %v", err)
-	}
 
 	for _, manager := range cfg.CustomManagers {
 		if manager.CustomType != "regex" || manager.DepNameTemplate != "ostendorf-cloud/govue" {
@@ -94,26 +87,45 @@ func TestRenovateManagerReadsGovueSpecifier(t *testing.T) {
 		if manager.DatasourceTemplate != "github-tags" {
 			t.Fatalf("datasourceTemplate = %q, want github-tags", manager.DatasourceTemplate)
 		}
-		if !slices.Contains(manager.ManagerFilePatterns, "/^web/package\\.json$/") {
-			t.Fatalf("managerFilePatterns = %v, want web/package.json", manager.ManagerFilePatterns)
+		if len(manager.ManagerFilePatterns) != 1 {
+			t.Fatalf("want one managerFilePatterns entry, got %v", manager.ManagerFilePatterns)
 		}
 		if len(manager.MatchStrings) != 1 {
 			t.Fatalf("want one matchStrings entry, got %d", len(manager.MatchStrings))
 		}
 
+		// A Renovate pattern in slashes is a regular expression.
+		pattern := strings.TrimSuffix(strings.TrimPrefix(manager.ManagerFilePatterns[0], "/"), "/")
+		files := regexp.MustCompile(pattern)
 		re := regexp.MustCompile(manager.MatchStrings[0])
 		group := re.SubexpIndex("currentValue")
 		if group < 0 {
 			t.Fatalf("matchStrings %q has no named group currentValue", manager.MatchStrings[0])
 		}
-		match := re.FindSubmatch(raw)
-		if match == nil {
-			t.Fatalf("matchStrings %q finds nothing in web/package.json", manager.MatchStrings[0])
+
+		for _, path := range packageJSONPaths {
+			if !files.MatchString(path) {
+				t.Errorf("managerFilePatterns %v does not cover %s", manager.ManagerFilePatterns, path)
+			}
+
+			raw, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(path)))
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			wantTag, err := packageJSONGovueTag(t, path)
+			if err != nil {
+				t.Fatalf("resolve the tag in %s: %v", path, err)
+			}
+			match := re.FindSubmatch(raw)
+			if match == nil {
+				t.Errorf("matchStrings %q finds nothing in %s", manager.MatchStrings[0], path)
+				continue
+			}
+			if got := string(match[group]); got != wantTag {
+				t.Errorf("custom manager extracts tag %q, %s pins %q", got, path, wantTag)
+			}
 		}
-		got := string(match[group])
-		if got != wantTag {
-			t.Fatalf("custom manager extracts tag %q, web/package.json pins %q", got, wantTag)
-		}
+
 		return
 	}
 

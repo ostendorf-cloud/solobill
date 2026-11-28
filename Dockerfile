@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1@sha256:572cebbc2b15e6f84c077742952674889cb63cd5e9b80abdffcbe587b6f19183
 
-# This file builds solobill's two images as named final stages, "api"
-# (cmd/solobill, published as solobill-api) and "frontend" (cmd/frontend
-# with the Vue build, published as solobill-frontend), rather than two
-# Dockerfiles: both binaries share go.mod, go.sum and internal/, so one file
+# This file builds solobill's images as named final stages, "api"
+# (cmd/solobill, published as solobill-api), "frontend" (cmd/frontend
+# with the Vue build, published as solobill-frontend) and "site-frontend"
+# (cmd/site-frontend with the prerendered landing/ build, published as
+# solobill-site-frontend), rather than one Dockerfile each: the binaries
+# share go.mod, go.sum and internal/, so one file
 # keeps every pinned base image digest in one place. "docker build --target
 # <name>" (see Taskfile.yaml, .github/workflows/checks.yaml and
 # publish.yaml) builds only the stages that target depends on: BuildKit
@@ -25,9 +27,7 @@
 # "docker buildx imagetools inspect node:26.13.1-bookworm-slim" if this
 # patch version ever moves. That command reports the index digest below,
 # the same one a plain "docker pull" resolves against on either platform.
-FROM node:26.13.1-bookworm-slim@sha256:0042e17d232a87a2cd485be1da7900fca4d10a4ad11b29e9285da1d2e54798c9 AS web
-
-WORKDIR /src/web
+FROM node:26.13.1-bookworm-slim@sha256:0042e17d232a87a2cd485be1da7900fca4d10a4ad11b29e9285da1d2e54798c9 AS node-pnpm
 
 # corepack no longer ships with Node. nodejs/node PR 57617 dropped it,
 # starting with Node.js 25. This image's Node 26 reflects that change.
@@ -41,11 +41,31 @@ WORKDIR /src/web
 ARG PNPM_VERSION=12.23.0
 RUN npm install -g corepack && corepack enable && corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
+# Node stage of the app: builds the Vue app into web/dist.
+FROM node-pnpm AS web
+
+WORKDIR /src/web
+
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY web/ ./
 RUN pnpm run build
+
+# Node stage of the site: builds landing/ into landing/dist and prerenders
+# every page of every language into it, the same two steps "task
+# landing:build" runs locally. Only the "site-frontend" stage copies the
+# result. The prerender needs no browser and no network: it renders the
+# Vue components in Node.
+FROM node-pnpm AS site
+
+WORKDIR /src/landing
+
+COPY landing/package.json landing/pnpm-lock.yaml landing/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY landing/ ./
+RUN pnpm run build && pnpm run prerender
 
 # Shared Go stage: downloads the module graph once, for both build stages
 # below, so the cache layer and the base image digest exist in one place.
@@ -86,6 +106,16 @@ COPY cmd/frontend/ cmd/frontend/
 COPY internal/ internal/
 
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/frontend ./cmd/frontend
+
+# Build stage for cmd/site-frontend: the same shape, a static binary that
+# embeds nothing. The "site-frontend" stage below fills its build directory
+# from the "site" Node stage.
+FROM go-deps AS build-site-frontend
+
+COPY cmd/site-frontend/ cmd/site-frontend/
+COPY internal/ internal/
+
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/site-frontend ./cmd/site-frontend
 
 # Typst stage: fetches the typst binary internal/pdf runs as "typst
 # compile" (docs/adr/0001-typst-pdf-engine.md). Only the "api" stage copies
@@ -188,6 +218,29 @@ RUN ["/usr/local/bin/typst", "--version"]
 # No HEALTHCHECK: this image has no shell and no curl/wget to exec one
 # with. The probes of the chart and the compose file's ordering cover it.
 ENTRYPOINT ["/usr/local/bin/solobill"]
+
+# Runtime stage of the marketing site, published as solobill-site-frontend
+# (docs/adr/0002-site-own-deployment.md): the same distroless base. It
+# serves the prerendered landing/ build through govue's frontend package in
+# prerendered mode and makes no outbound connection at all. It sits before
+# the "frontend" stage because that one stays the last stage.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS site-frontend
+
+COPY --from=build-site-frontend /out/site-frontend /usr/local/bin/site-frontend
+
+# FRONTEND_BUILD_DIR's default of this image
+# (internal/frontendconfig.DefaultSiteBuildDir). Owned by root and read only
+# for the nonroot user: the server reads every file once at startup.
+COPY --from=site /src/landing/dist/ /usr/share/solobill/site/
+
+# The same listeners as the frontend: LISTEN_ADDR's and ADMIN_LISTEN_ADDR's
+# defaults.
+EXPOSE 8080
+EXPOSE 8081
+
+USER 65532:65532
+
+ENTRYPOINT ["/usr/local/bin/site-frontend"]
 
 # Runtime stage of the frontend, published as solobill-frontend: the same
 # distroless base. It serves the Vue build through govue's frontend package

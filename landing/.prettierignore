@@ -1,0 +1,4 @@
+dist/
+.prerender-ssr/
+node_modules/
+pnpm-lock.yaml

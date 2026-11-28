@@ -169,6 +169,38 @@ jobs:
       - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78  # v5.3.0
       - run: task web:build
 
+  landing-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78  # v5.3.0
+      - run: task landing:lint
+
+  landing-format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78  # v5.3.0
+      - run: task landing:format
+
+  landing-types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78  # v5.3.0
+      - run: task landing:types
+
+  landing-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78  # v5.3.0
+      - run: task landing:test
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -196,14 +228,15 @@ jobs:
             ${{ runner.os }}-integration-
       - run: task build
 
-  # The two images, solobill-api and solobill-frontend (the Dockerfile's
-  # "api" and "frontend" stages), each on each platform's native runner.
+  # The three images, solobill-api, solobill-frontend and
+  # solobill-site-frontend (the Dockerfile's "api", "frontend" and
+  # "site-frontend" stages), each on each platform's native runner.
   # internal/envsync fails when this image list differs from the
   # Dockerfile's.
   build-image:
     strategy:
       matrix:
-        image: [api, frontend]
+        image: [api, frontend, site-frontend]
         platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64

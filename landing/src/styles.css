@@ -1,0 +1,10 @@
+/*
+ * The token contract plus solobill's own theme, the same one the app uses
+ * (web/src/theme/): src/theme/ is a copy, and src/theme/theme.test.ts fails
+ * when the two differ. Tailwind does not scan a git dependency's sources by
+ * default, so @source points it at govue's own component files.
+ */
+@import '@ostendorf-cloud/govue/styles.css';
+@import './theme/solobill.css';
+
+@source '../node_modules/@ostendorf-cloud/govue/src';

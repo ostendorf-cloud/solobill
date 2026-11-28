@@ -9,3 +9,7 @@ web/node_modules
 web/dist
 web/coverage
 web/.eslintcache
+landing/node_modules
+landing/dist
+landing/coverage
+landing/.eslintcache

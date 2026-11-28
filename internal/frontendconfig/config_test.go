@@ -40,6 +40,33 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadWithBuildDir(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{name: "default of the site image", env: nil, want: frontendconfig.DefaultSiteBuildDir},
+		{name: "variable wins", env: map[string]string{"FRONTEND_BUILD_DIR": "/srv/site"}, want: "/srv/site"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := frontendconfig.LoadWithBuildDir(env(tt.env), frontendconfig.DefaultSiteBuildDir)
+			if err != nil {
+				t.Fatalf("LoadWithBuildDir() error = %v", err)
+			}
+			if cfg.BuildDir != tt.want {
+				t.Errorf("BuildDir = %q, want %q", cfg.BuildDir, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadReadsEveryVariable(t *testing.T) {
 	t.Parallel()
 

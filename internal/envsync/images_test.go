@@ -11,9 +11,11 @@ import (
 )
 
 // images are the final stages of the Dockerfile that are published, each as
-// solobill-<name>. checks.yaml and publish.yaml build exactly these, and the
-// chart's two parts run them.
-var images = []string{"api", "frontend"}
+// solobill-<name>. checks.yaml and publish.yaml build exactly these. The
+// chart's two parts run api and frontend, the site's own chart runs
+// site-frontend (docs/adr/0002-site-own-deployment.md). The list is sorted,
+// the workflows' lists are compared sorted.
+var images = []string{"api", "frontend", "site-frontend"}
 
 var (
 	// dockerfileFrom is one FROM line with its optional stage name.
@@ -126,6 +128,41 @@ func TestDockerfileBuildsTwoImages(t *testing.T) {
 	}
 	if !strings.Contains(api.from, "@sha256:") {
 		t.Errorf("the runtime base %s is not pinned by digest", api.from)
+	}
+}
+
+// TestDockerfileSiteFrontendStage pins the site image: its own server binary
+// and the prerendered landing build at the default of FRONTEND_BUILD_DIR, the
+// same pinned base and a non root user, and nothing of the app, the API or
+// typst. The site build comes from its own Node stage, never the app's.
+func TestDockerfileSiteFrontendStage(t *testing.T) {
+	t.Parallel()
+
+	stages := readStages(t)
+	site := findStage(t, stages, "site-frontend")
+	for _, want := range []string{
+		"COPY --from=build-site-frontend /out/site-frontend /usr/local/bin/site-frontend",
+		"COPY --from=site /src/landing/dist/ " + frontendconfig.DefaultSiteBuildDir + "/",
+		`ENTRYPOINT ["/usr/local/bin/site-frontend"]`,
+		"USER 65532:65532",
+	} {
+		if !strings.Contains(site.body, want) {
+			t.Errorf("the site-frontend stage lacks %q", want)
+		}
+	}
+	for _, not := range []string{"--from=typst", "--from=build-api", "--from=build-frontend", "--from=web"} {
+		if strings.Contains(site.body, not) {
+			t.Errorf("the site-frontend stage copies from %s, it must carry the site only", not)
+		}
+	}
+
+	if frontend := findStage(t, stages, "frontend"); site.from != frontend.from {
+		t.Errorf("site-frontend runs on %s but frontend on %s, want the same pinned base", site.from, frontend.from)
+	}
+
+	// "site" is the Node stage of landing/. It must build landing/, not web/.
+	if node := findStage(t, stages, "site"); !strings.Contains(node.body, "COPY landing/ ./") {
+		t.Error("the site stage does not build landing/")
 	}
 }
 
