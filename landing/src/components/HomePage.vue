@@ -31,7 +31,8 @@ const secondary = `${buttonBase} border border-border-strong bg-surface text-tex
       <a :href="siteConfig.loginUrl" :class="primary">{{ t.login }}</a>
       <!-- Until the configuration is loaded, which is the prerendered markup,
            the register button keeps its place but is neither seen nor
-           reachable, so a site with registration off never shows it. -->
+           reachable. A load that fails removes it, so a site with
+           registration off never shows it. -->
       <a
         v-if="siteConfig.registrationEnabled"
         :href="siteConfig.registerUrl"

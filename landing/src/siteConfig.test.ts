@@ -84,21 +84,31 @@ describe('loadSiteConfig', () => {
     })
   })
 
-  it('keeps the defaults and still marks loaded when the server answers an error', async () => {
-    await loadSiteConfig(reply({ registrationEnabled: false }, { status: 500 }))
+  // A failed load cannot know whether the server closed the registration, so
+  // the register button stays hidden and the login URL stays the default.
+  const failedConfig = { ...DEFAULT_CONFIG, registrationEnabled: false, loaded: true }
 
-    expect(siteConfig).toMatchObject({ ...DEFAULT_CONFIG, loaded: true })
+  it('hides the register button and still marks loaded when the server answers an error', async () => {
+    await loadSiteConfig(reply({ registrationEnabled: true }, { status: 500 }))
+
+    expect(siteConfig).toMatchObject(failedConfig)
   })
 
-  it('keeps the defaults when the request fails', async () => {
+  it('hides the register button when the request fails', async () => {
     await loadSiteConfig(vi.fn().mockRejectedValue(new TypeError('network')))
 
-    expect(siteConfig).toMatchObject({ ...DEFAULT_CONFIG, loaded: true })
+    expect(siteConfig).toMatchObject(failedConfig)
   })
 
-  it('keeps the defaults when the body is not JSON', async () => {
+  it('hides the register button when the request times out', async () => {
+    await loadSiteConfig(vi.fn().mockRejectedValue(new DOMException('timeout', 'TimeoutError')))
+
+    expect(siteConfig).toMatchObject(failedConfig)
+  })
+
+  it('hides the register button when the body is not JSON', async () => {
     await loadSiteConfig(vi.fn().mockResolvedValue(new Response('<html>')))
 
-    expect(siteConfig).toMatchObject({ ...DEFAULT_CONFIG, loaded: true })
+    expect(siteConfig).toMatchObject(failedConfig)
   })
 })

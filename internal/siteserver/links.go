@@ -20,8 +20,8 @@ const (
 )
 
 // The defaults of an unset variable: the app on app.solobill.de, registration
-// on. landing/src/siteConfig.ts holds the same values for a visitor whose
-// request for ConfigFile fails.
+// on. landing/src/siteConfig.ts holds the same URLs for a visitor whose
+// request for ConfigFile fails, and hides the register button for that visitor.
 const (
 	DefaultLoginURL    = "https://app.solobill.de/login"
 	DefaultRegisterURL = "https://app.solobill.de/register"

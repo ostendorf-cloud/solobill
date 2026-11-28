@@ -20,8 +20,8 @@ export const CONFIG_PATH = '/config.json'
 
 /**
  * The values of an unset environment, the same as internal/siteserver's
- * defaults. They also apply when the request for the configuration fails, and
- * to the prerendered pages.
+ * defaults. They also apply to the prerendered pages. A failed request for the
+ * configuration takes them except for the registration switch, see FAILED_CONFIG.
  */
 export const DEFAULT_CONFIG: Readonly<SiteConfig> = {
   loginUrl: 'https://app.solobill.de/login',
@@ -29,7 +29,18 @@ export const DEFAULT_CONFIG: Readonly<SiteConfig> = {
   registrationEnabled: true,
 }
 
-/** How long the start waits for the configuration before it takes the defaults. */
+/**
+ * What a visitor gets when the configuration cannot be loaded: the default
+ * URLs, with the registration closed. The server may have turned the
+ * registration off, and a button that cannot be checked must not appear, so
+ * the page fails closed. The login link stays, it leads to the default login.
+ */
+const FAILED_CONFIG: Readonly<SiteConfig> = {
+  ...DEFAULT_CONFIG,
+  registrationEnabled: false,
+}
+
+/** How long the start waits for the configuration before it gives up. */
 const TIMEOUT_MS = 2000
 
 /**
@@ -75,12 +86,13 @@ export function parseSiteConfig(raw: unknown): SiteConfig {
 
 /**
  * Fetches the configuration into siteConfig and marks it loaded. It never
- * rejects: a failed, slow or malformed answer leaves the defaults, which work
- * without any server configuration. `cache: 'no-cache'` makes the browser
- * revalidate by the ETag, so a changed environment shows at the next visit.
+ * rejects: a failed, slow, non-OK or malformed answer takes FAILED_CONFIG, the
+ * default URLs with the register button hidden. `cache: 'no-cache'` makes the
+ * browser revalidate by the ETag, so a changed environment shows at the next
+ * visit.
  */
 export async function loadSiteConfig(fetcher: typeof fetch = fetch): Promise<void> {
-  let config = DEFAULT_CONFIG
+  let config = FAILED_CONFIG
   try {
     const response = await fetcher(CONFIG_PATH, {
       cache: 'no-cache',
@@ -91,7 +103,7 @@ export async function loadSiteConfig(fetcher: typeof fetch = fetch): Promise<voi
       config = parseSiteConfig(await response.json())
     }
   } catch {
-    // The defaults stay.
+    // The failed configuration stays.
   }
   Object.assign(siteConfig, config, { loaded: true })
 }

@@ -1,8 +1,8 @@
 import { createGovueI18n } from '@ostendorf-cloud/govue'
 import { render, screen } from '@testing-library/vue'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { DEFAULT_CONFIG, siteConfig } from '../siteConfig'
+import { DEFAULT_CONFIG, loadSiteConfig, siteConfig } from '../siteConfig'
 import HomePage from './HomePage.vue'
 
 function renderHome(locale: 'de' | 'en' = 'de') {
@@ -62,6 +62,15 @@ describe('the register button', () => {
     renderHome()
 
     expect(screen.queryByRole('link', { name: 'Registrieren' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: 'Anmelden' })).toHaveLength(2)
+  })
+
+  it('is gone when the configuration could not be loaded', async () => {
+    Object.assign(siteConfig, { loaded: false })
+    await loadSiteConfig(vi.fn().mockRejectedValue(new TypeError('network')))
+    renderHome()
+
+    expect(screen.queryByText('Registrieren')).not.toBeInTheDocument()
     expect(screen.getAllByRole('link', { name: 'Anmelden' })).toHaveLength(2)
   })
 

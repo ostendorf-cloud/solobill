@@ -131,8 +131,9 @@ a fresh checkout without Node, and no Go task depends on `web:build`.
 - The landing is a Vue SPA: `landing/src/main.ts` mounts over the prerendered page, which stays for
   the legal pages and for crawlers. What differs per environment is read at runtime, never baked
   into the build. `cmd/site-frontend` serves `/config.json` from its environment and
-  `landing/src/siteConfig.ts` loads it before the mount. Unset variables give the defaults, and a
-  failed request gives the same defaults.
+  `landing/src/siteConfig.ts` loads it before the mount. Unset variables give the defaults. A
+  failed request gives the default URLs and no register button, since the page cannot know
+  whether registration is open.
   - `SITE_LOGIN_URL`, default `https://app.solobill.de/login`: the header button and the hero's
     "Anmelden".
   - `SITE_REGISTER_URL`, default `https://app.solobill.de/register`: the hero's "Registrieren".
