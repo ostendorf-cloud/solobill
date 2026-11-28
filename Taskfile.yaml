@@ -122,18 +122,19 @@ tasks:
       - scripts/e2e-compose.sh
 
   build:
-    desc: Compile the API binary (bin/solobill) and the frontend binary (bin/frontend)
+    desc: Compile the API binary (bin/solobill), the frontend binary (bin/frontend) and the site binary (bin/site-frontend)
     cmds:
       - go build -o bin/solobill ./cmd/solobill
       - go build -o bin/frontend ./cmd/frontend
+      - go build -o bin/site-frontend ./cmd/site-frontend
 
-  # One Dockerfile, two final stages: "api" is solobill-api, "frontend" is
-  # solobill-frontend. IMAGE picks one, unset builds both, one after the
-  # other. PLATFORM, for example linux/arm64, defaults to the host platform.
+  # One Dockerfile, three final stages: "api" is solobill-api, "frontend" is
+  # solobill-frontend, "site-frontend" is solobill-site-frontend. IMAGE picks
+  # one, unset builds all, one after the other. PLATFORM, for example linux/arm64, defaults to the host platform.
   build:image:
-    desc: Build the container images without pushing them (IMAGE=api or IMAGE=frontend, default both, PLATFORM optional)
+    desc: Build the container images without pushing them (IMAGE=api, frontend or site-frontend, default all, PLATFORM optional)
     vars:
-      IMAGES: '{{.IMAGE | default "api frontend"}}'
+      IMAGES: '{{.IMAGE | default "api frontend site-frontend"}}'
     cmds:
       - for: {var: IMAGES, split: " "}
         cmd: >-
@@ -211,6 +212,61 @@ tasks:
     cmds:
       - pnpm run format
 
+  # The landing/ half, the prerendered marketing site. Same shape as web/:
+  # every target runs inside landing/ and depends on landing:deps.
+  landing:deps:
+    desc: Install the landing/ dependencies
+    dir: landing
+    run: once
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  landing:lint:
+    desc: ESLint over the landing/ package
+    dir: landing
+    deps: [landing:deps]
+    cmds:
+      - pnpm run lint
+
+  landing:format:
+    desc: Prettier format check over the landing/ package
+    dir: landing
+    deps: [landing:deps]
+    cmds:
+      - pnpm run format:check
+
+  landing:types:
+    desc: TypeScript and template typecheck of the landing/ package
+    dir: landing
+    deps: [landing:deps]
+    cmds:
+      - pnpm run typecheck
+
+  landing:test:
+    desc: Vitest suite of the landing/ package
+    dir: landing
+    deps: [landing:deps]
+    cmds:
+      - pnpm run test
+
+  # The prerender step writes every page, the 404 pages and sitemap.xml into
+  # landing/dist, so the build is only complete after both commands. Point
+  # FRONTEND_BUILD_DIR at landing/dist to run cmd/site-frontend locally.
+  landing:build:
+    desc: Build the site into landing/dist and prerender every page into it
+    dir: landing
+    deps: [landing:deps]
+    cmds:
+      - pnpm run build
+      - pnpm run prerender
+
+  landing:fmt:
+    desc: Format the landing/ package
+    dir: landing
+    deps: [landing:deps]
+    cmds:
+      - pnpm run format
+
   check:
     desc: Every check, one after another
     cmds:
@@ -228,6 +284,11 @@ tasks:
       - task: web:types
       - task: web:test
       - task: web:build
+      - task: landing:lint
+      - task: landing:format
+      - task: landing:types
+      - task: landing:test
+      - task: landing:build
       - task: build
       - task: build:image
       - task: test:go

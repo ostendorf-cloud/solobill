@@ -6,9 +6,9 @@
   ],
   "customManagers": [
     {
-      "description": "Renovate's npm manager skips the govue pnpm git dependency (skipReason unversioned-reference) because of its '&path:/web' suffix. This manager reads the tag out of web/package.json so the npm half is updated like any other dependency.",
+      "description": "Renovate's npm manager skips the govue pnpm git dependency (skipReason unversioned-reference) because of its '&path:/web' suffix. This manager reads the tag out of web/package.json and landing/package.json so the npm half is updated like any other dependency.",
       "customType": "regex",
-      "managerFilePatterns": ["/^web/package\\.json$/"],
+      "managerFilePatterns": ["/^(web|landing)/package\\.json$/"],
       "matchStrings": [
         "\"@ostendorf-cloud/govue\":\\s*\"ostendorf-cloud/govue#(?<currentValue>v[^&\"]+)&path:/web\""
       ],
