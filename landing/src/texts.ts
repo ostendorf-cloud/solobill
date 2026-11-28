@@ -7,7 +7,7 @@ import type { LocaleCode } from '@ostendorf-cloud/govue'
 export interface Texts {
   brand: string
   nav: { home: string; login: string }
-  home: { title: string; lead: string; note: string }
+  home: { title: string; lead: string; note: string; login: string; register: string }
   legalPlaceholder: { heading: string; text: string }
   notFound: { title: string; lead: string; back: string }
 }
@@ -20,6 +20,8 @@ export const texts: Record<LocaleCode, Texts> = {
       title: 'Buchhaltung für Einzelunternehmer',
       lead: 'Rechnungen, Belege und die EÜR an einem Ort.',
       note: 'Diese Seite ist ein Platzhalter und wird noch mit Inhalt gefüllt.',
+      login: 'Anmelden',
+      register: 'Registrieren',
     },
     legalPlaceholder: {
       heading: 'Platzhalter',
@@ -38,6 +40,8 @@ export const texts: Record<LocaleCode, Texts> = {
       title: 'Bookkeeping for sole traders',
       lead: 'Invoices, receipts and the annual profit statement in one place.',
       note: 'This page is a placeholder and its content follows.',
+      login: 'Log in',
+      register: 'Sign up',
     },
     legalPlaceholder: {
       heading: 'Placeholder',

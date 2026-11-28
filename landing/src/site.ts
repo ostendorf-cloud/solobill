@@ -8,9 +8,6 @@ import type { LegalPage } from '@ostendorf-cloud/govue'
 export const SITE_ORIGIN: string =
   (import.meta.env.VITE_SITE_URL as string | undefined) ?? 'https://solobill.de'
 
-/** The app, which the login button of the header opens. */
-export const APP_URL = 'https://app.solobill.de/'
-
 /**
  * The legal pages of the site, in footer order. The site sells nothing yet,
  * so it has no terms: govue then serves neither /terms nor /agb.

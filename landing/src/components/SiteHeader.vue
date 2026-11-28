@@ -11,7 +11,7 @@ import {
 } from '@ostendorf-cloud/govue'
 import { computed } from 'vue'
 
-import { APP_URL } from '../site'
+import { siteConfig } from '../siteConfig'
 import { texts } from '../texts'
 
 // The header of every page: the brand, the navigation with the way into the
@@ -34,7 +34,8 @@ const items = computed<NavItem[]>(() => {
       label: t.home,
       current: props.path === '/',
     },
-    { href: APP_URL, label: t.login, variant: 'cta' },
+    // The login URL is the runtime configuration, see siteConfig.ts.
+    { href: siteConfig.loginUrl, label: t.login, variant: 'cta' },
   ]
 })
 

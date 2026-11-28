@@ -83,6 +83,24 @@ describe('files', () => {
     }
   })
 
+  it.each([
+    ['de/index.html', 'Anmelden', 'Registrieren'],
+    ['en/index.html', 'Log in', 'Sign up'],
+  ])(
+    'writes the default login link and a hidden register button in %s',
+    (path, login, register) => {
+      const html = output.get(path) ?? ''
+      expect(html).toContain(`href="https://app.solobill.de/login"`)
+      expect(html).toContain(login)
+      // Reserved but invisible: the configuration decides at runtime.
+      expect(html).toMatch(
+        new RegExp(
+          `<a[^>]*href="https://app.solobill.de/register"[^>]*invisible[^>]*>${register}</a>`,
+        ),
+      )
+    },
+  )
+
   it('leaves no placeholder behind', () => {
     for (const [path, html] of output) {
       if (path === 'sitemap.xml') continue
