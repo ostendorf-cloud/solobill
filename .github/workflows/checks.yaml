@@ -196,14 +196,15 @@ jobs:
             ${{ runner.os }}-integration-
       - run: task build
 
-  # The two images, solobill-api and solobill-frontend (the Dockerfile's
-  # "api" and "frontend" stages), each on each platform's native runner.
+  # The three images, solobill-api, solobill-frontend and
+  # solobill-site-frontend (the Dockerfile's "api", "frontend" and
+  # "site-frontend" stages), each on each platform's native runner.
   # internal/envsync fails when this image list differs from the
   # Dockerfile's.
   build-image:
     strategy:
       matrix:
-        image: [api, frontend]
+        image: [api, frontend, site-frontend]
         platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64

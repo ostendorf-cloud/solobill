@@ -7,9 +7,11 @@ on:
 permissions: {}
 
 jobs:
-  # The two images, solobill-api and solobill-frontend (the Dockerfile's
-  # "api" and "frontend" stages), released under one tag and deployed
-  # together by the one chart. Each image is built once per platform, each
+  # The three images, solobill-api, solobill-frontend and
+  # solobill-site-frontend (the Dockerfile's "api", "frontend" and
+  # "site-frontend" stages), released under one tag. The first two are
+  # deployed together by the app chart, the third by the site's own chart
+  # (docs/adr/0002-site-own-deployment.md). Each image is built once per platform, each
   # on that platform's own native GitHub-hosted runner, amd64 on
   # ubuntu-latest and arm64 on ubuntu-24.04-arm, rather than cross-compiled
   # through QEMU. Each leg pushes its image by digest only, with no tag
@@ -20,7 +22,7 @@ jobs:
   image-build:
     strategy:
       matrix:
-        image: [api, frontend]
+        image: [api, frontend, site-frontend]
         platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64
@@ -81,7 +83,7 @@ jobs:
     needs: image-build
     strategy:
       matrix:
-        image: [api, frontend]
+        image: [api, frontend, site-frontend]
     runs-on: ubuntu-latest
     # Metadata only: download the digests, assemble and push one
     # manifest list, inspect it back. No build.
