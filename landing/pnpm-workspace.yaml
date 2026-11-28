@@ -1,0 +1,6 @@
+# pnpm 12 reads "overrides" from here, not from a "pnpm" field in package.json (that field
+# is no longer read; see https://pnpm.io/settings). Without this, @testing-library/vue pulls
+# in @testing-library/dom@9 alongside the @testing-library/dom@10 that
+# @testing-library/jest-dom needs, installing both at once.
+overrides:
+  '@testing-library/dom': '^10'
