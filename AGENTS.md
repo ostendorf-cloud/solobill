@@ -128,6 +128,18 @@ a fresh checkout without Node, and no Go task depends on `web:build`.
 - The image is `solobill-site-frontend` (stage `site-frontend`). It reads the build from
   `/usr/share/solobill/site`, set by `frontendconfig.DefaultSiteBuildDir`, through the same
   environment variables as `cmd/frontend`.
+- The landing is a Vue SPA: `landing/src/main.ts` mounts over the prerendered page, which stays for
+  the legal pages and for crawlers. What differs per environment is read at runtime, never baked
+  into the build. `cmd/site-frontend` serves `/config.json` from its environment and
+  `landing/src/siteConfig.ts` loads it before the mount. Unset variables give the defaults, and a
+  failed request gives the same defaults.
+  - `SITE_LOGIN_URL`, default `https://app.solobill.de/login`: the header button and the hero's
+    "Anmelden".
+  - `SITE_REGISTER_URL`, default `https://app.solobill.de/register`: the hero's "Registrieren".
+  - `SITE_REGISTRATION_ENABLED`, default `true`: `false` removes the register button.
+  - A URL must be absolute http or https without credentials, query or fragment. The server
+    refuses to start otherwise, and the client ignores such a URL.
+  - The site chart, which holds these as values, is not part of `charts/solobill`.
 - `internal/siteserver`'s `ThemeColor` and `ThemeColorDark` equal the theme's `--color-bg`. A test
   fails when they differ.
 - The legal pages are placeholders until the owner supplies the texts. Content, forms and chart
