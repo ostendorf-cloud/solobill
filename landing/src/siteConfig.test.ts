@@ -41,8 +41,8 @@ describe('parseSiteConfig', () => {
     ['a string', 'x'],
     ['an array', []],
     ['an empty object', {}],
-  ])('takes the defaults for %s', (_name, body) => {
-    expect(parseSiteConfig(body)).toEqual(DEFAULT_CONFIG)
+  ])('keeps the default URLs and closes the registration for %s', (_name, body) => {
+    expect(parseSiteConfig(body)).toEqual({ ...DEFAULT_CONFIG, registrationEnabled: false })
   })
 
   it.each([
@@ -57,8 +57,20 @@ describe('parseSiteConfig', () => {
     expect(got.registerUrl).toBe(DEFAULT_CONFIG.registerUrl)
   })
 
-  it('takes the default for a switch that is not a boolean', () => {
-    expect(parseSiteConfig({ registrationEnabled: 'false' }).registrationEnabled).toBe(true)
+  it.each([
+    ['a missing switch', undefined],
+    ['the string "false"', 'false'],
+    ['the string "true"', 'true'],
+    ['the number 1', 1],
+    ['null', null],
+    ['an array', []],
+    ['an object', {}],
+  ])('closes the registration for %s', (_name, value) => {
+    expect(parseSiteConfig({ registrationEnabled: value }).registrationEnabled).toBe(false)
+  })
+
+  it('opens the registration only for a boolean true', () => {
+    expect(parseSiteConfig({ registrationEnabled: true }).registrationEnabled).toBe(true)
   })
 })
 
@@ -102,6 +114,12 @@ describe('loadSiteConfig', () => {
 
   it('hides the register button when the request times out', async () => {
     await loadSiteConfig(vi.fn().mockRejectedValue(new DOMException('timeout', 'TimeoutError')))
+
+    expect(siteConfig).toMatchObject(failedConfig)
+  })
+
+  it('hides the register button when the body has no boolean switch', async () => {
+    await loadSiteConfig(reply({}))
 
     expect(siteConfig).toMatchObject(failedConfig)
   })

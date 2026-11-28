@@ -68,9 +68,11 @@ function isWebUrl(value: unknown): value is string {
 }
 
 /**
- * The configuration of a response body. A field that is missing or of the
- * wrong kind takes its default, and a URL that is not http or https is never
- * taken, so a bad response cannot put a `javascript:` link on the page.
+ * The configuration of a response body. A URL that is missing, of the wrong
+ * kind or not http or https takes its default, so a bad response cannot put a
+ * `javascript:` link on the page. The registration switch fails closed: the
+ * server always sends it as a boolean, so a body without one is broken or
+ * foreign and registration counts as closed, as in FAILED_CONFIG.
  */
 export function parseSiteConfig(raw: unknown): SiteConfig {
   const body = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
@@ -80,14 +82,16 @@ export function parseSiteConfig(raw: unknown): SiteConfig {
     registrationEnabled:
       typeof body.registrationEnabled === 'boolean'
         ? body.registrationEnabled
-        : DEFAULT_CONFIG.registrationEnabled,
+        : FAILED_CONFIG.registrationEnabled,
   }
 }
 
 /**
  * Fetches the configuration into siteConfig and marks it loaded. It never
- * rejects: a failed, slow, non-OK or malformed answer takes FAILED_CONFIG, the
- * default URLs with the register button hidden. `cache: 'no-cache'` makes the
+ * rejects: a failed, slow, non-OK or unparsable answer takes FAILED_CONFIG, the
+ * default URLs with the register button hidden. A parsable answer without a
+ * boolean registration switch gets the same closed switch from parseSiteConfig.
+ * `cache: 'no-cache'` makes the
  * browser revalidate by the ETag, so a changed environment shows at the next
  * visit.
  */
