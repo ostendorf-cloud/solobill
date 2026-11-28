@@ -51,7 +51,7 @@ kubeconform = "0.8.0"
 # TYPST_VERSION must be the same version: internal/envsync fails when they differ. Renovate
 # proposes both bumps in one pull request (group "typst"). The Dockerfile's two checksums are
 # a manual step on every bump, see docs/adr/0001-typst-pdf-engine.md.
-typst = "0.14.2"
+typst = "0.15.1"
 # poppler provides pdftotext, which internal/pdf's golden tests use to compare the text a
 # rendered PDF shows. Pinned to the patch like typst, because pdftotext's layout output is
 # part of those golden files. Same pin as ostendorf.tech.
