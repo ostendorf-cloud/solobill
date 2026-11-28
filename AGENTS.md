@@ -139,7 +139,8 @@ a fresh checkout without Node, and no Go task depends on `web:build`.
   - `SITE_REGISTER_URL`, default `https://app.solobill.de/register`: the hero's "Registrieren".
   - `SITE_REGISTRATION_ENABLED`, default `true`: `false` removes the register button.
   - A URL must be absolute http or https without credentials, query or fragment. The server
-    refuses to start otherwise, and the client ignores such a URL.
+    refuses to start otherwise. The client checks only the scheme and the host and ignores a URL
+    that fails that, so a `javascript:` link never reaches the page.
   - The site chart, which holds these as values, is not part of `charts/solobill`.
 - `internal/siteserver`'s `ThemeColor` and `ThemeColorDark` equal the theme's `--color-bg`. A test
   fails when they differ.
