@@ -79,8 +79,9 @@ The global baseline already applies here and is not repeated below.
 The Layout section above still describes the single image on purpose: it stays stale until the
 hardening issue (#82) rewrites it once. This section is the current state.
 
-- solobill ships two images from one `Dockerfile`: `solobill-api` (stage `api`, `cmd/solobill`
-  with typst) and `solobill-frontend` (stage `frontend`, `cmd/frontend` with the Vue build).
+- solobill ships two images of the app from one `Dockerfile`: `solobill-api` (stage `api`,
+  `cmd/solobill` with typst) and `solobill-frontend` (stage `frontend`, `cmd/frontend` with the
+  Vue build). The marketing site adds a third, `solobill-site-frontend`, see below.
   `internal/envsync` pins that split, the image list of both workflows and the chart's image
   names.
 - The Ingress or HTTPRoute sends `/api` to the API and every other path to the frontend, on one
@@ -112,10 +113,30 @@ a fresh checkout without Node, and no Go task depends on `web:build`.
 - `task build` compiles both binaries, `task build:image` builds both images
   (`IMAGE=api` or `IMAGE=frontend` for one, `PLATFORM=linux/arm64` for another platform).
 
+## The marketing site
+
+- `landing/` is the prerendered marketing site on govue (ADR 0002): its own Vue project, its own
+  `pnpm-lock.yaml`, no code shared with `web/` except a copy of `src/theme/`.
+  `landing/src/theme.test.ts` fails when the copy drifts.
+- `task landing:build` runs `vite build`, then `pnpm run prerender` (govue's `govue-prerender`
+  and `govue-check-legal`). The result in `landing/dist` holds `/en/` and `/de/`, imprint and
+  privacy per language, a 404 per language, `sitemap.xml` and the favicon trio.
+- The per-language 404 is written by `landing/src/entry-server.ts`: govue has no helper for it.
+- `cmd/site-frontend` serves it through `internal/siteserver`, govue's `frontend` package in
+  prerendered mode. `/` answers 302 by `Accept-Language`. The German aliases `/impressum` and
+  `/datenschutz` always go to the German page.
+- The image is `solobill-site-frontend` (stage `site-frontend`). It reads the build from
+  `/usr/share/solobill/site`, set by `frontendconfig.DefaultSiteBuildDir`, through the same
+  environment variables as `cmd/frontend`.
+- `internal/siteserver`'s `ThemeColor` and `ThemeColorDark` equal the theme's `--color-bg`. A test
+  fails when they differ.
+- The legal pages are placeholders until the owner supplies the texts. Content, forms and chart
+  are later issues.
+
 ## govue's two halves move together
 
 govue releases a Go module and a Vue package under one tag. `go.mod`'s
-`require github.com/ostendorf-cloud/govue` and `web/package.json`'s
+`require github.com/ostendorf-cloud/govue`, `web/package.json`'s and `landing/package.json`'s
 `@ostendorf-cloud/govue` pnpm git dependency must always name the same tag: a mismatch
 means this repository takes half of a govue release and not the other half, silently.
 `task check:govue-version` (`internal/depsync`) enforces this: it asks `go list -m` for
